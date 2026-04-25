@@ -1,0 +1,92 @@
+{
+  "name": "AttendanceLog",
+  "type": "object",
+  "properties": {
+    "company_profile_id": {
+      "type": "string",
+      "description": "Reference to the company this attendance record belongs to"
+    },
+    "employee_id": {
+      "type": "string"
+    },
+    "employee_name": {
+      "type": "string"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "time_in": {
+      "type": "string",
+      "description": "Time in (ISO datetime)"
+    },
+    "break_time_out": {
+      "type": "string",
+      "description": "Break / lunch out time (ISO datetime)"
+    },
+    "break_time_in": {
+      "type": "string",
+      "description": "Break / lunch in (return) time (ISO datetime)"
+    },
+    "time_out": {
+      "type": "string",
+      "description": "Time out (ISO datetime)"
+    },
+    "hours_worked": {
+      "type": "number",
+      "description": "Total hours worked excluding break time"
+    },
+    "overtime_hours": {
+      "type": "number",
+      "default": 0,
+      "description": "Hours worked beyond 8 hours"
+    },
+    "night_diff_hours": {
+      "type": "number",
+      "default": 0,
+      "description": "Hours worked between 10pm and 6am (night differential)"
+    },
+    "late_minutes": {
+      "type": "number",
+      "default": 0
+    },
+    "undertime_minutes": {
+      "type": "number",
+      "default": 0
+    },
+    "day_type": {
+      "type": "string",
+      "enum": [
+        "regular",
+        "rest_day",
+        "regular_holiday",
+        "special_holiday"
+      ],
+      "default": "regular"
+    },
+    "is_absent": {
+      "type": "boolean",
+      "default": false
+    },
+    "notes": {
+      "type": "string"
+    },
+    "photo_url": {
+      "type": "string",
+      "description": "Confirmation selfie photo captured at time of attendance scan"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "default": "pending"
+    }
+  },
+  "required": [
+    "employee_id",
+    "date"
+  ]
+}

@@ -1,0 +1,654 @@
+// @ts-nocheck
+import { useState, useRef, useEffect } from 'react';
+import { useAuth } from '@/lib/AuthContext';
+import { useCompany } from '@/lib/CompanyContext';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { format, startOfWeek, addWeeks, addDays } from 'date-fns';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+
+const statusColors = {
+  pending: 'bg-amber-100 text-amber-700',
+  approved: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-600',
+};
+
+async function requestJson(path, options = {}) {
+  const response = await fetch(path, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    throw new Error(data?.error || 'Request failed');
+  }
+
+  return data;
+}
+
+function entityUrl(entity, params = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      search.set(key, key === 'filter' ? JSON.stringify(value) : String(value));
+    }
+  });
+
+  const query = search.toString();
+  return `/api/entities/${encodeURIComponent(entity)}${query ? `?${query}` : ''}`;
+}
+
+const entities = {
+  filter(entity, filter = {}, sort, limit) {
+    return requestJson(entityUrl(entity, { filter, sort, limit }));
+  },
+  update(entity, id, data) {
+    return requestJson(entityUrl(entity), {
+      method: 'PATCH',
+      body: JSON.stringify({ id, data }),
+    });
+  },
+};
+
+function invokeFunction(name, data) {
+  return requestJson(`/api/functions/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    body: JSON.stringify(data || {}),
+  });
+}
+
+async function uploadFile(file) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  return requestJson('/api/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: file?.name,
+      dataUrl,
+    }),
+  });
+}
+
+// ── Edit Attendance Modal ──
+function EditAttendanceModal({ log, onClose, onSave, currentUser, activeCompanyId }) {
+  const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
+
+  // Step 1: passcode gate. Step 2: actual edit form.
+  const [step, setStep] = useState('passcode'); // 'passcode' | 'edit'
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [passcodeError, setPasscodeError] = useState('');
+  const [verifying, setVerifying] = useState(false);
+
+  const [reason, setReason] = useState('');
+  const [timeIn, setTimeIn] = useState(log.time_in ? format(new Date(log.time_in), "HH:mm") : '');
+  const [breakOut, setBreakOut] = useState(log.break_time_out ? format(new Date(log.break_time_out), "HH:mm") : '');
+  const [breakIn, setBreakIn] = useState(log.break_time_in ? format(new Date(log.break_time_in), "HH:mm") : '');
+  const [timeOut, setTimeOut] = useState(log.time_out ? format(new Date(log.time_out), "HH:mm") : '');
+  const [photoDataUrl, setPhotoDataUrl] = useState(null);
+  const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
+  const [saving, setSaving] = useState(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
+  const canEditTimeIn = !log.time_in;
+  const canEditBreakOut = !log.break_time_out;
+  const canEditBreakIn = !log.break_time_in;
+  const canEditTimeOut = !log.time_out;
+
+  // Start camera only after passcode is verified
+  useEffect(() => {
+    if (step !== 'edit') return;
+    setPhotoStatus('capturing');
+    let stream = null;
+    const start = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await new Promise(r => { videoRef.current.onloadedmetadata = r; });
+          videoRef.current.play();
+          await new Promise(r => setTimeout(r, 1200));
+          capturePhoto(stream);
+        }
+      } catch {
+        setPhotoStatus('error');
+      }
+    };
+    start();
+    return () => { if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; } };
+  }, [step]);
+
+  const capturePhoto = (stream) => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth || 320;
+    canvas.height = videoRef.current.videoHeight || 240;
+    canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+    setPhotoDataUrl(canvas.toDataURL('image/jpeg', 0.85));
+    setPhotoStatus('done');
+    stream.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+  };
+
+  const retake = async () => {
+    setPhotoStatus('capturing');
+    setPhotoDataUrl(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await new Promise(r => { videoRef.current.onloadedmetadata = r; });
+        videoRef.current.play();
+        await new Promise(r => setTimeout(r, 1200));
+        capturePhoto(stream);
+      }
+    } catch { setPhotoStatus('error'); }
+  };
+
+  const verifyPasscode = async () => {
+    if (!passcodeInput.trim()) { setPasscodeError('Please enter the daily passcode.'); return; }
+    setVerifying(true);
+    setPasscodeError('');
+    const records = await entities.filter('DailyPasscode', { date: TODAY_STR, company_profile_id: activeCompanyId });
+    const match = records.find(r => r.passcode === passcodeInput.trim() || r.manager_passcode === passcodeInput.trim());
+    if (match) {
+      setStep('edit');
+    } else {
+      setPasscodeError('Incorrect passcode. Please check with your administrator.');
+    }
+    setVerifying(false);
+  };
+
+  const handleSave = async () => {
+    if (!reason.trim()) return;
+    setSaving(true);
+    const updates = {};
+
+    const toISO = (timeStr) => {
+      const [h, m] = timeStr.split(':');
+      const dt = new Date(log.date);
+      dt.setHours(parseInt(h), parseInt(m), 0, 0);
+      return dt.toISOString();
+    };
+
+    if (canEditTimeIn && timeIn) updates.time_in = toISO(timeIn);
+    if (canEditBreakOut && breakOut) updates.break_time_out = toISO(breakOut);
+    if (canEditBreakIn && breakIn) updates.break_time_in = toISO(breakIn);
+    if (canEditTimeOut && timeOut) updates.time_out = toISO(timeOut);
+
+    const effTimeIn = updates.time_in || log.time_in;
+    const effBreakOut = updates.break_time_out || log.break_time_out;
+    const effBreakIn = updates.break_time_in || log.break_time_in;
+    const effTimeOut = updates.time_out || log.time_out;
+
+    if (effTimeIn && effTimeOut) {
+      let hrs = 0;
+      if (effBreakOut && effBreakIn) {
+        // 1st half + 2nd half
+        hrs += (new Date(effBreakOut).getTime() - new Date(effTimeIn).getTime()) / 3600000;
+        hrs += (new Date(effTimeOut).getTime() - new Date(effBreakIn).getTime()) / 3600000;
+      } else {
+        hrs = (new Date(effTimeOut).getTime() - new Date(effTimeIn).getTime()) / 3600000;
+      }
+      hrs = Math.max(0, hrs);
+      updates.hours_worked = parseFloat(hrs.toFixed(2));
+      updates.overtime_hours = parseFloat(Math.max(0, hrs - 8).toFixed(2));
+    }
+
+    let photoUrl = '';
+    if (photoDataUrl) {
+      try {
+        const blob = await fetch(photoDataUrl).then(r => r.blob());
+        const file = new File([blob], `audit_${Date.now()}.jpg`, { type: 'image/jpeg' });
+        const { file_url } = await uploadFile(file);
+        photoUrl = file_url;
+      } catch { /* non-blocking */ }
+    }
+
+    updates.notes = `Manual edit by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}${photoUrl ? ` | Audit photo: ${photoUrl}` : ''}`;
+
+    await onSave(log.id, updates);
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {step === 'passcode' ? 'Enter Daily Passcode' : `Edit Attendance — ${log.date}`}
+          </DialogTitle>
+        </DialogHeader>
+
+        {step === 'passcode' ? (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <KeyRound className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-amber-800">
+                Manual attendance edits require the administrator's daily passcode. This ensures all modifications are authorized and auditable.
+              </p>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-foreground">Daily Passcode</label>
+              <Input
+                type="password"
+                placeholder="Enter 6-digit passcode"
+                value={passcodeInput}
+                onChange={e => setPasscodeInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && verifyPasscode()}
+                className="mt-1 font-mono text-center tracking-widest text-lg"
+                maxLength={6}
+              />
+              {passcodeError && <p className="text-xs text-destructive mt-1">{passcodeError}</p>}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button onClick={verifyPasscode} disabled={verifying} className="gap-1.5">
+                <KeyRound className="w-3.5 h-3.5" />
+                {verifying ? 'Verifying...' : 'Proceed'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Reason */}
+            <div>
+              <label className="text-sm font-medium text-foreground">Reason for Manual Edit <span className="text-destructive">*</span></label>
+              <Textarea
+                placeholder="e.g. Employee forgot to tap out, system was offline, biometric malfunction..."
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                className="mt-1 h-20 text-sm"
+              />
+            </div>
+
+            <p className="text-xs text-muted-foreground">Only missing time fields can be filled in.</p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-foreground">Time In(1)</label>
+                <Input type="time" value={timeIn} onChange={e => setTimeIn(e.target.value)}
+                  disabled={!canEditTimeIn} className={`mt-1 ${!canEditTimeIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
+                {!canEditTimeIn && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground">Time Out(1)</label>
+                <Input type="time" value={breakOut} onChange={e => setBreakOut(e.target.value)}
+                  disabled={!canEditBreakOut} className={`mt-1 ${!canEditBreakOut ? 'opacity-50 cursor-not-allowed' : ''}`} />
+                {!canEditBreakOut && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground">Time In(2)</label>
+                <Input type="time" value={breakIn} onChange={e => setBreakIn(e.target.value)}
+                  disabled={!canEditBreakIn} className={`mt-1 ${!canEditBreakIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
+                {!canEditBreakIn && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium text-foreground">Time Out(2)</label>
+                <Input type="time" value={timeOut} onChange={e => setTimeOut(e.target.value)}
+                  disabled={!canEditTimeOut} className={`mt-1 ${!canEditTimeOut ? 'opacity-50 cursor-not-allowed' : ''}`} />
+                {!canEditTimeOut && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+              </div>
+            </div>
+
+            {/* Audit photo */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Editor Identity Capture (Audit)</p>
+              <div className="relative w-full aspect-video bg-muted rounded-xl overflow-hidden flex items-center justify-center border border-border">
+                <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover ${photoStatus === 'done' ? 'hidden' : ''}`} />
+                {photoStatus === 'done' && photoDataUrl && (
+                  <img src={photoDataUrl} alt="Audit" className="w-full h-full object-cover" />
+                )}
+                {photoStatus === 'capturing' && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 text-white text-xs">
+                    <Camera className="w-6 h-6 animate-pulse" /><span>Capturing photo...</span>
+                  </div>
+                )}
+                {photoStatus === 'error' && (
+                  <div className="flex flex-col items-center gap-1 text-muted-foreground text-xs p-4 text-center">
+                    <Camera className="w-6 h-6 opacity-30" /><span>Camera unavailable — no photo saved</span>
+                  </div>
+                )}
+              </div>
+              {photoStatus === 'done' && (
+                <Button variant="outline" size="sm" onClick={retake} className="gap-1 text-xs">
+                  <Camera className="w-3.5 h-3.5" /> Retake
+                </Button>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button onClick={handleSave} disabled={saving || !reason.trim() || photoStatus === 'capturing'}>
+                {saving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export default function Attendance() {
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [filterDept, setFilterDept] = useState('all');
+  const [editingLog, setEditingLog] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+  const [selectedPeriod, setSelectedPeriod] = useState('all');
+  const { user: currentUser } = useAuth();
+  const { activeCompanyId } = useCompany();
+  const qc = useQueryClient();
+
+  const baseWeek = new Date();
+  const weekStart = startOfWeek(addWeeks(baseWeek, weekOffset), { weekStartsOn: 6 });
+  const weekEnd = addDays(weekStart, 6);
+  const startStr = format(weekStart, 'yyyy-MM-dd');
+  const endStr = format(weekEnd, 'yyyy-MM-dd');
+
+  const { data: employees = [], isLoading: loadingEmployees } = useQuery({
+    queryKey: ['employees', activeCompanyId],
+    queryFn: () => entities.filter('Employee', { status: 'active', company_profile_id: activeCompanyId }),
+    enabled: !!activeCompanyId,
+  });
+
+  const { data: logs = [], isLoading: loadingLogs } = useQuery({
+    queryKey: ['attendance', selectedEmployee?.employee_id, startStr, endStr],
+    queryFn: async () => {
+      const all = await entities.filter('AttendanceLog', { employee_id: selectedEmployee.employee_id, company_profile_id: activeCompanyId });
+      return all.filter(l => l.date >= startStr && l.date <= endStr);
+    },
+    enabled: !!selectedEmployee && !!activeCompanyId,
+  });
+
+  const { data: payrollPeriods = [] } = useQuery({
+    queryKey: ['payrollPeriods', activeCompanyId],
+    queryFn: () => entities.filter('PayrollPeriod', { company_profile_id: activeCompanyId }),
+    enabled: !!activeCompanyId,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: ({ id, status }) => entities.update('AttendanceLog', id, { status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['attendance'] }),
+  });
+
+  const updateDayType = useMutation({
+    mutationFn: ({ id, day_type }) => entities.update('AttendanceLog', id, { day_type }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['attendance'] }),
+  });
+
+  const updateLog = async (id, updates) => {
+    await entities.update('AttendanceLog', id, updates);
+    qc.invalidateQueries({ queryKey: ['attendance'] });
+  };
+
+  const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
+  const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
+
+  const handleDownloadCSV = async () => {
+    setDownloading(true);
+    try {
+      const response = await invokeFunction('exportAttendanceCSV', { 
+        payrollPeriodId: selectedPeriod === 'all' ? null : selectedPeriod 
+      });
+      
+      // Handle response data
+      const csv = typeof response === 'string' ? response : 
+                  typeof response.csv === 'string' ? response.csv :
+                  typeof response.data === 'string' ? response.data : 
+                  JSON.stringify(response.data ?? response);
+      
+      const period = payrollPeriods.find(p => p.id === selectedPeriod);
+      const filename = period 
+        ? `attendance-${period.period_name.replace(/\s+/g, '-').toLowerCase()}.csv`
+        : `attendance-summary-${new Date().toISOString().split('T')[0]}.csv`;
+      
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('CSV export failed:', error);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const sortedLogs = [...logs].sort((a, b) => b.date.localeCompare(a.date) || (b.time_in || '').localeCompare(a.time_in || ''));
+
+  // ── EMPLOYEE LIST VIEW ──
+  if (!selectedEmployee) {
+    return (
+      <div className="p-6 space-y-5 max-w-5xl mx-auto">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Attendance</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">Select an employee to view their attendance</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+              <SelectTrigger className="w-44 h-8 text-sm"><SelectValue placeholder="All Periods" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Periods</SelectItem>
+                {payrollPeriods.map(p => <SelectItem key={p.id} value={p.id}>{p.period_name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button onClick={handleDownloadCSV} disabled={downloading} variant="outline" className="gap-1.5">
+              <Download className="w-4 h-4" />
+              {downloading ? 'Downloading...' : 'Download CSV'}
+            </Button>
+            <Select value={filterDept} onValueChange={setFilterDept}>
+            <SelectTrigger className="w-44 h-8 text-sm"><SelectValue placeholder="All Departments" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Departments</SelectItem>
+              {departments.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+            </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {loadingEmployees ? (
+          <div className="flex justify-center py-16">
+            <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredEmployees.map(emp => (
+              <button
+                key={emp.id}
+                onClick={() => setSelectedEmployee(emp)}
+                className="flex items-center gap-3 p-4 bg-card border border-border rounded-xl hover:border-primary hover:shadow-sm transition-all text-left"
+              >
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                  {emp.photo_url
+                    ? <img src={emp.photo_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                    : <User className="w-5 h-5 text-primary" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground text-sm truncate">{emp.first_name} {emp.last_name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{emp.position || emp.department || emp.employee_id}</p>
+                </div>
+              </button>
+            ))}
+            {filteredEmployees.length === 0 && (
+              <p className="col-span-3 text-center py-10 text-muted-foreground text-sm">No employees found.</p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── ATTENDANCE LOG VIEW ──
+  return (
+    <div className="p-6 space-y-5 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setSelectedEmployee(null); setWeekOffset(0); }}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">{selectedEmployee.first_name} {selectedEmployee.last_name}</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">
+              Week Covered — {format(weekStart, 'MMM d')} – {format(weekEnd, 'MMM d, yyyy')}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(w => w - 1)}>
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <Button variant="outline" size="sm" className="h-8" onClick={() => setWeekOffset(0)}>Current Week</Button>
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(w => w + 1)}>
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+
+      {loadingLogs ? (
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+        </div>
+      ) : (
+        <Card className="border border-border shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/50 border-b border-border">
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Date</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Shift</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Time In(1)</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time Out(1)</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time In(2)</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Time Out(2)</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Hours</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">OT</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">ND</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Late</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Day Type</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Status</th>
+                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedLogs.length === 0 ? (
+                  <tr><td colSpan={13} className="text-center py-10 text-muted-foreground">
+                    No attendance records for this week.
+                  </td></tr>
+                ) : (
+                  sortedLogs.map(log => {
+                    const missingTimeIn = !log.time_in;
+                    const missingTimeOut = !log.time_out;
+                    const canEdit = missingTimeIn || missingTimeOut;
+                    return (
+                      <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
+                        <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
+                        <td className="px-3 py-3 hidden md:table-cell">
+                          {selectedEmployee.work_schedule === 'night_shift'
+                            ? <span className="text-xs text-indigo-600 font-medium">Night</span>
+                            : <span className="text-xs text-amber-600 font-medium">Day</span>}
+                        </td>
+                        <td className="px-3 py-3">
+                          {log.time_in
+                            ? <span className="text-green-600 text-xs">{format(new Date(log.time_in), 'hh:mm a')}</span>
+                            : <span className="text-amber-500 font-medium text-xs">Missing</span>}
+                        </td>
+                        <td className="px-3 py-3 hidden lg:table-cell">
+                          {log.break_time_out
+                            ? <span className="text-orange-500 text-xs">{format(new Date(log.break_time_out), 'hh:mm a')}</span>
+                            : <span className="text-muted-foreground text-xs">—</span>}
+                        </td>
+                        <td className="px-3 py-3 hidden lg:table-cell">
+                          {log.break_time_in
+                            ? <span className="text-teal-600 text-xs">{format(new Date(log.break_time_in), 'hh:mm a')}</span>
+                            : <span className="text-muted-foreground text-xs">—</span>}
+                        </td>
+                        <td className="px-3 py-3">
+                          {log.time_out
+                            ? <span className="text-blue-600 text-xs">{format(new Date(log.time_out), 'hh:mm a')}</span>
+                            : <span className="text-amber-500 font-medium text-xs">Missing</span>}
+                        </td>
+                        <td className="px-3 py-3 text-xs">{log.hours_worked || '—'}</td>
+                        <td className="px-3 py-3 text-xs hidden md:table-cell">{log.overtime_hours > 0 ? `${log.overtime_hours}h` : '—'}</td>
+                        <td className="px-3 py-3 text-xs hidden md:table-cell">{log.night_diff_hours > 0 ? `${log.night_diff_hours}h` : '—'}</td>
+                        <td className="px-3 py-3 text-xs hidden md:table-cell">{log.late_minutes > 0 ? `${log.late_minutes}m` : '—'}</td>
+                        <td className="px-3 py-3 hidden lg:table-cell">
+                          <Select value={log.day_type || 'regular'} onValueChange={v => updateDayType.mutate({ id: log.id, day_type: v })}>
+                            <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="regular">Regular</SelectItem>
+                              <SelectItem value="rest_day">Rest Day</SelectItem>
+                              <SelectItem value="regular_holiday">Regular Holiday</SelectItem>
+                              <SelectItem value="special_holiday">Special Holiday</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        <td className="px-3 py-3">
+                          <Badge variant="outline" className={`text-xs capitalize ${statusColors[log.status] || ''}`}>{log.status}</Badge>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex gap-1">
+                            {canEdit && (
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-primary hover:bg-primary/10"
+                                title="Fill in missing time"
+                                onClick={() => setEditingLog(log)}>
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:bg-green-50"
+                              onClick={() => approveMutation.mutate({ id: log.id, status: 'approved' })}>
+                              <CheckCircle2 className="w-4 h-4" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                              onClick={() => approveMutation.mutate({ id: log.id, status: 'rejected' })}>
+                              <XCircle className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {editingLog && (
+        <EditAttendanceModal
+          log={editingLog}
+          currentUser={currentUser}
+          activeCompanyId={activeCompanyId}
+          onClose={() => setEditingLog(null)}
+          onSave={updateLog}
+        />
+      )}
+    </div>
+  );
+}

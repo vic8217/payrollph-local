@@ -1,0 +1,37 @@
+{
+  "name": "Settings",
+  "type": "object",
+  "properties": {
+    "company_profile_id": {
+      "type": "string",
+      "description": "Reference to the company these settings apply to"
+    },
+    "setting_name": {
+      "type": "string",
+      "description": "Name of the shift, e.g., 'Morning Shift', 'Night Shift'"
+    },
+    "shift_start_time": {
+      "type": "string",
+      "description": "Shift start time in HH:mm (24-hour format), e.g. 08:00"
+    },
+    "shift_end_time": {
+      "type": "string",
+      "description": "Shift end time in HH:mm (24-hour format), e.g. 17:00"
+    },
+    "grace_period_minutes": {
+      "type": "number",
+      "default": 0,
+      "description": "Number of minutes not to be considered late for payroll computation"
+    },
+    "is_default": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this shift is used as the default for late calculation"
+    }
+  },
+  "required": [
+    "setting_name",
+    "shift_start_time",
+    "shift_end_time"
+  ]
+}

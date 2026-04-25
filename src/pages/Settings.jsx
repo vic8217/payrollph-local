@@ -1,0 +1,242 @@
+import { useState } from 'react';
+import { appApi } from '@/lib/appApi';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Clock, Plus, Pencil, Trash2, Star } from 'lucide-react';
+import { useCompany } from '@/lib/CompanyContext';
+
+function ShiftForm({ shift, onSave, onClose }) {
+  const [form, setForm] = useState({
+    setting_name: shift?.setting_name || '',
+    shift_start_time: shift?.shift_start_time || '08:00',
+    shift_end_time: shift?.shift_end_time || '17:00',
+    grace_period_minutes: shift?.grace_period_minutes || 0,
+    is_default: shift?.is_default || false,
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(form);
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{shift ? 'Edit Shift' : 'Add Shift'}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-sm font-medium">Shift Name</label>
+            <Input
+              className="mt-1"
+              placeholder="e.g. Morning Shift"
+              value={form.setting_name}
+              onChange={e => setForm(f => ({ ...f, setting_name: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">Start Time</label>
+              <Input
+                type="time"
+                className="mt-1"
+                value={form.shift_start_time}
+                onChange={e => setForm(f => ({ ...f, shift_start_time: e.target.value }))}
+                required
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">End Time</label>
+              <Input
+                type="time"
+                className="mt-1"
+                value={form.shift_end_time}
+                onChange={e => setForm(f => ({ ...f, shift_end_time: e.target.value }))}
+                required
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Grace Period (minutes)</label>
+            <Input
+              type="number"
+              min="0"
+              className="mt-1"
+              placeholder="0"
+              value={form.grace_period_minutes}
+              onChange={e => setForm(f => ({ ...f, grace_period_minutes: parseInt(e.target.value) || 0 }))}
+            />
+            <p className="text-xs text-muted-foreground mt-1">Minutes not to be considered late for payroll</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="is_default"
+              checked={form.is_default}
+              onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))}
+              className="rounded"
+            />
+            <label htmlFor="is_default" className="text-sm font-medium cursor-pointer">
+              Set as default shift (used for late calculation)
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit">Save Shift</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export default function Settings() {
+  const qc = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [editingShift, setEditingShift] = useState(null);
+  const { activeCompanyId } = useCompany();
+
+  const { data: shifts = [], isLoading } = useQuery({
+    queryKey: ['settings', activeCompanyId],
+    queryFn: () => appApi.entities.Settings.filter({ company_profile_id: activeCompanyId }),
+    enabled: !!activeCompanyId,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data) => {
+      // If new shift is default, unset all others first
+      if (data.is_default) {
+        await Promise.all(shifts.filter(s => s.is_default).map(s =>
+          appApi.entities.Settings.update(s.id, { is_default: false })
+        ));
+      }
+      return appApi.entities.Settings.create({ ...data, company_profile_id: activeCompanyId });
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setShowForm(false); },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }) => {
+      if (data.is_default) {
+        await Promise.all(shifts.filter(s => s.is_default && s.id !== id).map(s =>
+          appApi.entities.Settings.update(s.id, { is_default: false })
+        ));
+      }
+      return appApi.entities.Settings.update(id, data);
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setEditingShift(null); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => appApi.entities.Settings.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  });
+
+  const setDefault = (shift) => {
+    updateMutation.mutate({ id: shift.id, data: { is_default: true } });
+  };
+
+  const formatTime = (t) => {
+    if (!t) return '—';
+    const [h, m] = t.split(':');
+    const d = new Date();
+    d.setHours(parseInt(h), parseInt(m));
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  };
+
+  return (
+    <div className="p-6 space-y-6 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Shift Settings</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">Define work shifts and set a default for late minute calculation</p>
+        </div>
+        <Button onClick={() => setShowForm(true)} className="gap-1.5">
+          <Plus className="w-4 h-4" /> Add Shift
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+        </div>
+      ) : shifts.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+            <Clock className="w-10 h-10 text-muted-foreground opacity-40" />
+            <p className="text-muted-foreground text-sm">No shifts configured yet.<br />Add a shift to enable late minute tracking.</p>
+            <Button onClick={() => setShowForm(true)} variant="outline" className="gap-1.5 mt-2">
+              <Plus className="w-4 h-4" /> Add First Shift
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {shifts.map(shift => (
+            <Card key={shift.id} className={`border ${shift.is_default ? 'border-primary/40 bg-primary/5' : 'border-border'}`}>
+              <CardContent className="flex items-center justify-between p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Clock className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-foreground">{shift.setting_name}</span>
+                      {shift.is_default && (
+                        <Badge className="bg-primary/10 text-primary border-primary/20 text-xs gap-1">
+                          <Star className="w-3 h-3" /> Default
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      {formatTime(shift.shift_start_time)} — {formatTime(shift.shift_end_time)}
+                      {shift.grace_period_minutes > 0 && (
+                        <span className="text-xs ml-2">• Grace: {shift.grace_period_minutes}min</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {!shift.is_default && (
+                    <Button size="sm" variant="outline" className="gap-1 text-xs h-8"
+                      onClick={() => setDefault(shift)}>
+                      <Star className="w-3.5 h-3.5" /> Set Default
+                    </Button>
+                  )}
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                    onClick={() => setEditingShift(shift)}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                    onClick={() => deleteMutation.mutate(shift.id)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {showForm && (
+        <ShiftForm
+          onSave={(data) => createMutation.mutate(data)}
+          onClose={() => setShowForm(false)}
+        />
+      )}
+      {editingShift && (
+        <ShiftForm
+          shift={editingShift}
+          onSave={(data) => updateMutation.mutate({ id: editingShift.id, data })}
+          onClose={() => setEditingShift(null)}
+        />
+      )}
+    </div>
+  );
+}

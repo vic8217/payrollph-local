@@ -1,0 +1,121 @@
+{
+  "name": "CashAdvance",
+  "type": "object",
+  "properties": {
+    "company_profile_id": {
+      "type": "string",
+      "description": "Reference to the company this cash advance belongs to"
+    },
+    "employee_id": {
+      "type": "string"
+    },
+    "employee_name": {
+      "type": "string"
+    },
+    "department": {
+      "type": "string"
+    },
+    "amount_requested": {
+      "type": "number"
+    },
+    "amount_approved": {
+      "type": "number"
+    },
+    "advance_type": {
+      "type": "string",
+      "enum": [
+        "regular",
+        "emergency",
+        "worked_day"
+      ],
+      "default": "regular",
+      "description": "regular = subject to balance limit, emergency = bypasses limit, worked_day = 40% of worked days pay for the period"
+    },
+    "emergency_reason": {
+      "type": "string",
+      "enum": [
+        "emergency_spouse",
+        "emergency_children",
+        "emergency_parents",
+        "emergency_medicine"
+      ],
+      "description": "Only for emergency type"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "prescription_url": {
+      "type": "string",
+      "description": "Attachment URL for medicine emergency (prescription required)"
+    },
+    "request_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "needed_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "deduction_payroll_periods": {
+      "type": "number",
+      "description": "Total number of payroll periods over which the amount will be deducted"
+    },
+    "deduction_amount_per_payroll": {
+      "type": "number",
+      "description": "Fixed amount to be deducted per payroll period"
+    },
+    "deduction_periods_remaining": {
+      "type": "number",
+      "description": "How many payroll periods of deduction are still remaining"
+    },
+    "worked_days_at_request": {
+      "type": "number",
+      "description": "Number of worked days recorded at time of worked_day advance request"
+    },
+    "daily_rate_at_request": {
+      "type": "number",
+      "description": "Daily rate used to compute the 40% worked-day advance amount"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved_by_manager",
+        "approved",
+        "rejected",
+        "deducted"
+      ],
+      "default": "pending"
+    },
+    "manager_notes": {
+      "type": "string"
+    },
+    "hr_notes": {
+      "type": "string"
+    },
+    "payroll_period_id": {
+      "type": "string"
+    },
+    "deduction_payroll_period": {
+      "type": "string"
+    },
+    "received": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the employee has physically received the emergency cash advance"
+    },
+    "received_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "received_photo_url": {
+      "type": "string",
+      "description": "Selfie/photo taken when employee acknowledges receipt"
+    }
+  },
+  "required": [
+    "employee_id",
+    "amount_requested",
+    "reason"
+  ]
+}

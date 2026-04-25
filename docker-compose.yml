@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: payrollph-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: payrollph
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - payrollph-postgres:/var/lib/postgresql/data
+
+volumes:
+  payrollph-postgres:

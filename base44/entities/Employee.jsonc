@@ -1,0 +1,116 @@
+{
+  "name": "Employee",
+  "type": "object",
+  "properties": {
+    "company_profile_id": {
+      "type": "string",
+      "description": "Reference to the company this employee belongs to"
+    },
+    "employee_id": {
+      "type": "string",
+      "description": "Unique employee ID / badge number"
+    },
+    "first_name": {
+      "type": "string"
+    },
+    "last_name": {
+      "type": "string"
+    },
+    "middle_name": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "phone": {
+      "type": "string"
+    },
+    "department": {
+      "type": "string"
+    },
+    "position": {
+      "type": "string"
+    },
+    "employment_type": {
+      "type": "string",
+      "enum": [
+        "regular",
+        "probationary",
+        "contractual",
+        "part_time",
+        "agency"
+      ]
+    },
+    "agency_fee_percentage": {
+      "type": "number",
+      "description": "Agency fee as percentage of base payroll (e.g., 5 for 5%)"
+    },
+    "date_hired": {
+      "type": "string",
+      "format": "date"
+    },
+    "daily_rate": {
+      "type": "number",
+      "description": "Daily rate in PHP"
+    },
+    "monthly_rate": {
+      "type": "number",
+      "description": "Monthly rate in PHP (for computing deductions)"
+    },
+    "work_schedule": {
+      "type": "string",
+      "enum": [
+        "day_shift",
+        "night_shift"
+      ],
+      "default": "day_shift",
+      "description": "Employee's assigned work shift classification"
+    },
+    "sss_number": {
+      "type": "string"
+    },
+    "philhealth_number": {
+      "type": "string"
+    },
+    "pagibig_number": {
+      "type": "string"
+    },
+    "tin_number": {
+      "type": "string"
+    },
+    "bank_account": {
+      "type": "string"
+    },
+    "max_cash_advance": {
+      "type": "number",
+      "description": "Maximum cash advance allowed (set by HR)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive",
+        "terminated"
+      ],
+      "default": "active"
+    },
+    "user_email": {
+      "type": "string",
+      "description": "Linked app user email"
+    },
+    "qr_code": {
+      "type": "string",
+      "description": "QR code value for attendance scanning"
+    },
+    "photo_url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "employee_id",
+    "first_name",
+    "last_name",
+    "daily_rate"
+  ]
+}

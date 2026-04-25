@@ -1,0 +1,30 @@
+{
+  "name": "NoWorkDay",
+  "type": "object",
+  "properties": {
+    "company_profile_id": {
+      "type": "string",
+      "description": "Reference to the company this no-work day applies to"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "The declared no-work day"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Reason for declaring no work (e.g. weather, company event)"
+    },
+    "declared_by": {
+      "type": "string",
+      "description": "Name or email of HR/management who declared this"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "date",
+    "reason"
+  ]
+}

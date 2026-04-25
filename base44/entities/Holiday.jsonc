@@ -1,0 +1,36 @@
+{
+  "name": "Holiday",
+  "type": "object",
+  "properties": {
+    "company_profile_id": {
+      "type": "string",
+      "description": "Reference to the company this holiday applies to"
+    },
+    "name": {
+      "type": "string"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "regular_holiday",
+        "special_holiday"
+      ],
+      "description": "regular = 200% pay, special = 130% pay"
+    },
+    "description": {
+      "type": "string"
+    },
+    "year": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "name",
+    "date",
+    "type"
+  ]
+}

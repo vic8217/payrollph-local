@@ -1,0 +1,31 @@
+{
+  "name": "DailyPasscode",
+  "type": "object",
+  "properties": {
+    "company_profile_id": {
+      "type": "string",
+      "description": "Reference to the company this passcode is for"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "The date this passcode is valid for"
+    },
+    "passcode": {
+      "type": "string",
+      "description": "6-digit passcode for HR officers"
+    },
+    "manager_passcode": {
+      "type": "string",
+      "description": "6-digit passcode for managers"
+    },
+    "generated_by": {
+      "type": "string",
+      "description": "Email of admin who generated the passcode"
+    }
+  },
+  "required": [
+    "date",
+    "passcode"
+  ]
+}
