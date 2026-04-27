@@ -67,6 +67,15 @@ curl -X POST http://localhost:3000/api/auth/register-first-admin \
 
 Then sign in at `/api/auth/signin`.
 
+## Deployment Docs
+
+- DigitalOcean deployment runbook: `DEPLOY_DO.md`
+  - Open quickly: `sed -n '1,200p' DEPLOY_DO.md`
+- Production env + Namecheap DNS template: `docs/ENV_PROD_EXAMPLE.md`
+  - Open quickly: `sed -n '1,200p' docs/ENV_PROD_EXAMPLE.md`
+- Post-deploy smoke checks: `scripts/postdeploy-check.sh`
+  - Run checks: `bash scripts/postdeploy-check.sh https://YOUR_DOMAIN`
+
 ## Migration Notes
 
 The first standalone pass uses a Prisma-backed `EntityRecord` table that preserves the existing Base44 entity payload shapes. This keeps the current React screens working while removing the Base44 runtime dependency. Once data is stable, the entities can be normalized into dedicated relational tables without rewriting the UI all at once.
