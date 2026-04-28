@@ -40,10 +40,15 @@ const S = {
 export default function EmployeeIdCard({ employee }) {
   const qrRef = useRef(null);
   const [company, setCompany] = useState(null);
+  const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
     appApi.entities.CompanyProfile.list().then(list => { if (list?.length > 0) setCompany(list[0]); });
   }, []);
+
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [company?.logo_url]);
 
   useEffect(() => {
     if (qrRef.current && employee?.qr_code) {
@@ -65,7 +70,7 @@ export default function EmployeeIdCard({ employee }) {
       ? `<img src="${qrDataUrl}" style="width:120px;height:120px;border-radius:4px;" />`
       : `<div style="width:64px;height:64px;border:2px dashed #d1d5db;border-radius:4px;display:flex;align-items:center;justify-content:center;"><span style="font-size:7px;color:#9ca3af;">No QR</span></div>`;
     const companyName = company?.trade_name || company?.company_name || 'PayrollPH';
-    const logoHtml = company?.logo_url
+    const logoHtml = company?.logo_url && !logoFailed
       ? `<img src="${company.logo_url}" style="height:28px;max-width:100px;object-fit:contain;margin-bottom:2px;" />`
       : `<p style="color:#fff;font-weight:800;font-size:13px;letter-spacing:3px;margin:0;">${companyName}</p>`;
 
@@ -104,7 +109,7 @@ export default function EmployeeIdCard({ employee }) {
 
   const getBackHTML = () => {
     const companyName = company?.trade_name || company?.company_name || 'PayrollPH';
-    const logoHtml = company?.logo_url
+    const logoHtml = company?.logo_url && !logoFailed
       ? `<img src="${company.logo_url}" style="height:28px;max-width:100px;object-fit:contain;margin-bottom:2px;" />`
       : `<p style="color:#fff;font-weight:800;font-size:13px;letter-spacing:3px;margin:0;">${companyName}</p>`;
     return `
@@ -161,8 +166,8 @@ export default function EmployeeIdCard({ employee }) {
       {/* FRONT preview */}
       <div id="id-card-front" style={{ ...S.card, borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', border: '1px solid #e5e7eb' }}>
         <div style={S.banner}>
-          {company?.logo_url
-            ? <img src={company.logo_url} alt="logo" style={{ height: '28px', maxWidth: '100px', objectFit: 'contain', marginBottom: '2px' }} />
+          {company?.logo_url && !logoFailed
+            ? <img src={company.logo_url} alt="logo" onError={() => setLogoFailed(true)} style={{ height: '28px', maxWidth: '100px', objectFit: 'contain', marginBottom: '2px' }} />
             : <p style={S.bannerTitle}>{company?.trade_name || company?.company_name || 'PayrollPH'}</p>
           }
           <p style={S.bannerSub}>Employee ID Card</p>
@@ -212,8 +217,8 @@ export default function EmployeeIdCard({ employee }) {
       {/* BACK preview */}
       <div id="id-card-back" style={{ ...S.card, borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', border: '1px solid #e5e7eb' }}>
         <div style={S.banner}>
-          {company?.logo_url
-            ? <img src={company.logo_url} alt="logo" style={{ height: '28px', maxWidth: '100px', objectFit: 'contain', marginBottom: '2px' }} />
+          {company?.logo_url && !logoFailed
+            ? <img src={company.logo_url} alt="logo" onError={() => setLogoFailed(true)} style={{ height: '28px', maxWidth: '100px', objectFit: 'contain', marginBottom: '2px' }} />
             : <p style={S.bannerTitle}>{company?.trade_name || company?.company_name || 'PayrollPH'}</p>
           }
           <p style={{ ...S.bannerSub, letterSpacing: '2px' }}>Attendance Policy</p>

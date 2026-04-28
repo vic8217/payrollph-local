@@ -19,6 +19,11 @@ NEXTAUTH_SECRET="replace-with-long-random-secret"
 
 # Optional: if your runtime needs explicit port
 PORT="3000"
+
+# Optional: persistent upload directory for logos/photos/files.
+# Point this to a mounted persistent disk/volume in production.
+# If omitted, uploads are stored in public/uploads inside the app directory.
+UPLOAD_DIR="/var/lib/payrollph/uploads"
 ```
 
 Generate a secret:

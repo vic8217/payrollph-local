@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Building2, Save, Plus, Upload } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import ImageWithFallback from '@/components/ImageWithFallback';
 
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
@@ -205,7 +206,16 @@ export default function CompanyProfile() {
                 </label>
               </div>
               {form.logo_url && (
-                <img src={form.logo_url} alt="preview" className="mt-2 h-16 rounded-lg border object-contain" />
+                <ImageWithFallback
+                  src={form.logo_url}
+                  alt="Logo preview"
+                  className="mt-2 h-16 rounded-lg border object-contain"
+                  fallback={
+                    <div className="mt-2 h-16 rounded-lg border border-dashed bg-muted/40 px-4 flex items-center text-xs text-muted-foreground">
+                      Logo file is unavailable. Upload the logo again or enter a valid image URL.
+                    </div>
+                  }
+                />
               )}
             </div>
 
@@ -237,7 +247,16 @@ export default function CompanyProfile() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-3">
                     {company.logo_url ? (
-                      <img src={company.logo_url} alt="logo" className="w-12 h-12 rounded-lg object-cover border" />
+                      <ImageWithFallback
+                        src={company.logo_url}
+                        alt={`${company.company_name} logo`}
+                        className="w-12 h-12 rounded-lg object-cover border"
+                        fallback={
+                          <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <Building2 className="w-6 h-6 text-primary" />
+                          </div>
+                        }
+                      />
                     ) : (
                       <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
                         <Building2 className="w-6 h-6 text-primary" />
