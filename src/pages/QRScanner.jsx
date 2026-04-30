@@ -11,6 +11,30 @@ import { format } from 'date-fns';
 
 const normalizeQrValue = (value) => String(value || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/-PayrollPH$/i, '');
 
+function addOneDay(date) {
+  const d = new Date(`${date}T00:00:00+08:00`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return format(d, 'yyyy-MM-dd');
+}
+
+function scheduledBreakIn(employee, date) {
+  if (!employee?.break_time) return null;
+
+  const [hours, minutes] = String(employee.break_time).split(':').map(Number);
+  const breakDate = employee.work_schedule === 'night_shift' && hours < 12 ? addOneDay(date) : date;
+  const total = hours * 60 + minutes + 30;
+  const normalized = total % (24 * 60);
+  const breakInDate = total >= 24 * 60 ? addOneDay(breakDate) : breakDate;
+  const breakInTime = `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+
+  return new Date(`${breakInDate}T${breakInTime}:00+08:00`).toISOString();
+}
+
+function isAutoScheduledBreakIn(employee, date, value) {
+  const autoBreakIn = scheduledBreakIn(employee, date);
+  return !!value && !!autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime();
+}
+
 export default function QRScanner() {
   const navigate = useNavigate();
   const [scanInput, setScanInput] = useState('');
@@ -69,8 +93,11 @@ export default function QRScanner() {
     const todayLog = sorted[0];
 
     let action;
+    const hasActualBreakIn = todayLog?.break_time_in && !isAutoScheduledBreakIn(employee, today, todayLog.break_time_in);
     if (!todayLog || !todayLog.time_in) {
       action = 'time_in';
+    } else if (employee.break_time && !hasActualBreakIn && !todayLog.time_out) {
+      action = 'break_time_in';
     } else if (todayLog.time_in && !todayLog.time_out) {
       action = 'time_out';
     } else {

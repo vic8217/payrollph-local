@@ -90,8 +90,8 @@ export default function Employees() {
             emp.max_cash_advance = emp.max_cash_advance ? parseFloat(emp.max_cash_advance) : undefined;
             const beginningBalance = parseFloat(emp.cash_advance_beginning_balance) || 0;
             const weeklyDeduction = parseFloat(emp.cash_advance_weekly_deduction) || 0;
-            delete emp.cash_advance_beginning_balance;
-            delete emp.cash_advance_weekly_deduction;
+            emp.cash_advance_beginning_balance = beginningBalance || undefined;
+            emp.cash_advance_weekly_deduction = weeklyDeduction || undefined;
             emp.company_profile_id = activeCompanyId;
 
             await appApi.entities.Employee.create(emp);

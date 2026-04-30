@@ -21,6 +21,8 @@ const FIELDS = [
   field('Daily Rate (₱)', 'daily_rate', 'number', true),
   field('Monthly Rate (₱)', 'monthly_rate', 'number'),
   field('Max Cash Advance (₱)', 'max_cash_advance', 'number'),
+  field('Beginning Cash Advance Balance (₱)', 'cash_advance_beginning_balance', 'number'),
+  field('Cash Advance Deduction Every Payroll Week (₱)', 'cash_advance_weekly_deduction', 'number'),
   field('SSS Number', 'sss_number'),
   field('PhilHealth Number', 'philhealth_number'),
   field('Pag-IBIG Number', 'pagibig_number'),
@@ -140,22 +142,68 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
     set('qr_code', form.employee_id || String(Date.now()));
   };
 
+  const syncBeginningCashAdvance = async (employeeData) => {
+    const beginningBalance = parseFloat(employeeData.cash_advance_beginning_balance) || 0;
+    const weeklyDeduction = parseFloat(employeeData.cash_advance_weekly_deduction) || 0;
+    if (beginningBalance <= 0 || weeklyDeduction <= 0 || !employeeData.employee_id) return;
+
+    const payrollWeeks = Math.ceil(beginningBalance / weeklyDeduction);
+    const payload = {
+      employee_id: employeeData.employee_id,
+      employee_name: [employeeData.first_name, employeeData.middle_name, employeeData.last_name].filter(Boolean).join(' '),
+      department: employeeData.department,
+      amount_requested: beginningBalance,
+      amount_approved: beginningBalance,
+      beginning_balance: beginningBalance,
+      remaining_balance: beginningBalance,
+      deduction_payroll_periods: payrollWeeks,
+      deduction_amount_per_payroll: weeklyDeduction,
+      deduction_periods_remaining: payrollWeeks,
+      reason: 'Beginning balance from previous cash advance',
+      advance_type: 'beginning_balance',
+      request_date: employeeData.date_hired || new Date().toISOString().slice(0, 10),
+      status: 'approved',
+      company_profile_id: employeeData.company_profile_id || activeCompanyId,
+    };
+
+    const existing = await appApi.entities.CashAdvance.filter({
+      employee_id: employeeData.employee_id,
+      company_profile_id: employeeData.company_profile_id || activeCompanyId,
+    });
+    const beginningAdvance = existing.find(ca => ca.advance_type === 'beginning_balance');
+
+    if (beginningAdvance?.id) {
+      await appApi.entities.CashAdvance.update(beginningAdvance.id, payload);
+    } else {
+      await appApi.entities.CashAdvance.create(payload);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
-    const data = { ...form };
-    if (data.daily_rate) data.daily_rate = parseFloat(data.daily_rate);
-    if (data.monthly_rate) data.monthly_rate = parseFloat(data.monthly_rate);
-    if (data.max_cash_advance) data.max_cash_advance = parseFloat(data.max_cash_advance);
-    if (employee?.id) {
-      await appApi.entities.Employee.update(employee.id, data);
-    } else {
-      if (!data.qr_code) data.qr_code = data.employee_id;
+    try {
+      const data = { ...form };
+      if (data.daily_rate) data.daily_rate = parseFloat(data.daily_rate);
+      if (data.monthly_rate) data.monthly_rate = parseFloat(data.monthly_rate);
+      if (data.max_cash_advance) data.max_cash_advance = parseFloat(data.max_cash_advance);
+      if (data.cash_advance_beginning_balance) data.cash_advance_beginning_balance = parseFloat(data.cash_advance_beginning_balance);
+      if (data.cash_advance_weekly_deduction) data.cash_advance_weekly_deduction = parseFloat(data.cash_advance_weekly_deduction);
       if (!data.company_profile_id) data.company_profile_id = activeCompanyId;
-      await appApi.entities.Employee.create(data);
+
+      let savedEmployee;
+      if (employee?.id) {
+        savedEmployee = await appApi.entities.Employee.update(employee.id, data);
+      } else {
+        if (!data.qr_code) data.qr_code = data.employee_id;
+        savedEmployee = await appApi.entities.Employee.create(data);
+      }
+
+      await syncBeginningCashAdvance(savedEmployee || data);
+      onSaved();
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    onSaved();
   };
 
   return (

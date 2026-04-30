@@ -22,6 +22,47 @@ const statusColors = {
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 
+function addThirtyMinutes(time) {
+  const [hours, minutes] = String(time || '00:00').split(':').map(Number);
+  const total = hours * 60 + minutes + 30;
+  const normalized = total % (24 * 60);
+  return {
+    time: `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`,
+    crossesMidnight: total >= 24 * 60,
+  };
+}
+
+function scheduledBreak(employee, date) {
+  if (!employee?.break_time) return null;
+
+  const [breakHour] = employee.break_time.split(':').map(Number);
+  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12
+    ? format(addDays(new Date(`${date}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
+    : date;
+  return {
+    break_time_out: new Date(`${breakDate}T${employee.break_time}:00+08:00`).toISOString(),
+  };
+}
+
+function diffHours(start, end) {
+  return Math.max(0, (new Date(end).getTime() - new Date(start).getTime()) / 3600000);
+}
+
+function scheduledBreakIn(employee, date) {
+  if (!employee?.break_time) return null;
+
+  const [breakHour] = employee.break_time.split(':').map(Number);
+  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12
+    ? format(addDays(new Date(`${date}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
+    : date;
+  const breakIn = addThirtyMinutes(employee.break_time);
+  const breakInDate = breakIn.crossesMidnight
+    ? format(addDays(new Date(`${breakDate}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
+    : breakDate;
+
+  return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
+}
+
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
     headers: {
@@ -413,6 +454,51 @@ export default function Attendance() {
     await entities.update('AttendanceLog', id, updates);
     qc.invalidateQueries({ queryKey: ['attendance'] });
   };
+
+  useEffect(() => {
+    if (!selectedEmployee?.break_time || logs.length === 0) return;
+
+    const logsNeedingBreak = logs.filter(log => {
+      const autoBreakOut = scheduledBreak(selectedEmployee, log.date);
+      const autoBreakIn = scheduledBreakIn(selectedEmployee, log.date);
+      const shouldClearAutoBreakIn = log.break_time_in && autoBreakIn && new Date(log.break_time_in).getTime() === new Date(autoBreakIn).getTime();
+      return log.time_in && autoBreakOut && (!log.break_time_out || shouldClearAutoBreakIn);
+    });
+
+    if (logsNeedingBreak.length === 0) return;
+
+    let cancelled = false;
+    const applyScheduledBreaks = async () => {
+      await Promise.all(logsNeedingBreak.map(log => {
+        const autoBreak = scheduledBreak(selectedEmployee, log.date);
+        const autoBreakIn = scheduledBreakIn(selectedEmployee, log.date);
+        const shouldClearAutoBreakIn = log.break_time_in && autoBreakIn && new Date(log.break_time_in).getTime() === new Date(autoBreakIn).getTime();
+        const updates = {
+          ...(!log.break_time_out ? { break_time_out: autoBreak.break_time_out } : {}),
+          ...(shouldClearAutoBreakIn ? { break_time_in: null } : {}),
+        };
+
+        const effectiveBreakOut = updates.break_time_out || log.break_time_out;
+        const effectiveBreakIn = shouldClearAutoBreakIn ? null : log.break_time_in;
+        if (log.time_out && effectiveBreakOut && effectiveBreakIn) {
+          const grossHours = diffHours(log.time_in, log.time_out);
+          const breakHours = diffHours(effectiveBreakOut, effectiveBreakIn);
+          const hoursWorked = Math.max(0, grossHours - breakHours);
+          updates.hours_worked = Number(hoursWorked.toFixed(2));
+          updates.overtime_hours = Number(Math.max(0, hoursWorked - 8).toFixed(2));
+        }
+
+        return entities.update('AttendanceLog', log.id, updates);
+      }));
+
+      if (!cancelled) {
+        qc.invalidateQueries({ queryKey: ['attendance'] });
+      }
+    };
+
+    applyScheduledBreaks().catch(console.error);
+    return () => { cancelled = true; };
+  }, [selectedEmployee?.id, selectedEmployee?.break_time, selectedEmployee?.work_schedule, logs, qc]);
 
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);

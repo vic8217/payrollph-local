@@ -16,6 +16,14 @@ const LABOR_CODE_INFO = {
       { code: 'Labor Code Art. 303', title: 'Penalties for Violations', text: 'Willful non-compliance with time & attendance requirements may result in fines up to ₱100,000 and/or imprisonment.' },
     ],
   },
+  break_time_in: {
+    articles: [
+      { code: 'DOLE Time-Keeping', title: 'Break Return Record', text: 'Returning from break should be recorded accurately as part of the employee attendance record.' },
+    ],
+    penal: [
+      { code: 'Labor Code Art. 303', title: 'Penalties for Violations', text: 'Failure to keep accurate time records may expose the employer to penalties and payroll corrections.' },
+    ],
+  },
   time_out: {
     articles: [
       { code: 'Labor Code Art. 84', title: 'Hours Worked', text: 'Hours worked shall include all time during which an employee is required to be on duty or at a prescribed workplace.' },
@@ -26,6 +34,53 @@ const LABOR_CODE_INFO = {
     ],
   },
 };
+
+function addOneDay(date) {
+  const d = new Date(`${date}T00:00:00+08:00`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return format(d, 'yyyy-MM-dd');
+}
+
+function scheduledBreak(employee, date) {
+  if (!employee?.break_time) return null;
+
+  const [breakHour] = employee.break_time.split(':').map(Number);
+  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12 ? addOneDay(date) : date;
+
+  return {
+    break_time_out: new Date(`${breakDate}T${employee.break_time}:00+08:00`).toISOString(),
+  };
+}
+
+function addThirtyMinutes(time) {
+  const [hours, minutes] = String(time || '00:00').split(':').map(Number);
+  const total = hours * 60 + minutes + 30;
+  const normalized = total % (24 * 60);
+  return {
+    time: `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`,
+    crossesMidnight: total >= 24 * 60,
+  };
+}
+
+function scheduledBreakIn(employee, date) {
+  if (!employee?.break_time) return null;
+
+  const [breakHour] = employee.break_time.split(':').map(Number);
+  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12 ? addOneDay(date) : date;
+  const breakIn = addThirtyMinutes(employee.break_time);
+  const breakInDate = breakIn.crossesMidnight ? addOneDay(breakDate) : breakDate;
+
+  return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
+}
+
+function isAutoScheduledBreakIn(employee, date, value) {
+  const autoBreakIn = scheduledBreakIn(employee, date);
+  return !!value && !!autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime();
+}
+
+function diffHours(start, end) {
+  return Math.max(0, (new Date(end).getTime() - new Date(start).getTime()) / 3600000);
+}
 
 // Face capture component
 function FaceCapture({ onCapture, captured }) {
@@ -127,7 +182,7 @@ export default function ScanConfirm() {
   const navigate = useNavigate();
   const params = new URLSearchParams(window.location.search);
   const empId = params.get('empId');
-  const action = params.get('action'); // 'time_in' or 'time_out'
+  const action = params.get('action'); // 'time_in', 'break_time_in', or 'time_out'
   const logId = params.get('logId');
 
   const [employee, setEmployee] = useState(null);
@@ -179,25 +234,44 @@ export default function ScanConfirm() {
         effectiveTimeIn = snapped.toISOString();
       }
       await appApi.entities.AttendanceLog.create({
+        company_profile_id: employee.company_profile_id,
         employee_id: employee.employee_id,
         employee_name: `${employee.first_name} ${employee.last_name}`,
         date: today,
         time_in: effectiveTimeIn,
+        ...(scheduledBreak(employee, today) || {}),
         day_type: 'regular',
         status: 'pending',
         notes: isLunchWindow ? 'Time-in snapped to 1:00 PM (lunch window rule). No overtime credited.' : (capturedPhoto ? 'Photo captured on time-in' : ''),
       });
       setDone({ action: 'time_in', employee, lunchSnapped: isLunchWindow });
+    } else if (action === 'break_time_in' && todayLog) {
+      const autoBreak = scheduledBreak(employee, today);
+      await appApi.entities.AttendanceLog.update(todayLog.id, {
+        ...(!todayLog.break_time_out && autoBreak ? { break_time_out: autoBreak.break_time_out } : {}),
+        break_time_in: now,
+        notes: capturedPhoto ? 'Photo captured on time-in after break' : '',
+      });
+      setDone({ action: 'break_time_in', employee });
     } else if (action === 'time_out' && todayLog) {
-      const timeIn = new Date(todayLog.time_in);
-      const timeOut = new Date(now);
-      const hoursWorked = Math.max(0, (timeOut - timeIn) / (1000 * 60 * 60));
+      const autoBreak = scheduledBreak(employee, today);
+      const breakUpdates = autoBreak ? {
+        ...(!todayLog.break_time_out ? { break_time_out: autoBreak.break_time_out } : {}),
+        ...(isAutoScheduledBreakIn(employee, today, todayLog.break_time_in) ? { break_time_in: null } : {}),
+      } : {};
+      const effectiveBreakOut = breakUpdates.break_time_out || todayLog.break_time_out;
+      const effectiveBreakIn = breakUpdates.break_time_in === null ? null : todayLog.break_time_in;
+      const grossHours = diffHours(todayLog.time_in, now);
+      const breakHours = effectiveBreakOut && effectiveBreakIn ? diffHours(effectiveBreakOut, effectiveBreakIn) : 0;
+      const hoursWorked = Math.max(0, grossHours - breakHours);
       const overtime = Math.max(0, hoursWorked - 8);
+      const timeIn = new Date(todayLog.time_in);
       const workStart = new Date(timeIn);
       workStart.setHours(8, 0, 0, 0);
       const lateMinutes = Math.floor(Math.max(0, timeIn - workStart) / 60000);
 
       await appApi.entities.AttendanceLog.update(todayLog.id, {
+        ...breakUpdates,
         time_out: now,
         hours_worked: parseFloat(hoursWorked.toFixed(2)),
         overtime_hours: parseFloat(overtime.toFixed(2)),
@@ -213,6 +287,44 @@ export default function ScanConfirm() {
   const handleCancel = () => navigate('/scan');
 
   const laborInfo = action ? LABOR_CODE_INFO[action] : null;
+  const actionMeta = {
+    time_in: {
+      title: 'Time IN',
+      confirmTitle: 'Confirm Time IN',
+      successTitle: 'Time IN Recorded!',
+      pill: 'TIME IN',
+      button: 'Confirm Time IN ✓',
+      color: 'green',
+      icon: <LogIn className="w-5 h-5 text-green-600" />,
+    },
+    break_time_in: {
+      title: 'Time In(2)',
+      confirmTitle: 'Confirm Time In(2)',
+      successTitle: 'Time In(2) Recorded!',
+      pill: 'TIME IN(2)',
+      button: 'Confirm Time In(2) ✓',
+      color: 'blue',
+      icon: <LogIn className="w-5 h-5 text-blue-600" />,
+    },
+    time_out: {
+      title: 'Time OUT',
+      confirmTitle: 'Confirm Time OUT',
+      successTitle: 'Time OUT Recorded!',
+      pill: 'TIME OUT',
+      button: 'Confirm Time OUT ✓',
+      color: 'blue',
+      icon: <LogOut className="w-5 h-5 text-blue-600" />,
+    },
+  }[action] || {
+    title: 'Attendance',
+    confirmTitle: 'Confirm Attendance',
+    successTitle: 'Attendance Recorded!',
+    pill: 'ATTENDANCE',
+    button: 'Confirm Attendance ✓',
+    color: 'blue',
+    icon: <LogOut className="w-5 h-5 text-blue-600" />,
+  };
+  const isGreenAction = actionMeta.color === 'green';
 
   // ── Success screen ──
   if (done) {
@@ -221,13 +333,13 @@ export default function ScanConfirm() {
         <Card className="w-full max-w-md border border-border shadow-lg">
           <CardContent className="p-8 flex flex-col items-center gap-4 text-center">
             <div className={`w-20 h-20 rounded-full flex items-center justify-center ${done.action === 'time_in' ? 'bg-green-100' : 'bg-blue-100'}`}>
-              {done.action === 'time_in'
-                ? <LogIn className="w-10 h-10 text-green-600" />
-                : <LogOut className="w-10 h-10 text-blue-600" />}
+              {done.action === 'time_out'
+                ? <LogOut className="w-10 h-10 text-blue-600" />
+                : <LogIn className={`w-10 h-10 ${done.action === 'time_in' ? 'text-green-600' : 'text-blue-600'}`} />}
             </div>
             <div>
               <p className="text-2xl font-bold text-foreground">
-                {done.action === 'time_in' ? 'Time IN Recorded!' : 'Time OUT Recorded!'}
+                {actionMeta.successTitle}
               </p>
               <p className="text-muted-foreground mt-1">
                 {done.employee.first_name} {done.employee.last_name}
@@ -287,16 +399,14 @@ export default function ScanConfirm() {
           </Button>
           <div>
             <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-              {action === 'time_in'
-                ? <><LogIn className="w-5 h-5 text-green-600" /> Confirm Time IN</>
-                : <><LogOut className="w-5 h-5 text-blue-600" /> Confirm Time OUT</>}
+              {actionMeta.icon} {actionMeta.confirmTitle}
             </h1>
             <p className="text-xs text-muted-foreground">{format(new Date(), 'EEEE, MMMM d, yyyy · hh:mm a')}</p>
           </div>
         </div>
 
         {/* Employee Info */}
-        <Card className={`border-2 ${action === 'time_in' ? 'border-green-300 bg-green-50' : 'border-blue-300 bg-blue-50'}`}>
+        <Card className={`border-2 ${isGreenAction ? 'border-green-300 bg-green-50' : 'border-blue-300 bg-blue-50'}`}>
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-200 flex-shrink-0 border-2 border-white shadow">
               {employee.photo_url
@@ -311,8 +421,8 @@ export default function ScanConfirm() {
               <p className="text-sm text-muted-foreground">{employee.position} · {employee.department}</p>
               <p className="text-xs font-mono text-muted-foreground">{employee.employee_id}</p>
             </div>
-            <div className={`px-3 py-1.5 rounded-full text-sm font-semibold ${action === 'time_in' ? 'bg-green-600 text-white' : 'bg-blue-600 text-white'}`}>
-              {action === 'time_in' ? 'TIME IN' : 'TIME OUT'}
+            <div className={`px-3 py-1.5 rounded-full text-sm font-semibold ${isGreenAction ? 'bg-green-600 text-white' : 'bg-blue-600 text-white'}`}>
+              {actionMeta.pill}
             </div>
           </CardContent>
         </Card>
@@ -370,11 +480,11 @@ export default function ScanConfirm() {
             Cancel
           </Button>
           <Button
-            className={`flex-1 text-white ${action === 'time_in' ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+            className={`flex-1 text-white ${isGreenAction ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}`}
             onClick={handleConfirm}
             disabled={confirming}
           >
-            {confirming ? 'Recording...' : `Confirm ${action === 'time_in' ? 'Time IN ✓' : 'Time OUT ✓'}`}
+            {confirming ? 'Recording...' : actionMeta.button}
           </Button>
         </div>
       </div>

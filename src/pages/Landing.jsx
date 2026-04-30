@@ -45,6 +45,8 @@ export default function Landing() {
   });
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -129,7 +131,7 @@ export default function Landing() {
         <section className="w-full p-6 md:w-1/2 md:px-14 md:py-16">
           <div className="mx-auto w-full max-w-[360px]">
             <p className="text-[22px] leading-none text-slate-700">Hello !</p>
-            <p className="mt-1 text-[30px] font-semibold leading-none text-violet-600">Good Morning</p>
+            <p className="mt-1 text-[30px] font-semibold leading-none text-violet-600">{greeting}</p>
 
             <div className="mt-10 grid grid-cols-2 rounded-md bg-muted p-1">
               <button
