@@ -20,7 +20,7 @@ const FIELDS = [
   field('Date Hired', 'date_hired', 'date'),
   field('Daily Rate (₱)', 'daily_rate', 'number', true),
   field('Monthly Rate (₱)', 'monthly_rate', 'number'),
-  field('Max Cash Advance (₱)', 'max_cash_advance', 'number'),
+  field('Max Cash Advance (₱)', 'max_cash_advance', 'number', true),
   field('Beginning Cash Advance Balance (₱)', 'cash_advance_beginning_balance', 'number'),
   field('Cash Advance Deduction Every Payroll Week (₱)', 'cash_advance_weekly_deduction', 'number'),
   field('SSS Number', 'sss_number'),

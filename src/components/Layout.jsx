@@ -43,21 +43,24 @@ export default function Layout() {
   const userRole = ['super_admin', 'admin', 'user'].includes(user?.role) ? user.role : 'user';
   const visibleNavItems = navItems.filter(item => item.roles.includes(userRole));
 
-  const SidebarContent = () => (
+  const SidebarContent = ({ mobile = false } = {}) => {
+    const effectiveCollapsed = mobile ? false : collapsed;
+
+    return (
     <div className="flex flex-col h-full">
-      <div className={cn("px-4 py-4 border-b border-border", collapsed && "px-2")}>
-        <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+      <div className={cn("px-4 py-4 border-b border-border", effectiveCollapsed && "px-2")}>
+        <div className={cn("flex items-center gap-3", effectiveCollapsed && "justify-center")}>
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
             <Building2 className="w-4 h-4 text-primary-foreground" />
           </div>
-          {!collapsed && (
+          {!effectiveCollapsed && (
             <div>
               <p className="font-semibold text-sm text-foreground">PayrollPH</p>
               <p className="text-xs text-muted-foreground">Philippines Payroll</p>
             </div>
           )}
         </div>
-        {!collapsed && activeCompany && (
+        {!effectiveCollapsed && activeCompany && (
           <div className="mt-3 relative">
             {isCompanyRestricted ? (
               // Restricted users: just show the company name, no dropdown
@@ -111,11 +114,11 @@ export default function Layout() {
               className={cn(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
                 "text-muted-foreground hover:text-foreground hover:bg-muted border border-dashed border-border mt-2",
-                collapsed && "justify-center px-2"
+                effectiveCollapsed && "justify-center px-2"
               )}
             >
               <item.icon className="w-4 h-4 flex-shrink-0" />
-              {!collapsed && <span>{item.label} ↗</span>}
+              {!effectiveCollapsed && <span>{item.label} ↗</span>}
             </a>
           ) : (
             <NavLink
@@ -128,18 +131,18 @@ export default function Layout() {
                 isActive
                   ? "bg-primary text-primary-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                collapsed && "justify-center px-2"
+                effectiveCollapsed && "justify-center px-2"
               )}
             >
               <item.icon className="w-4 h-4 flex-shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
+              {!effectiveCollapsed && <span>{item.label}</span>}
             </NavLink>
           )
         ))}
       </nav>
 
-      <div className={cn("p-3 border-t border-border", collapsed && "px-1")}>
-        {user && !collapsed && (
+      <div className={cn("p-3 border-t border-border", effectiveCollapsed && "px-1")}>
+        {user && !effectiveCollapsed && (
           <div className="px-2 py-2 mb-2 rounded-lg bg-muted">
             <p className="text-xs font-medium text-foreground truncate">{user.full_name}</p>
             <p className="text-xs text-muted-foreground truncate">{user.email}</p>
@@ -149,14 +152,15 @@ export default function Layout() {
           variant="ghost"
           size="sm"
           onClick={handleLogout}
-          className={cn("w-full text-muted-foreground hover:text-destructive hover:bg-destructive/10", collapsed && "px-2")}
+          className={cn("w-full text-muted-foreground hover:text-destructive hover:bg-destructive/10", effectiveCollapsed && "px-2")}
         >
           <LogOut className="w-4 h-4" />
-          {!collapsed && <span className="ml-2">Logout</span>}
+          {!effectiveCollapsed && <span className="ml-2">Logout</span>}
         </Button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -179,8 +183,8 @@ export default function Layout() {
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
-          <aside className="absolute left-0 top-0 bottom-0 w-56 bg-card border-r border-border">
-            <SidebarContent />
+          <aside className="absolute left-0 top-0 bottom-0 w-64 max-w-[85vw] bg-card border-r border-border shadow-xl">
+            <SidebarContent mobile />
           </aside>
         </div>
       )}
@@ -189,7 +193,12 @@ export default function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile topbar */}
         <header className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card">
-          <button onClick={() => setMobileOpen(true)} className="text-muted-foreground">
+          <button
+            type="button"
+            aria-label="Open navigation menu"
+            onClick={() => setMobileOpen(true)}
+            className="h-10 w-10 -ml-2 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted active:bg-muted"
+          >
             <Menu className="w-5 h-5" />
           </button>
           <span className="font-semibold text-sm">PayrollPH</span>

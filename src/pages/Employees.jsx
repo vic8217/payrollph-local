@@ -87,7 +87,13 @@ export default function Employees() {
             emp.daily_rate = parseFloat(emp.daily_rate) || 0;
             emp.monthly_rate = parseFloat(emp.monthly_rate) || 0;
             emp.agency_fee_percentage = emp.agency_fee_percentage ? parseFloat(emp.agency_fee_percentage) : undefined;
-            emp.max_cash_advance = emp.max_cash_advance ? parseFloat(emp.max_cash_advance) : undefined;
+            if (emp.max_cash_advance === undefined || emp.max_cash_advance === '') {
+              throw new Error(`Row ${i + 1}: max_cash_advance is required.`);
+            }
+            emp.max_cash_advance = parseFloat(emp.max_cash_advance);
+            if (!Number.isFinite(emp.max_cash_advance) || emp.max_cash_advance < 0) {
+              throw new Error(`Row ${i + 1}: max_cash_advance must be a valid amount.`);
+            }
             const beginningBalance = parseFloat(emp.cash_advance_beginning_balance) || 0;
             const weeklyDeduction = parseFloat(emp.cash_advance_weekly_deduction) || 0;
             emp.cash_advance_beginning_balance = beginningBalance || undefined;
