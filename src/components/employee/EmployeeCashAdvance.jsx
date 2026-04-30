@@ -1,7 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { appApi } from '@/lib/appApi';
+import { useCompany } from '@/lib/CompanyContext';
+import { buildCashAdvanceAgreementTagalogText, buildCashAdvanceAgreementText, CASH_ADVANCE_PAYMENT_DAYS, MASTER_CASH_ADVANCE_AGREEMENT_VERSION } from '@/lib/cashAdvanceAgreement';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, Plus, AlertTriangle, Paperclip, ChevronDown, ChevronUp, HeartPulse, Camera, FileImage, Sparkles, X, HandCoins, CheckCircle2, Briefcase, Loader2 } from 'lucide-react';
+import { CreditCard, Plus, AlertTriangle, Paperclip, ChevronDown, ChevronUp, HeartPulse, Camera, FileImage, Sparkles, X, HandCoins, CheckCircle2, Briefcase, Loader2, CalendarDays, Languages } from 'lucide-react';
 import DeductionScheduleView from '@/components/cashadvance/DeductionScheduleView';
 import ReceiveAdvanceDialog from './ReceiveAdvanceDialog';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +15,7 @@ import { format, startOfWeek, endOfWeek } from 'date-fns';
 
 const statusColors = {
   pending: 'bg-yellow-100 text-yellow-700',
+  approved_by_hr: 'bg-blue-100 text-blue-700',
   approved_by_manager: 'bg-blue-100 text-blue-700',
   approved: 'bg-green-100 text-green-700',
   rejected: 'bg-red-100 text-red-700',
@@ -21,6 +24,7 @@ const statusColors = {
 
 const statusLabels = {
   pending: 'Pending',
+  approved_by_hr: 'HR Approved',
   approved_by_manager: 'Manager Approved',
   approved: 'Approved',
   rejected: 'Rejected',
@@ -35,6 +39,14 @@ const EMERGENCY_REASONS = [
 ];
 
 const EMERGENCY_REASON_LABELS = Object.fromEntries(EMERGENCY_REASONS.map(r => [r.value, r.label]));
+const STATUS_RANK = {
+  rejected: 0,
+  pending: 1,
+  approved_by_hr: 2,
+  approved_by_manager: 2,
+  approved: 3,
+  deducted: 4,
+};
 
 export default function EmployeeCashAdvance({ employee }) {
   const [showForm, setShowForm] = useState(false);
@@ -57,13 +69,46 @@ export default function EmployeeCashAdvance({ employee }) {
   const [receiveAdvance, setReceiveAdvance] = useState(null);
   const [showWorkedDayReminder, setShowWorkedDayReminder] = useState(false);
   const [workedDaysInput, setWorkedDaysInput] = useState('');
+  const [activeTab, setActiveTab] = useState('requests');
+  const [showAgreementDialog, setShowAgreementDialog] = useState(false);
+  const [agreementDialogLanguage, setAgreementDialogLanguage] = useState('english');
+  const [agreementReadChecked, setAgreementReadChecked] = useState(false);
+  const [agreementAuthorizeChecked, setAgreementAuthorizeChecked] = useState(false);
+  const [agreementAcceptedVersion, setAgreementAcceptedVersion] = useState(employee?.cash_advance_agreement_version || employee?.agreement_version || '');
+  const [acceptingAgreement, setAcceptingAgreement] = useState(false);
+  /** terms → live camera → preview before submit */
+  const [agreementAcceptStep, setAgreementAcceptStep] = useState('terms');
+  const [agreementPhotoDataUrl, setAgreementPhotoDataUrl] = useState(null);
+  const agreementPhotoVideoRef = useRef(null);
+  const agreementPhotoStreamRef = useRef(null);
   const qc = useQueryClient();
+  const { activeCompany } = useCompany();
 
-  const { data: advances = [], isLoading } = useQuery({
+  const { data: rawAdvances = [], isLoading } = useQuery({
     queryKey: ['myCashAdvances', employee?.employee_id],
     queryFn: () => appApi.entities.CashAdvance.filter({ employee_id: employee.employee_id }),
     enabled: !!employee,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    staleTime: 0,
   });
+
+  const advances = Object.values(rawAdvances.reduce((byRequest, ca) => {
+    const key = [
+      ca.employee_id,
+      ca.request_date || '',
+      ca.advance_type || 'regular',
+      ca.amount_requested || 0,
+      ca.reason || '',
+    ].join('|');
+    const current = byRequest[key];
+    const currentRank = STATUS_RANK[current?.status] ?? -1;
+    const nextRank = STATUS_RANK[ca.status] ?? -1;
+    if (!current || nextRank > currentRank || (nextRank === currentRank && String(ca.updated_date || '').localeCompare(String(current.updated_date || '')) > 0)) {
+      byRequest[key] = ca;
+    }
+    return byRequest;
+  }, {}));
 
   // Current payroll period = current week (Mon–Sun)
   const today = new Date();
@@ -189,22 +234,55 @@ export default function EmployeeCashAdvance({ employee }) {
 
   const sorted = [...advances].sort((a, b) => (b.request_date || '').localeCompare(a.request_date || ''));
 
-  // Active balance — separate regular vs emergency
-  const activeAdvances = advances.filter(ca => ['pending', 'approved_by_manager', 'approved'].includes(ca.status));
-  const regularBalance = activeAdvances
-    .filter(ca => ca.advance_type !== 'emergency')
-    .reduce((sum, ca) => sum + (ca.amount_approved || ca.amount_requested || 0), 0);
+  const getCashAdvanceBalance = (ca) => ca.remaining_balance != null
+    ? ca.remaining_balance
+    : (ca.amount_approved || ca.amount_requested || 0);
+
+  // Active balance — beginning balances are payable but do not consume the new regular CA limit.
+  const activeAdvances = advances.filter(ca => ['pending', 'approved_by_hr', 'approved_by_manager', 'approved'].includes(ca.status));
+  const beginningBalance = activeAdvances
+    .filter(ca => ca.advance_type === 'beginning_balance')
+    .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+  const regularLimitBalance = activeAdvances
+    .filter(ca => ca.advance_type !== 'emergency' && ca.advance_type !== 'beginning_balance')
+    .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
   const emergencyBalance = activeAdvances
     .filter(ca => ca.advance_type === 'emergency')
-    .reduce((sum, ca) => sum + (ca.amount_approved || ca.amount_requested || 0), 0);
-  const activeBalance = regularBalance + emergencyBalance;
+    .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+  const activeBalance = beginningBalance + regularLimitBalance + emergencyBalance;
+  const scheduledAdvances = activeAdvances.filter(ca =>
+    ca.status === 'approved' && (ca.deduction_amount_per_payroll || 0) > 0
+  );
+  const weeklyDeduction = scheduledAdvances.reduce((sum, ca) => {
+    const balance = getCashAdvanceBalance(ca);
+    return sum + Math.min(ca.deduction_amount_per_payroll || 0, Math.max(balance, 0));
+  }, 0);
+  const estimatedWeeklyPay = autoWorkedDays * dailyRate;
+  const estimatedPayrollBeforeGovtDeductions = Math.max(0, estimatedWeeklyPay - weeklyDeduction);
+  const weeksToZero = scheduledAdvances.reduce((max, ca) => {
+    const balance = getCashAdvanceBalance(ca);
+    const weekly = ca.deduction_amount_per_payroll || 0;
+    return weekly > 0 ? Math.max(max, Math.ceil(balance / weekly)) : max;
+  }, 0);
 
   const maxAllowed = employee?.max_cash_advance || 0;
-  const available = Math.max(0, maxAllowed - regularBalance); // limit only applies to regular
-  const isOverLimit = maxAllowed > 0 && regularBalance >= maxAllowed;
+  const available = Math.max(0, maxAllowed - regularLimitBalance);
+  const isOverLimit = maxAllowed > 0 && regularLimitBalance >= maxAllowed;
 
   const canRequestRegular = !isOverLimit;
   const canRequestEmergency = true; // always allowed
+  const currentAgreementVersion = agreementAcceptedVersion || employee?.cash_advance_agreement_version || employee?.agreement_version;
+  const cashAdvanceAgreementAccepted = currentAgreementVersion === MASTER_CASH_ADVANCE_AGREEMENT_VERSION;
+  const employeeName = [employee?.first_name, employee?.middle_name, employee?.last_name].filter(Boolean).join(' ').trim();
+  const agreementParams = {
+    companyName: activeCompany?.company_name || activeCompany?.trade_name || 'Employer',
+    employeeName: employeeName || 'Employee',
+    employeeId: employee?.employee_id || '',
+    paymentDays: employee?.cash_advance_payment_days || CASH_ADVANCE_PAYMENT_DAYS,
+  };
+  const englishAgreementText = buildCashAdvanceAgreementText(agreementParams);
+  const tagalogAgreementText = buildCashAdvanceAgreementTagalogText(agreementParams);
+  const agreementDialogBodyText = agreementDialogLanguage === 'tagalog' ? tagalogAgreementText : englishAgreementText;
 
   // Only one worked day advance per payroll period
   const hasWorkedDayThisPeriod = advances.some(ca =>
@@ -214,31 +292,24 @@ export default function EmployeeCashAdvance({ employee }) {
     ca.status !== 'rejected'
   );
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const submitCashAdvance = async (consentTimestamp) => {
     const amt = parseFloat(amount);
-    if (!amt || !reason) return;
-    if (advanceType === 'regular' && isOverLimit) return;
-    // Cap regular requests to available balance
-    if (advanceType === 'regular' && maxAllowed > 0 && amt > available) {
-      alert(`Amount exceeds your available limit of ₱${available.toLocaleString()}`);
-      return;
-    }
-    if (advanceType === 'emergency' && !emergencyReason) return;
-    if (advanceType === 'emergency' && emergencyReason === 'emergency_medicine' && !prescriptionFile) return;
 
     let prescriptionUrl = null;
     if (prescriptionFile) {
-      setUploading(true);
-      const res = await appApi.integrations.Core.UploadFile({ file: prescriptionFile });
-      prescriptionUrl = res.file_url;
-      setUploading(false);
+      try {
+        setUploading(true);
+        const res = await appApi.integrations.Core.UploadFile({ file: prescriptionFile });
+        prescriptionUrl = res.file_url;
+      } finally {
+        setUploading(false);
+      }
     }
 
     const weeks = parseInt(payrollWeeks) || 1;
-    createMutation.mutate({
+    await createMutation.mutateAsync({
       employee_id: employee.employee_id,
-      employee_name: `${employee.first_name} ${employee.last_name}`,
+      employee_name: employeeName || `${employee.first_name} ${employee.last_name}`,
       department: employee.department,
       amount_requested: amt,
       reason,
@@ -253,7 +324,145 @@ export default function EmployeeCashAdvance({ employee }) {
       daily_rate_at_request: advanceType === 'worked_day' ? (employee?.daily_rate || 0) : undefined,
       request_date: format(new Date(), 'yyyy-MM-dd'),
       status: 'pending',
+      company_profile_id: employee.company_profile_id,
+      agreement_version_used: MASTER_CASH_ADVANCE_AGREEMENT_VERSION,
+      consent_timestamp: consentTimestamp || employee.cash_advance_agreement_accepted_at || employee.accepted_at || new Date().toISOString(),
     });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    if (!amt || !reason) return;
+    if (advanceType === 'regular' && isOverLimit) return;
+    // Cap regular requests to available balance
+    if (advanceType === 'regular' && maxAllowed > 0 && amt > available) {
+      alert(`Amount exceeds your available limit of ₱${available.toLocaleString()}`);
+      return;
+    }
+    if (advanceType === 'emergency' && !emergencyReason) return;
+    if (advanceType === 'emergency' && emergencyReason === 'emergency_medicine' && !prescriptionFile) return;
+
+    if (!cashAdvanceAgreementAccepted) {
+      setShowAgreementDialog(true);
+      return;
+    }
+
+    await submitCashAdvance(employee.cash_advance_agreement_accepted_at || employee.accepted_at || new Date().toISOString());
+  };
+
+  const stopAgreementPhotoCamera = useCallback(() => {
+    if (agreementPhotoStreamRef.current) {
+      agreementPhotoStreamRef.current.getTracks().forEach(t => t.stop());
+      agreementPhotoStreamRef.current = null;
+    }
+    if (agreementPhotoVideoRef.current) agreementPhotoVideoRef.current.srcObject = null;
+  }, []);
+
+  useEffect(() => {
+    if (!showAgreementDialog || agreementAcceptStep !== 'photo') return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        if (cancelled) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        agreementPhotoStreamRef.current = stream;
+        if (agreementPhotoVideoRef.current) agreementPhotoVideoRef.current.srcObject = stream;
+      } catch {
+        alert('Could not access the camera. Allow camera permission, or use Upload photo below.');
+      }
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      stopAgreementPhotoCamera();
+    };
+  }, [showAgreementDialog, agreementAcceptStep, stopAgreementPhotoCamera]);
+
+  const resetAgreementDialog = () => {
+    stopAgreementPhotoCamera();
+    setAgreementDialogLanguage('english');
+    setAgreementReadChecked(false);
+    setAgreementAuthorizeChecked(false);
+    setAgreementAcceptStep('terms');
+    setAgreementPhotoDataUrl(null);
+  };
+
+  const proceedToAgreementPhoto = () => {
+    if (!agreementReadChecked || !agreementAuthorizeChecked) return;
+    setAgreementAcceptStep('photo');
+    setAgreementPhotoDataUrl(null);
+  };
+
+  const captureAgreementPhoto = () => {
+    const video = agreementPhotoVideoRef.current;
+    if (!video?.videoWidth) return;
+    // Capture from the live frame first — clearing srcObject before drawImage yields a blank/broken image.
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    stopAgreementPhotoCamera();
+    setAgreementPhotoDataUrl(dataUrl);
+    setAgreementAcceptStep('preview');
+  };
+
+  const retakeAgreementPhoto = () => {
+    setAgreementPhotoDataUrl(null);
+    setAgreementAcceptStep('photo');
+  };
+
+  const handleAgreementPhotoFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      stopAgreementPhotoCamera();
+      setAgreementPhotoDataUrl(reader.result);
+      setAgreementAcceptStep('preview');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const acceptAgreementAndSubmit = async () => {
+    if (!agreementPhotoDataUrl || !employee?.id) return;
+    const acceptedAt = new Date().toISOString();
+    const deviceInfo = typeof navigator !== 'undefined' ? navigator.userAgent : 'Unknown device';
+
+    setAcceptingAgreement(true);
+    try {
+      const res = await fetch(agreementPhotoDataUrl);
+      const blob = await res.blob();
+      const file = new File([blob], `ca-agreement-selfie-${employee.employee_id}.jpg`, { type: 'image/jpeg' });
+      const { file_url: photoUrl } = await appApi.integrations.Core.UploadFile({ file });
+
+      await appApi.entities.Employee.update(employee.id, {
+        agreement_version: MASTER_CASH_ADVANCE_AGREEMENT_VERSION,
+        accepted_at: acceptedAt,
+        ip_address: 'Recorded by browser session',
+        device_info: deviceInfo,
+        cash_advance_agreement_version: MASTER_CASH_ADVANCE_AGREEMENT_VERSION,
+        cash_advance_agreement_accepted_at: acceptedAt,
+        cash_advance_agreement_ip_address: 'Recorded by browser session',
+        cash_advance_agreement_device_info: deviceInfo,
+        cash_advance_agreement_acceptance_photo_url: photoUrl,
+        cash_advance_agreement_acceptance_photo_uploaded_at: acceptedAt,
+      });
+      setAgreementAcceptedVersion(MASTER_CASH_ADVANCE_AGREEMENT_VERSION);
+      setShowAgreementDialog(false);
+      qc.invalidateQueries({ queryKey: ['employee', employee.employee_id] });
+      qc.invalidateQueries({ queryKey: ['employees'] });
+      await submitCashAdvance(acceptedAt);
+    } catch (err) {
+      alert(`Agreement acceptance failed: ${err.message}`);
+    } finally {
+      setAcceptingAgreement(false);
+    }
   };
 
   if (!employee) return (
@@ -264,7 +473,7 @@ export default function EmployeeCashAdvance({ employee }) {
   );
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-5">
+    <div className="p-6 max-w-5xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-foreground">Cash Advance</h2>
         <div className="flex items-center gap-2">
@@ -326,14 +535,29 @@ export default function EmployeeCashAdvance({ employee }) {
       )}
 
       {/* Balance Summary */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <Card className="border border-primary/20 bg-primary/5">
           <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground mb-1 font-medium">Regular Balance</p>
-            <p className="text-2xl font-bold text-primary">₱{regularBalance.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground mb-1 font-medium">Cash Advance Balance</p>
+            <p className="text-2xl font-bold text-primary">₱{activeBalance.toLocaleString()}</p>
+            {beginningBalance > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">Beginning balance: ₱{beginningBalance.toLocaleString()}</p>
+            )}
+            {regularLimitBalance > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">Regular: ₱{regularLimitBalance.toLocaleString()}</p>
+            )}
             {emergencyBalance > 0 && (
               <p className="text-xs text-orange-600 mt-1 font-medium">+ ₱{emergencyBalance.toLocaleString()} emergency</p>
             )}
+          </CardContent>
+        </Card>
+        <Card className="border border-amber-200 bg-amber-50">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground mb-1 font-medium">Weekly Deduction</p>
+            <p className="text-2xl font-bold text-amber-700">₱{weeklyDeduction.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {weeksToZero > 0 ? `${weeksToZero} week${weeksToZero === 1 ? '' : 's'} to zero balance` : 'No approved deduction schedule'}
+            </p>
           </CardContent>
         </Card>
         <Card className={`border ${isOverLimit ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
@@ -345,16 +569,25 @@ export default function EmployeeCashAdvance({ employee }) {
             {maxAllowed > 0 && <p className="text-xs text-muted-foreground mt-0.5">of ₱{maxAllowed.toLocaleString()} max</p>}
           </CardContent>
         </Card>
+        <Card className="border border-sky-200 bg-sky-50">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground mb-1 font-medium">Estimated Payroll for the Week Before Govt Deductions</p>
+            <p className="text-2xl font-bold text-sky-700">₱{estimatedPayrollBeforeGovtDeductions.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              ₱{estimatedWeeklyPay.toLocaleString()} pay - ₱{weeklyDeduction.toLocaleString()} CA deduction
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Limit bar */}
       {maxAllowed > 0 && (
         <div>
           <div className="flex justify-between text-xs text-muted-foreground mb-1">
-            <span>Balance used</span><span>{Math.round((activeBalance / maxAllowed) * 100)}%</span>
+            <span>Regular limit used</span><span>{Math.round((regularLimitBalance / maxAllowed) * 100)}%</span>
           </div>
           <div className="w-full bg-muted rounded-full h-2">
-            <div className={`h-2 rounded-full transition-all ${isOverLimit ? 'bg-red-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, (activeBalance / maxAllowed) * 100)}%` }} />
+            <div className={`h-2 rounded-full transition-all ${isOverLimit ? 'bg-red-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, (regularLimitBalance / maxAllowed) * 100)}%` }} />
           </div>
         </div>
       )}
@@ -369,13 +602,30 @@ export default function EmployeeCashAdvance({ employee }) {
         </div>
       )}
 
+      <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
+        <button
+          type="button"
+          onClick={() => setActiveTab('requests')}
+          className={`flex-1 px-3 py-2 text-sm rounded-md font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'requests' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+        >
+          <CreditCard className="w-4 h-4" /> Requests
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('deductions')}
+          className={`flex-1 px-3 py-2 text-sm rounded-md font-medium transition-colors flex items-center justify-center gap-2 ${activeTab === 'deductions' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+        >
+          <CalendarDays className="w-4 h-4" /> Deductions
+        </button>
+      </div>
+
       {/* Deduction Schedule */}
-      {advances.some(ca => ca.status === 'approved' && ca.deduction_payroll_periods > 0) && (
+      {activeTab === 'deductions' && (
         <DeductionScheduleView cashAdvances={advances} employeeMode={true} />
       )}
 
       {/* History */}
-      <div className="space-y-3">
+      {activeTab === 'requests' && <div className="space-y-3">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Request History</p>
         {isLoading ? (
           <div className="flex justify-center py-8"><div className="w-6 h-6 border-4 border-primary/30 border-t-primary rounded-full animate-spin" /></div>
@@ -427,8 +677,11 @@ export default function EmployeeCashAdvance({ employee }) {
               {expandedId === ca.id && (
                 <div className="mt-3 pt-3 border-t border-border space-y-1.5 text-xs">
                   {ca.amount_approved && <p><span className="text-muted-foreground">Approved amount:</span> <span className="font-medium">₱{ca.amount_approved.toLocaleString()}</span></p>}
+                  {ca.remaining_balance != null && <p><span className="text-muted-foreground">Remaining balance:</span> <span className="font-medium">₱{ca.remaining_balance.toLocaleString()}</span></p>}
+                  {ca.deduction_amount_per_payroll > 0 && <p><span className="text-muted-foreground">Weekly deduction:</span> <span className="font-medium">₱{ca.deduction_amount_per_payroll.toLocaleString()}</span></p>}
+                  {ca.deduction_amount_per_payroll > 0 && <p><span className="text-muted-foreground">Weeks to zero:</span> <span className="font-medium">{Math.ceil(getCashAdvanceBalance(ca) / ca.deduction_amount_per_payroll)} week(s)</span></p>}
                   {ca.needed_date && <p><span className="text-muted-foreground">Needed by:</span> <span className="font-medium">{ca.needed_date}</span></p>}
-                  {ca.deduction_payroll_period && <p><span className="text-muted-foreground">Deducted in:</span> <span className="font-medium">{ca.deduction_payroll_period}</span></p>}
+                  {ca.deduction_payroll_periods && <p><span className="text-muted-foreground">Deducted in:</span> <span className="font-medium">{ca.deduction_payroll_periods} week(s)</span></p>}
                   {ca.manager_notes && <p><span className="text-muted-foreground">Manager note:</span> <span className="italic">{ca.manager_notes}</span></p>}
                   {ca.hr_notes && <p><span className="text-muted-foreground">HR note:</span> <span className="italic">{ca.hr_notes}</span></p>}
                   {ca.received_date && <p><span className="text-muted-foreground">Received on:</span> <span className="font-medium">{ca.received_date}</span></p>}
@@ -447,7 +700,7 @@ export default function EmployeeCashAdvance({ employee }) {
             </CardContent>
           </Card>
         ))}
-      </div>
+      </div>}
 
       {/* Receive Dialog */}
       <ReceiveAdvanceDialog
@@ -723,6 +976,149 @@ export default function EmployeeCashAdvance({ employee }) {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAgreementDialog} onOpenChange={(open) => {
+        setShowAgreementDialog(open);
+        if (!open) resetAgreementDialog();
+      }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <DialogTitle>
+                  {agreementAcceptStep === 'terms' && 'Cash Advance Master Agreement'}
+                  {agreementAcceptStep === 'photo' && 'Verification photo'}
+                  {agreementAcceptStep === 'preview' && 'Confirm your photo'}
+                </DialogTitle>
+                <p className="text-xs text-muted-foreground font-normal">
+                  {agreementAcceptStep === 'terms' ? (
+                    <>Version {MASTER_CASH_ADVANCE_AGREEMENT_VERSION} · {agreementDialogLanguage === 'tagalog' ? 'Tagalog' : 'English'}</>
+                  ) : (
+                    <>A clear photo of your face is kept on file when you accept this agreement.</>
+                  )}
+                </p>
+              </div>
+              {agreementAcceptStep === 'terms' && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-2 shrink-0 self-start"
+                  onClick={() => {
+                    setAgreementDialogLanguage(prev => (prev === 'english' ? 'tagalog' : 'english'));
+                    setAgreementReadChecked(false);
+                    setAgreementAuthorizeChecked(false);
+                  }}
+                >
+                  <Languages className="w-4 h-4" />
+                  {agreementDialogLanguage === 'english' ? 'Translate to Tagalog' : 'Translate to English'}
+                </Button>
+              )}
+            </div>
+          </DialogHeader>
+
+          {agreementAcceptStep === 'terms' && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                Version {MASTER_CASH_ADVANCE_AGREEMENT_VERSION}. This agreement is required before the first cash advance request and whenever PayrollPH updates the agreement version.
+              </div>
+
+              <pre className="whitespace-pre-wrap text-xs leading-6 text-foreground bg-muted/30 rounded-lg p-4 border border-border max-h-[430px] overflow-auto">
+                {agreementDialogBodyText}
+              </pre>
+
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <label className="flex items-start gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={agreementReadChecked}
+                    onChange={e => setAgreementReadChecked(e.target.checked)}
+                  />
+                  <span>I have read and understood the Master Cash Advance Agreement.</span>
+                </label>
+                <label className="flex items-start gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={agreementAuthorizeChecked}
+                    onChange={e => setAgreementAuthorizeChecked(e.target.checked)}
+                  />
+                  <span>I voluntarily authorize payroll deductions and final pay offset for any unpaid balance.</span>
+                </label>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowAgreementDialog(false)} disabled={acceptingAgreement}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={proceedToAgreementPhoto}
+                  disabled={!agreementReadChecked || !agreementAuthorizeChecked || acceptingAgreement || !employee?.id}
+                >
+                  Continue to photo
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {agreementAcceptStep === 'photo' && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Position your face in the frame. This photo is stored with your agreement acceptance for HR review.
+              </p>
+              <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3] max-h-[360px]">
+                <video ref={agreementPhotoVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center justify-center gap-2 h-9 px-3 rounded-md border border-input bg-background text-sm font-medium cursor-pointer hover:bg-accent">
+                  <FileImage className="w-4 h-4" /> Upload photo instead
+                  <input type="file" accept="image/*" className="sr-only" onChange={handleAgreementPhotoFile} />
+                </label>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    stopAgreementPhotoCamera();
+                    setAgreementAcceptStep('terms');
+                  }}
+                >
+                  Back
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setShowAgreementDialog(false)}>Cancel</Button>
+                <Button type="button" className="gap-2" onClick={captureAgreementPhoto}>
+                  <Camera className="w-4 h-4" /> Capture
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {agreementAcceptStep === 'preview' && agreementPhotoDataUrl && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground text-center">
+                If this photo is clear, submit to finish accepting the agreement and send your cash advance request.
+              </p>
+              <img src={agreementPhotoDataUrl} alt="Agreement verification" className="w-full rounded-lg border border-border object-cover aspect-[4/3] max-h-[360px]" />
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="outline" onClick={retakeAgreementPhoto} disabled={acceptingAgreement}>
+                  Retake
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setShowAgreementDialog(false)} disabled={acceptingAgreement}>Cancel</Button>
+                <Button
+                  type="button"
+                  onClick={acceptAgreementAndSubmit}
+                  disabled={acceptingAgreement || !employee?.id}
+                >
+                  {acceptingAgreement ? 'Saving...' : 'Accept agreement & submit request'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

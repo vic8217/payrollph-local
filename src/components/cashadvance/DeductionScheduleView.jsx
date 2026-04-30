@@ -8,9 +8,11 @@ import { addWeeks, format, startOfWeek } from 'date-fns';
  * Week 1 starts from the Monday on/after today.
  */
 function buildWeekRows(ca) {
-  const total = ca.deduction_payroll_periods || 1;
-  const deducted = total - (ca.deduction_periods_remaining ?? total);
-  const perWeek = ca.deduction_amount_per_payroll || 0;
+  const approved = ca.amount_approved || ca.amount_requested || 0;
+  const total = Number(ca.deduction_payroll_periods) || Number(ca.deduction_periods_remaining) || 1;
+  const remainingPeriods = ca.deduction_periods_remaining ?? total;
+  const deducted = total - remainingPeriods;
+  const perWeek = ca.deduction_amount_per_payroll || (total > 0 ? parseFloat((approved / total).toFixed(2)) : 0);
   const startMonday = startOfWeek(new Date(), { weekStartsOn: 1 });
   const rows = [];
   for (let i = 0; i < total; i++) {
@@ -24,7 +26,9 @@ function buildWeekRows(ca) {
 
 function AdvanceScheduleCard({ ca }) {
   const rows = buildWeekRows(ca);
-  const totalRemaining = (ca.deduction_amount_per_payroll || 0) * (ca.deduction_periods_remaining || 0);
+  const totalRemaining = ca.remaining_balance != null
+    ? ca.remaining_balance
+    : (ca.deduction_amount_per_payroll || 0) * (ca.deduction_periods_remaining || 0);
   const totalApproved = ca.amount_approved || ca.amount_requested || 0;
 
   return (
@@ -34,7 +38,7 @@ function AdvanceScheduleCard({ ca }) {
           <p className="text-sm font-semibold text-foreground">{ca.reason}</p>
           <div className="flex items-center gap-1.5 mt-0.5">
             <Badge variant="outline" className={`text-xs ${ca.advance_type === 'emergency' ? 'bg-orange-50 text-orange-700 border-orange-200' : ca.advance_type === 'worked_day' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-              {ca.advance_type === 'emergency' ? 'Emergency' : ca.advance_type === 'worked_day' ? 'Worked Day' : 'Regular'}
+              {ca.advance_type === 'emergency' ? 'Emergency' : ca.advance_type === 'worked_day' ? 'Worked Day' : ca.advance_type === 'beginning_balance' ? 'Beginning Balance' : 'Regular'}
             </Badge>
             <span className="text-xs text-muted-foreground">Approved: ₱{totalApproved.toLocaleString()}</span>
           </div>
@@ -86,7 +90,13 @@ function AdvanceScheduleCard({ ca }) {
  * Pass employeeMode=true to show only one employee's advances (no employee grouping header).
  */
 export default function DeductionScheduleView({ cashAdvances, employeeMode = false }) {
-  const scheduled = cashAdvances.filter(ca => ca.status === 'approved' && ca.deduction_payroll_periods > 0);
+  const scheduled = cashAdvances.filter(ca =>
+    ca.status === 'approved' &&
+    ((Number(ca.deduction_payroll_periods) || 0) > 0 ||
+      (Number(ca.deduction_periods_remaining) || 0) > 0 ||
+      (Number(ca.deduction_amount_per_payroll) || 0) > 0 ||
+      (Number(ca.amount_approved || ca.amount_requested) || 0) > 0)
+  );
 
   if (scheduled.length === 0) {
     return (
@@ -120,7 +130,11 @@ export default function DeductionScheduleView({ cashAdvances, employeeMode = fal
     <div className="space-y-4">
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Active Deduction Schedules</p>
       {entries.map((emp, i) => {
-        const totalRemaining = emp.advances.reduce((s, ca) => s + (ca.deduction_amount_per_payroll || 0) * (ca.deduction_periods_remaining || 0), 0);
+        const totalRemaining = emp.advances.reduce((s, ca) => s + (
+          ca.remaining_balance != null
+            ? ca.remaining_balance
+            : (ca.deduction_amount_per_payroll || 0) * (ca.deduction_periods_remaining || 0)
+        ), 0);
         return (
           <Card key={i} className="border border-border shadow-sm overflow-hidden">
             <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between">

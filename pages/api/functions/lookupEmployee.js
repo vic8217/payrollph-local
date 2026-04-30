@@ -12,8 +12,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Employee code is required" });
   }
 
+  const normalizedCode = code.replace(/-PayrollPH$/i, "");
+
   const [byEmployeeId] = await listRecords("Employee", {
-    filter: { employee_id: code, status: "active" },
+    filter: { employee_id: normalizedCode, status: "active" },
     limit: 1,
   });
 
@@ -28,6 +30,15 @@ export default async function handler(req, res) {
 
   if (byQrCode) {
     return res.status(200).json({ employee: byQrCode });
+  }
+
+  const [byNormalizedQrCode] = await listRecords("Employee", {
+    filter: { qr_code: normalizedCode, status: "active" },
+    limit: 1,
+  });
+
+  if (byNormalizedQrCode) {
+    return res.status(200).json({ employee: byNormalizedQrCode });
   }
 
   return res.status(404).json({ error: "Employee not found" });

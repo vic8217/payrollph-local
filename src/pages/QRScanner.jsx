@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
 
+const normalizeQrValue = (value) => String(value || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/-PayrollPH$/i, '');
+
 export default function QRScanner() {
   const navigate = useNavigate();
   const [scanInput, setScanInput] = useState('');
@@ -48,7 +50,10 @@ export default function QRScanner() {
     }
 
     const trimmed = qrValue.trim();
-    const employee = employeesRef.current.find(e => e.qr_code === trimmed || e.employee_id === trimmed);
+    const normalized = normalizeQrValue(trimmed);
+    const employee = employeesRef.current.find(e =>
+      normalizeQrValue(e.qr_code) === normalized || normalizeQrValue(e.employee_id) === normalized
+    );
 
     if (!employee) {
       setScanError(`No employee found for: ${trimmed}`);

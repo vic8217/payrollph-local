@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { useCompany } from '@/lib/CompanyContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, startOfWeek, addWeeks, addDays } from 'date-fns';
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -18,6 +18,9 @@ const statusColors = {
   approved: 'bg-green-100 text-green-700',
   rejected: 'bg-red-100 text-red-600',
 };
+
+const employeeFullName = (employee) =>
+  [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
@@ -358,6 +361,7 @@ export default function Attendance() {
   const [editingLog, setEditingLog] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('all');
+  const [showQuickView, setShowQuickView] = useState(false);
   const { user: currentUser } = useAuth();
   const { activeCompanyId } = useCompany();
   const qc = useQueryClient();
@@ -385,7 +389,13 @@ export default function Attendance() {
 
   const { data: payrollPeriods = [] } = useQuery({
     queryKey: ['payrollPeriods', activeCompanyId],
-    queryFn: () => entities.filter('PayrollPeriod', { company_profile_id: activeCompanyId }),
+    queryFn: () => entities.filter('PayrollPeriod', { company_profile_id: activeCompanyId }, '-start_date', 100),
+    enabled: !!activeCompanyId,
+  });
+
+  const { data: allAttendanceLogs = [], isLoading: loadingQuickView } = useQuery({
+    queryKey: ['attendanceSummary', activeCompanyId],
+    queryFn: () => entities.filter('AttendanceLog', { company_profile_id: activeCompanyId }, '-date', 5000),
     enabled: !!activeCompanyId,
   });
 
@@ -406,12 +416,77 @@ export default function Attendance() {
 
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
+  const derivedPayrollPeriods = [...new Set(allAttendanceLogs.map(log => log.date).filter(Boolean))]
+    .map(date => {
+      const periodStart = startOfWeek(new Date(`${date}T00:00:00`), { weekStartsOn: 6 });
+      const periodEnd = addDays(periodStart, 6);
+      const startDate = format(periodStart, 'yyyy-MM-dd');
+      const endDate = format(periodEnd, 'yyyy-MM-dd');
+      return {
+        id: `derived-${startDate}`,
+        period_name: `Week of ${format(periodStart, 'MMM d')} - ${format(periodEnd, 'MMM d, yyyy')}`,
+        start_date: startDate,
+        end_date: endDate,
+      };
+    })
+    .filter((period, index, periods) => periods.findIndex(p => p.id === period.id) === index)
+    .sort((a, b) => b.start_date.localeCompare(a.start_date));
+  const displayedPayrollPeriods = payrollPeriods.length > 0 ? payrollPeriods : derivedPayrollPeriods;
+  const activePeriod = selectedPeriod === 'all' ? null : displayedPayrollPeriods.find(p => p.id === selectedPeriod);
+  const quickViewPeriods = activePeriod
+    ? [activePeriod]
+    : [...payrollPeriods].sort((a, b) => String(b.start_date || '').localeCompare(String(a.start_date || '')));
+
+  const quickViewRows = quickViewPeriods.flatMap(period =>
+    filteredEmployees.map(emp => {
+      const empLogs = allAttendanceLogs.filter(log =>
+        log.employee_id === emp.employee_id &&
+        log.date >= period.start_date &&
+        log.date <= period.end_date
+      );
+      const completedLogs = empLogs.filter(log => log.time_in && log.time_out);
+      const incompleteLogs = empLogs.filter(log => log.time_in && !log.time_out);
+
+      return {
+        period,
+        employee: emp,
+        logs: empLogs.length,
+        completed: completedLogs.length,
+        incomplete: incompleteLogs.length,
+        pending: empLogs.filter(log => log.status === 'pending').length,
+        approved: empLogs.filter(log => log.status === 'approved').length,
+        rejected: empLogs.filter(log => log.status === 'rejected').length,
+        hours: empLogs.reduce((sum, log) => sum + (Number(log.hours_worked) || 0), 0),
+        overtime: empLogs.reduce((sum, log) => sum + (Number(log.overtime_hours) || 0), 0),
+        late: empLogs.reduce((sum, log) => sum + (Number(log.late_minutes) || 0), 0),
+      };
+    })
+  ).sort((a, b) => {
+    const periodDiff = String(b.period.start_date || '').localeCompare(String(a.period.start_date || ''));
+    if (periodDiff !== 0) return periodDiff;
+    return `${a.employee.last_name || ''} ${a.employee.first_name || ''}`.localeCompare(`${b.employee.last_name || ''} ${b.employee.first_name || ''}`);
+  });
+
+  const quickViewTotals = quickViewRows.reduce((totals, row) => ({
+    employees: totals.employees,
+    logs: totals.logs + row.logs,
+    completed: totals.completed + row.completed,
+    incomplete: totals.incomplete + row.incomplete,
+    pending: totals.pending + row.pending,
+    approved: totals.approved + row.approved,
+    rejected: totals.rejected + row.rejected,
+    hours: totals.hours + row.hours,
+    overtime: totals.overtime + row.overtime,
+    late: totals.late + row.late,
+  }), { employees: filteredEmployees.length, logs: 0, completed: 0, incomplete: 0, pending: 0, approved: 0, rejected: 0, hours: 0, overtime: 0, late: 0 });
 
   const handleDownloadCSV = async () => {
     setDownloading(true);
     try {
-      const response = await invokeFunction('exportAttendanceCSV', { 
-        payrollPeriodId: selectedPeriod === 'all' ? null : selectedPeriod 
+      const response = await invokeFunction('exportAttendanceCSV', {
+        company_profile_id: activeCompanyId,
+        start_date: activePeriod?.start_date,
+        end_date: activePeriod?.end_date,
       });
       
       // Handle response data
@@ -420,9 +495,8 @@ export default function Attendance() {
                   typeof response.data === 'string' ? response.data : 
                   JSON.stringify(response.data ?? response);
       
-      const period = payrollPeriods.find(p => p.id === selectedPeriod);
-      const filename = period 
-        ? `attendance-${period.period_name.replace(/\s+/g, '-').toLowerCase()}.csv`
+      const filename = activePeriod
+        ? `attendance-${activePeriod.period_name.replace(/\s+/g, '-').toLowerCase()}.csv`
         : `attendance-summary-${new Date().toISOString().split('T')[0]}.csv`;
       
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -455,9 +529,17 @@ export default function Attendance() {
               <SelectTrigger className="w-44 h-8 text-sm"><SelectValue placeholder="All Periods" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Periods</SelectItem>
-                {payrollPeriods.map(p => <SelectItem key={p.id} value={p.id}>{p.period_name}</SelectItem>)}
+                {displayedPayrollPeriods.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.period_name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
+            <Button onClick={() => setShowQuickView(true)} variant="outline" className="gap-1.5">
+              <Eye className="w-4 h-4" />
+              Quick View
+            </Button>
             <Button onClick={handleDownloadCSV} disabled={downloading} variant="outline" className="gap-1.5">
               <Download className="w-4 h-4" />
               {downloading ? 'Downloading...' : 'Download CSV'}
@@ -490,7 +572,7 @@ export default function Attendance() {
                     : <User className="w-5 h-5 text-primary" />}
                 </div>
                 <div className="min-w-0">
-                  <p className="font-semibold text-foreground text-sm truncate">{emp.first_name} {emp.last_name}</p>
+                  <p className="font-semibold text-foreground text-sm truncate">{employeeFullName(emp)}</p>
                   <p className="text-xs text-muted-foreground truncate">{emp.position || emp.department || emp.employee_id}</p>
                 </div>
               </button>
@@ -500,6 +582,103 @@ export default function Attendance() {
             )}
           </div>
         )}
+
+        <Dialog open={showQuickView} onOpenChange={setShowQuickView}>
+          <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                Attendance Quick View
+                {activePeriod ? ` — ${activePeriod.period_name}` : ''}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Employees</p>
+                  <p className="text-lg font-semibold text-foreground">{quickViewTotals.employees}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Logs</p>
+                  <p className="text-lg font-semibold text-foreground">{quickViewTotals.logs}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Incomplete</p>
+                  <p className="text-lg font-semibold text-amber-700">{quickViewTotals.incomplete}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Hours</p>
+                  <p className="text-lg font-semibold text-foreground">{quickViewTotals.hours.toFixed(2)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Late</p>
+                  <p className="text-lg font-semibold text-foreground">{quickViewTotals.late}m</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                {activePeriod ? `${activePeriod.period_name}: ${activePeriod.start_date} to ${activePeriod.end_date}` : `All payroll periods (${quickViewPeriods.length})`}
+                {filterDept !== 'all' ? ` · ${filterDept}` : ' · All departments'}
+              </p>
+
+              {loadingQuickView ? (
+                <div className="flex justify-center py-12">
+                  <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-border rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-muted/50 border-b border-border">
+                        <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Payroll Period</th>
+                        <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Employee</th>
+                        <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Department</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">Logs</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">Complete</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">Incomplete</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">Pending</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">Approved</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">Hours</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">OT</th>
+                        <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs">Late</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quickViewRows.map(row => (
+                        <tr key={`${row.period.id}-${row.employee.id}`} className="border-b border-border last:border-0">
+                          <td className="px-3 py-3">
+                            <p className="font-medium text-foreground">{row.period.period_name}</p>
+                            <p className="text-xs text-muted-foreground">{row.period.start_date} to {row.period.end_date}</p>
+                          </td>
+                          <td className="px-3 py-3">
+                            <p className="font-medium text-foreground">{row.employee.first_name} {row.employee.middle_name ? `${row.employee.middle_name} ` : ''}{row.employee.last_name}</p>
+                            <p className="text-xs text-muted-foreground">{row.employee.employee_id}</p>
+                          </td>
+                          <td className="px-3 py-3 text-muted-foreground">{row.employee.department || '—'}</td>
+                          <td className="px-3 py-3 text-right">{row.logs}</td>
+                          <td className="px-3 py-3 text-right">{row.completed}</td>
+                          <td className="px-3 py-3 text-right text-amber-700 font-medium">{row.incomplete}</td>
+                          <td className="px-3 py-3 text-right">{row.pending}</td>
+                          <td className="px-3 py-3 text-right">{row.approved}</td>
+                          <td className="px-3 py-3 text-right">{row.hours.toFixed(2)}</td>
+                          <td className="px-3 py-3 text-right">{row.overtime.toFixed(2)}</td>
+                          <td className="px-3 py-3 text-right">{row.late}m</td>
+                        </tr>
+                      ))}
+                      {quickViewRows.length === 0 && (
+                        <tr>
+                          <td colSpan={11} className="text-center py-10 text-muted-foreground">
+                            {quickViewPeriods.length === 0 ? 'No payroll periods found.' : 'No employees found.'}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }

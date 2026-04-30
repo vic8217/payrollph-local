@@ -9,7 +9,14 @@ export async function requestJson(path, options = {}) {
   });
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text };
+    }
+  }
 
   if (!response.ok) {
     const error = new Error(data?.error || "Request failed");

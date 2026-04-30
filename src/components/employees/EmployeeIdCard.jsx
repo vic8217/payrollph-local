@@ -41,6 +41,7 @@ export default function EmployeeIdCard({ employee }) {
   const qrRef = useRef(null);
   const [company, setCompany] = useState(null);
   const [logoFailed, setLogoFailed] = useState(false);
+  const qrValue = employee?.employee_id || employee?.qr_code?.replace(/-PayrollPH$/i, '');
 
   useEffect(() => {
     appApi.entities.CompanyProfile.list().then(list => { if (list?.length > 0) setCompany(list[0]); });
@@ -51,14 +52,14 @@ export default function EmployeeIdCard({ employee }) {
   }, [company?.logo_url]);
 
   useEffect(() => {
-    if (qrRef.current && employee?.qr_code) {
-      QRCode.toCanvas(qrRef.current, employee.qr_code, {
+    if (qrRef.current && qrValue) {
+      QRCode.toCanvas(qrRef.current, qrValue, {
         width: 120,
         margin: 1,
         color: { dark: '#1e3a5f', light: '#ffffff' },
       });
     }
-  }, [employee]);
+  }, [qrValue]);
 
   const getFrontHTML = () => {
     const canvas = qrRef.current;
@@ -205,7 +206,7 @@ export default function EmployeeIdCard({ employee }) {
           )}
         </div>
         <div style={S.qrWrap}>
-          {employee?.qr_code
+          {qrValue
             ? <canvas ref={qrRef} style={{ borderRadius: '4px' }} />
             : <div style={{ width: 64, height: 64, border: '2px dashed #d1d5db', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '7px', color: '#9ca3af' }}>No QR</span></div>
           }

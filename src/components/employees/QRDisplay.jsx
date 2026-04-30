@@ -9,7 +9,7 @@ export default function QRDisplay({ employee }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const value = employee.qr_code || employee.employee_id || 'UNKNOWN';
+    const value = employee.employee_id || employee.qr_code?.replace(/-PayrollPH$/i, '') || 'UNKNOWN';
     QRCode.toCanvas(canvas, value, {
       width: 200,
       margin: 2,
@@ -37,7 +37,7 @@ export default function QRDisplay({ employee }) {
       <div className="text-center">
         <p className="font-semibold text-foreground">{employee.first_name} {employee.last_name}</p>
         <p className="text-sm text-muted-foreground">{employee.employee_id} · {employee.department}</p>
-        <p className="text-xs text-muted-foreground mt-1 font-mono bg-muted px-2 py-1 rounded">{employee.qr_code}</p>
+        <p className="text-xs text-muted-foreground mt-1 font-mono bg-muted px-2 py-1 rounded">{employee.employee_id}</p>
       </div>
       <Button variant="outline" size="sm" onClick={handleDownload} className="gap-2">
         <Download className="w-4 h-4" /> Download QR

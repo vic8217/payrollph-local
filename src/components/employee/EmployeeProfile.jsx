@@ -1,24 +1,137 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { appApi } from '@/lib/appApi';
-import { User, Clock, FileText, CalendarClock } from 'lucide-react';
+import { User, Clock, FileText, CalendarClock, Bell, QrCode, Keyboard } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import EmployeeAttendance from './EmployeeAttendance';
 import EmployeePayslips from './EmployeePayslips';
 import DeductionScheduleView from '@/components/cashadvance/DeductionScheduleView';
 
+const getCashAdvanceBalance = (ca) => ca.remaining_balance != null
+  ? ca.remaining_balance
+  : (ca.amount_approved || ca.amount_requested || 0);
 
+const normalizeQrValue = (value) => String(value || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/-PayrollPH$/i, '');
 
 export default function EmployeeProfile({ employee }) {
   const [subTab, setSubTab] = useState('info');
   const [showDeductionSchedule, setShowDeductionSchedule] = useState(false);
+  const [showNotices, setShowNotices] = useState(false);
+  const [noticeTab, setNoticeTab] = useState('unsigned');
+  const [signRequest, setSignRequest] = useState(null);
+  const [signMode, setSignMode] = useState('manual');
+  const [signCode, setSignCode] = useState('');
+  const [signError, setSignError] = useState('');
+  const [verifyingSign, setVerifyingSign] = useState(false);
+  const qc = useQueryClient();
 
   const { data: cashAdvances = [] } = useQuery({
     queryKey: ['myCashAdvances', employee?.employee_id],
     queryFn: () => appApi.entities.CashAdvance.filter({ employee_id: employee.employee_id }),
     enabled: !!employee,
   });
+
+  const { data: memos = [] } = useQuery({
+    queryKey: ['employeeMemos', employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeeMemo.filter({ employee_id: employee.employee_id }),
+    enabled: !!employee,
+  });
+
+  const { data: suspensions = [] } = useQuery({
+    queryKey: ['employeeSuspensions', employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeeSuspension.filter({ employee_id: employee.employee_id }),
+    enabled: !!employee,
+  });
+
+  const { data: terminations = [] } = useQuery({
+    queryKey: ['employeeTerminations', employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeeTermination.filter({ employee_id: employee.employee_id }),
+    enabled: !!employee,
+  });
+
+  const { data: promissoryNotes = [] } = useQuery({
+    queryKey: ['employeePromissoryNotes', employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeePromissoryNote.filter({ employee_id: employee.employee_id }),
+    enabled: !!employee,
+  });
+
+  const signMutation = useMutation({
+    mutationFn: ({ entity, id }) => appApi.entities[entity].update(id, {
+      signed: true,
+      signed_date: new Date().toISOString().slice(0, 10),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['employeeMemos', employee?.employee_id] });
+      qc.invalidateQueries({ queryKey: ['employeeSuspensions', employee?.employee_id] });
+      qc.invalidateQueries({ queryKey: ['employeePromissoryNotes', employee?.employee_id] });
+    },
+  });
+
+  const closeSignDialog = () => {
+    setSignRequest(null);
+    setSignCode('');
+    setSignError('');
+    setVerifyingSign(false);
+    setSignMode('manual');
+  };
+
+  const processSignatureCode = async (code) => {
+    const trimmed = normalizeQrValue(code);
+    if (!trimmed || !signRequest) return;
+
+    setVerifyingSign(true);
+    setSignError('');
+
+    try {
+      const res = await appApi.functions.invoke('lookupEmployee', { code: trimmed });
+      const scannedEmployee = res.employee;
+      if (!scannedEmployee || normalizeQrValue(scannedEmployee.employee_id) !== normalizeQrValue(employee.employee_id)) {
+        setSignError('QR code does not match this employee.');
+        setVerifyingSign(false);
+        return;
+      }
+
+      await signMutation.mutateAsync({
+        entity: signRequest.entity,
+        id: signRequest.item.id,
+      });
+      closeSignDialog();
+    } catch {
+      setSignError('Employee QR code was not found. Please try again.');
+      setVerifyingSign(false);
+    }
+  };
+
+  const startQrSignature = async () => {
+    setSignMode('camera');
+    setSignError('');
+
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const scanner = new Html5Qrcode('document-sign-reader');
+      await scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: 220 },
+        async (text) => {
+          try {
+            await scanner.stop();
+            scanner.clear();
+          } catch {}
+          setSignMode('manual');
+          processSignatureCode(text);
+        },
+        () => {}
+      );
+    } catch {
+      setSignMode('manual');
+      setSignError('Camera is not available. Enter or scan the ID manually.');
+    }
+  };
 
   if (!employee) return (
     <div className="p-6 text-center text-muted-foreground text-sm">
@@ -27,9 +140,32 @@ export default function EmployeeProfile({ employee }) {
     </div>
   );
 
-  const activeCA = cashAdvances.filter(ca => ['pending', 'approved_by_manager', 'approved'].includes(ca.status));
-  const totalBalance = activeCA.reduce((sum, ca) => sum + (ca.amount_approved || ca.amount_requested || 0), 0);
+  const activeCA = cashAdvances.filter(ca => ['pending', 'approved_by_hr', 'approved_by_manager', 'approved'].includes(ca.status));
+  const totalBalance = activeCA.reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+  const regularLimitBalance = activeCA
+    .filter(ca => ca.advance_type !== 'emergency' && ca.advance_type !== 'beginning_balance')
+    .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
   const maxAllowed = employee?.max_cash_advance || 0;
+  const unsignedMemos = memos.filter(item => item.requires_signature !== false && !item.signed).length;
+  const unsignedSuspensions = suspensions.filter(item => item.requires_signature !== false && !item.signed).length;
+  const unsignedPromissory = promissoryNotes.filter(item => item.requires_signature !== false && !item.signed).length;
+  const unsignedNotices = unsignedMemos + unsignedSuspensions + unsignedPromissory;
+  const noticeGroups = [
+    { title: 'Memos', entity: 'EmployeeMemo', items: memos },
+    { title: 'Suspensions', entity: 'EmployeeSuspension', items: suspensions },
+    { title: 'Termination', entity: 'EmployeeTermination', items: terminations },
+    { title: 'Promissory Notes', entity: 'EmployeePromissoryNote', items: promissoryNotes },
+  ];
+  const noticeItems = noticeGroups
+    .flatMap(group => group.items.map(item => ({ ...item, groupTitle: group.title, entity: group.entity })))
+    .sort((a, b) => {
+      const dateA = a.signed_date || a.issue_date || a.notice_date || a.note_date || a.effective_date || a.created_date || '';
+      const dateB = b.signed_date || b.issue_date || b.notice_date || b.note_date || b.effective_date || b.created_date || '';
+      return dateB.localeCompare(dateA);
+    });
+  const signedNoticeItems = noticeItems.filter(item => item.signed || item.entity === 'EmployeeTermination' || item.requires_signature === false);
+  const unsignedNoticeItems = noticeItems.filter(item => item.requires_signature !== false && !item.signed && item.entity !== 'EmployeeTermination');
+  const displayedNoticeItems = noticeTab === 'signed' ? signedNoticeItems : unsignedNoticeItems;
 
   const fields = [
     { label: 'Employee ID', value: employee.employee_id },
@@ -54,17 +190,17 @@ export default function EmployeeProfile({ employee }) {
               {maxAllowed > 0 && (
                 <div className="mt-3">
                   <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                    <span>Balance used</span>
+                    <span>Regular limit used</span>
                     <span>Max: ₱{maxAllowed.toLocaleString()}</span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-2">
                     <div
-                      className={`h-2 rounded-full ${totalBalance >= maxAllowed ? 'bg-red-500' : 'bg-primary'}`}
-                      style={{ width: `${Math.min(100, (totalBalance / maxAllowed) * 100)}%` }}
+                      className={`h-2 rounded-full ${regularLimitBalance >= maxAllowed ? 'bg-red-500' : 'bg-primary'}`}
+                      style={{ width: `${Math.min(100, (regularLimitBalance / maxAllowed) * 100)}%` }}
                     />
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Available: ₱{Math.max(0, maxAllowed - totalBalance).toLocaleString()}
+                    Available: ₱{Math.max(0, maxAllowed - regularLimitBalance).toLocaleString()}
                   </p>
                 </div>
               )}
@@ -109,6 +245,23 @@ export default function EmployeeProfile({ employee }) {
                 <p className="text-xs text-muted-foreground">{activeCA.length > 0 ? `${activeCA.length} active advance(s) — view payroll deductions` : 'No active cash advances'}</p>
               </div>
             </button>
+            <button
+              onClick={() => setShowNotices(true)}
+              className="flex items-center gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent hover:border-primary/30 transition-all text-left col-span-2"
+            >
+              <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center flex-shrink-0">
+                <Bell className="w-5 h-5 text-amber-600" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-foreground">Memos & Notices</p>
+                  {unsignedNotices > 0 && <Badge className="bg-amber-100 text-amber-700 border-0">{unsignedNotices} unsigned</Badge>}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {unsignedNotices > 0 ? `${unsignedNotices} item(s) need your acknowledgment` : 'View memos, notices, and promissory notes'}
+                </p>
+              </div>
+            </button>
           </div>
 
           {/* Deduction Schedule Dialog */}
@@ -127,6 +280,145 @@ export default function EmployeeProfile({ employee }) {
                   <p>No approved cash advance deduction schedules yet.</p>
                 </div>
               )}
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={showNotices} onOpenChange={setShowNotices}>
+            <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Bell className="w-5 h-5 text-amber-600" /> Memos & Notices
+                  {unsignedNotices > 0 && <Badge className="bg-amber-100 text-amber-700 border-0">{unsignedNotices} unsigned</Badge>}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={noticeTab === 'unsigned' ? 'default' : 'outline'}
+                  onClick={() => setNoticeTab('unsigned')}
+                  className="gap-2"
+                >
+                  Unsigned
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${noticeTab === 'unsigned' ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground'}`}>
+                    {unsignedNoticeItems.length}
+                  </span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant={noticeTab === 'signed' ? 'default' : 'outline'}
+                  onClick={() => setNoticeTab('signed')}
+                  className="gap-2"
+                >
+                  Signed
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${noticeTab === 'signed' ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground'}`}>
+                    {signedNoticeItems.length}
+                  </span>
+                </Button>
+              </div>
+              <div className="space-y-4">
+                {displayedNoticeItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No {noticeTab === 'signed' ? 'signed' : 'unsigned'} memos or notices.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {displayedNoticeItems.map(item => {
+                      const needsSignature = item.requires_signature !== false && !item.signed && item.entity !== 'EmployeeTermination';
+                      return (
+                        <Card key={item.id}>
+                          <CardContent className="p-4 space-y-2">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="font-semibold text-sm text-foreground">{item.title || item.reason || 'Untitled document'}</p>
+                                  <Badge variant="outline" className="text-xs">{item.groupTitle}</Badge>
+                                  {item.requires_signature !== false && item.entity !== 'EmployeeTermination' && (
+                                    <Badge className={`text-xs border-0 ${item.signed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                      {item.signed ? 'Signed' : 'Unsigned'}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {item.issue_date || item.notice_date || item.note_date || item.effective_date || 'No date'}
+                                  {item.amount ? ` · ₱${item.amount.toLocaleString()}` : ''}
+                                </p>
+                              </div>
+                              {needsSignature && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    setSignRequest({ entity: item.entity, item });
+                                    setSignCode('');
+                                    setSignError('');
+                                  }}
+                                  disabled={signMutation.isPending}
+                                >
+                                  Sign
+                                </Button>
+                              )}
+                            </div>
+                            <p className="text-sm text-foreground whitespace-pre-wrap">{item.body || item.reason || item.terms || 'No details provided.'}</p>
+                            {item.signed && item.signed_date && (
+                              <p className="text-xs font-medium text-green-700">
+                                Acknowledged by employee on {item.signed_date}
+                              </p>
+                            )}
+                            {(item.start_date || item.end_date || item.due_date || item.signed_date) && (
+                              <p className="text-xs text-muted-foreground">
+                                {item.start_date && item.end_date ? `Period: ${item.start_date} to ${item.end_date}` : ''}
+                                {item.due_date ? `Due: ${item.due_date}` : ''}
+                              </p>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={!!signRequest} onOpenChange={(open) => { if (!open) closeSignDialog(); }}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <QrCode className="w-5 h-5 text-primary" /> Scan Employee QR to Sign
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Scan the employee QR code to acknowledge: <span className="font-medium text-foreground">{signRequest?.item?.title}</span>
+                </p>
+                {signMode === 'camera' ? (
+                  <div id="document-sign-reader" className="rounded-lg overflow-hidden border border-border" />
+                ) : (
+                  <form
+                    className="space-y-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      processSignatureCode(signCode);
+                    }}
+                  >
+                    <Input
+                      value={signCode}
+                      onChange={e => { setSignCode(e.target.value); setSignError(''); }}
+                      placeholder="Scan or enter Employee ID"
+                      autoFocus
+                    />
+                    <Button type="submit" className="w-full gap-2" disabled={verifyingSign || !signCode.trim()}>
+                      <Keyboard className="w-4 h-4" /> Verify and Sign
+                    </Button>
+                  </form>
+                )}
+                {signError && <p className="text-xs text-destructive">{signError}</p>}
+                <div className="flex justify-between gap-2">
+                  <Button variant="outline" size="sm" onClick={closeSignDialog}>Cancel</Button>
+                  <Button variant="outline" size="sm" className="gap-2" onClick={startQrSignature} disabled={verifyingSign}>
+                    <QrCode className="w-4 h-4" /> Use Camera
+                  </Button>
+                </div>
+              </div>
             </DialogContent>
           </Dialog>
 

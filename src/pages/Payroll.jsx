@@ -165,8 +165,19 @@ export default function Payroll() {
 
       // Find all active CAs for this employee (can have multiple)
       const empCAs = approvedCA.filter(ca => ca.employee_id === emp.employee_id);
-      // Sum up the per-payroll deduction amounts for this period
-      const caDeductionThisPeriod = empCAs.reduce((sum, ca) => sum + (ca.deduction_amount_per_payroll || 0), 0);
+      // Sum up the per-payroll deduction amounts for this period, capped by remaining balance when available.
+      const caDeductions = empCAs.map(ca => {
+        const scheduledDeduction = ca.deduction_amount_per_payroll || 0;
+        const remainingBalance = ca.remaining_balance != null
+          ? ca.remaining_balance
+          : scheduledDeduction * (ca.deduction_periods_remaining || ca.deduction_payroll_periods || 0);
+        return {
+          ca,
+          amount: Math.min(scheduledDeduction, Math.max(remainingBalance, 0)),
+          remainingBalance,
+        };
+      });
+      const caDeductionThisPeriod = caDeductions.reduce((sum, item) => sum + item.amount, 0);
 
       const periodHolidays = holidays.filter(h => h.date >= startStr && h.date <= endStr);
       const periodNoWorkDays = noWorkDays.filter(d => d.date >= startStr && d.date <= endStr);
@@ -192,13 +203,17 @@ export default function Payroll() {
       }
 
       // Decrement remaining periods for each CA; mark as 'deducted' when exhausted
-      for (const ca of empCAs) {
-        const remaining = (ca.deduction_periods_remaining != null ? ca.deduction_periods_remaining : ca.deduction_payroll_periods) - 1;
-        const newStatus = remaining <= 0 ? 'deducted' : 'approved';
+      for (const { ca, amount, remainingBalance } of caDeductions) {
+        const nextBalance = parseFloat(Math.max(remainingBalance - amount, 0).toFixed(2));
+        const remaining = nextBalance <= 0
+          ? 0
+          : Math.max((ca.deduction_periods_remaining != null ? ca.deduction_periods_remaining : ca.deduction_payroll_periods) - 1, 1);
+        const newStatus = nextBalance <= 0 ? 'deducted' : 'approved';
         await appApi.entities.CashAdvance.update(ca.id, {
+          remaining_balance: nextBalance,
           deduction_periods_remaining: remaining,
           status: newStatus,
-          payroll_period_id: remaining <= 0 ? period.id : ca.payroll_period_id,
+          payroll_period_id: nextBalance <= 0 ? period.id : ca.payroll_period_id,
         });
       }
 

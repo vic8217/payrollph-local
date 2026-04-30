@@ -23,6 +23,14 @@ const statusColors = {
   deducted: 'bg-gray-100 text-gray-600',
 };
 
+const getCashAdvanceBalance = (ca) => ca.remaining_balance != null
+  ? ca.remaining_balance
+  : (ca.amount_approved || ca.amount_requested || 0);
+
+const isActiveCashAdvance = (ca) => ['pending', 'approved_by_hr', 'approved'].includes(ca.status);
+const countsAgainstRegularLimit = (ca) =>
+  isActiveCashAdvance(ca) && ca.advance_type !== 'emergency' && ca.advance_type !== 'beginning_balance';
+
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
     headers: {
@@ -90,18 +98,31 @@ export default function CashAdvance() {
 
   const { activeCompanyId } = useCompany();
 
-  const { data: cashAdvances = [], isLoading } = useQuery({
-    queryKey: ['cashAdvances', activeCompanyId],
-    queryFn: () => entities.filter('CashAdvance', { company_profile_id: activeCompanyId }, '-created_date', 200),
-    enabled: !!activeCompanyId,
-    refetchOnMount: 'always',
-    staleTime: 0,
-  });
-
   const { data: employees = [] } = useQuery({
     queryKey: ['employees', activeCompanyId],
     queryFn: () => entities.filter('Employee', { company_profile_id: activeCompanyId }, '-created_date', 200),
     enabled: !!activeCompanyId,
+  });
+
+  const { data: cashAdvances = [], isLoading } = useQuery({
+    queryKey: ['cashAdvances', activeCompanyId, employees.map(e => e.employee_id).join('|')],
+    queryFn: async () => {
+      const all = await entities.filter('CashAdvance', {}, '-created_date', 500);
+      const employeeIds = new Set(employees.map(e => e.employee_id));
+      const visible = all.filter(ca =>
+        ca.company_profile_id === activeCompanyId ||
+        (!ca.company_profile_id && employeeIds.has(ca.employee_id))
+      );
+      await Promise.all(
+        visible
+          .filter(ca => !ca.company_profile_id)
+          .map(ca => entities.update('CashAdvance', ca.id, { company_profile_id: activeCompanyId }))
+      );
+      return visible.map(ca => ca.company_profile_id ? ca : { ...ca, company_profile_id: activeCompanyId });
+    },
+    enabled: !!activeCompanyId && employees.length > 0,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
 
   const { data: dailyPasscodes = [] } = useQuery({
@@ -128,14 +149,20 @@ export default function CashAdvance() {
     e.preventDefault();
     if (!currentEmployee) return alert('Your profile is not linked to an employee record. Ask HR to set your user email.');
     const max = currentEmployee.max_cash_advance || 0;
-    if (parseFloat(form.amount_requested) > max && max > 0) {
-      return alert(`Maximum cash advance is ₱${max.toLocaleString()}`);
+    const requestedAmount = parseFloat(form.amount_requested);
+    const currentRegularLimitBalance = cashAdvances
+      .filter(ca => ca.employee_id === currentEmployee.employee_id && countsAgainstRegularLimit(ca))
+      .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+    const available = Math.max(0, max - currentRegularLimitBalance);
+
+    if (max > 0 && requestedAmount > available) {
+      return alert(`Amount exceeds your available regular cash advance limit of ₱${available.toLocaleString()}`);
     }
     createMutation.mutate({
       employee_id: currentEmployee.employee_id,
       employee_name: `${currentEmployee.first_name} ${currentEmployee.last_name}`,
       department: currentEmployee.department,
-      amount_requested: parseFloat(form.amount_requested),
+      amount_requested: requestedAmount,
       reason: form.reason,
       needed_date: form.needed_date,
       request_date: format(new Date(), 'yyyy-MM-dd'),
@@ -173,6 +200,7 @@ export default function CashAdvance() {
         data: {
           status: 'approved',
           amount_approved: approved,
+          remaining_balance: approved,
           deduction_payroll_periods: periods,
           deduction_amount_per_payroll: perPayroll,
           deduction_periods_remaining: periods,
@@ -196,9 +224,12 @@ export default function CashAdvance() {
     .map(e => {
       const empAdvances = cashAdvances.filter(ca => ca.employee_id === e.employee_id);
       const activeBalance = empAdvances
-        .filter(ca => ['pending', 'approved_by_hr', 'approved'].includes(ca.status))
-        .reduce((sum, ca) => sum + (ca.amount_approved || ca.amount_requested || 0), 0);
-      return { ...e, empAdvances, activeBalance };
+        .filter(isActiveCashAdvance)
+        .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+      const regularLimitBalance = empAdvances
+        .filter(countsAgainstRegularLimit)
+        .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+      return { ...e, empAdvances, activeBalance, regularLimitBalance };
     })
     .filter(e => e.empAdvances.length > 0 || e.max_cash_advance > 0);
 
@@ -270,7 +301,7 @@ export default function CashAdvance() {
                 <tbody>
                   {employeeSummary.map(e => {
                     const limit = e.max_cash_advance || 0;
-                    const remaining = Math.max(0, limit - e.activeBalance);
+                    const remaining = Math.max(0, limit - e.regularLimitBalance);
                     const isExpanded = expandedEmployee === e.employee_id;
                     return (
                       <>
@@ -360,10 +391,10 @@ export default function CashAdvance() {
                     {ca.status === 'approved_by_hr' && (
                       <Button size="sm" className="gap-1"
                         onClick={() => {
-                          setNotesDialog({ id: ca.id, type: 'manager', amount_requested: ca.amount_requested });
+                          setNotesDialog({ id: ca.id, type: 'manager', amount_requested: ca.amount_requested, deduction_payroll_periods: ca.deduction_payroll_periods });
                           setNotesText('');
                           setAmountApproved(String(ca.amount_requested || ''));
-                          setDeductionPeriods('1');
+                          setDeductionPeriods(String(ca.deduction_payroll_periods || 1));
                           setPasscodeInput(''); setPasscodeError('');
                         }}>
                         <CheckCircle2 className="w-3.5 h-3.5" /> Manager Final Approve
@@ -424,11 +455,11 @@ export default function CashAdvance() {
               <>
                 {/* Show what employee requested */}
                 {(() => {
-                  const ca = cashAdvances.find(c => c.id === notesDialog?.id);
-                  return ca?.deduction_payroll_periods ? (
+                  const requestedPeriods = notesDialog?.deduction_payroll_periods;
+                  return requestedPeriods ? (
                     <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800 flex items-start gap-1.5">
                       <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-600" />
-                      Employee requested <strong>{ca.deduction_payroll_periods} payroll week(s)</strong> for deduction (₱{(ca.amount_requested / ca.deduction_payroll_periods).toFixed(2)}/week). You may adjust below.
+                      Employee requested <strong>{requestedPeriods} payroll week(s)</strong> for deduction (₱{(notesDialog.amount_requested / requestedPeriods).toFixed(2)}/week). You may adjust below.
                     </div>
                   ) : null;
                 })()}

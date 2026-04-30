@@ -16,11 +16,14 @@ const tabs = [
   { id: 'trip-report', label: 'Vehicle Trip Report', icon: Car },
 ];
 
+const protectedTabs = new Set(['cash-advance', 'profile', 'trip-report']);
+
 export default function EmployeePortal() {
   const [activeTab, setActiveTab] = useState('scan');
   const [user, setUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [scannedEmployee, setScannedEmployee] = useState(null);
+  const [authorizedTab, setAuthorizedTab] = useState(null);
   const [scanConfirm, setScanConfirm] = useState(null); // { name, action, time, logId }
   const [scanKey, setScanKey] = useState(0); // increment to reset EmployeeQRGate back to camera
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
@@ -78,14 +81,27 @@ export default function EmployeePortal() {
   }, [scanConfirm]);
 
   const handleTabChange = (tabId) => {
-    // Switching away from scan tab to a protected tab requires a scanned employee
     setActiveTab(tabId);
-    // Reset scan when going back to QR tab
-    if (tabId === 'scan') setScannedEmployee(null);
+
+    if (protectedTabs.has(tabId)) {
+      setScannedEmployee(null);
+      setAuthorizedTab(null);
+      setScanKey(k => k + 1);
+      return;
+    }
+
+    setScannedEmployee(null);
+    setAuthorizedTab(null);
+    if (tabId === 'scan') setScanKey(k => k + 1);
   };
 
-  const requiresScan = activeTab !== 'scan' && activeTab !== 'policies' && activeTab !== 'trip-report';
-  const showGate = requiresScan && !scannedEmployee;
+  const handleEmployeeScanned = (employee) => {
+    setScannedEmployee(employee);
+    setAuthorizedTab(activeTab);
+  };
+
+  const requiresScan = protectedTabs.has(activeTab);
+  const showGate = requiresScan && (!scannedEmployee || authorizedTab !== activeTab);
 
   if (loadingUser) return (
     <div className="min-h-screen flex items-center justify-center bg-background">
@@ -111,7 +127,7 @@ export default function EmployeePortal() {
             <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5">
               <div className="w-2 h-2 rounded-full bg-green-500" />
               <span className="text-xs font-medium text-green-800">{scannedEmployee.first_name} {scannedEmployee.last_name}</span>
-              <button onClick={() => { setScannedEmployee(null); setActiveTab('scan'); }} className="text-green-600 hover:text-green-800 ml-1 text-xs">✕</button>
+              <button onClick={() => { setScannedEmployee(null); setAuthorizedTab(null); setActiveTab('scan'); setScanKey(k => k + 1); }} className="text-green-600 hover:text-green-800 ml-1 text-xs">✕</button>
             </div>
           )}
           {user && !scannedEmployee && (
@@ -141,7 +157,7 @@ export default function EmployeePortal() {
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
-              {tab.id !== 'scan' && tab.id !== 'policies' && tab.id !== 'trip-report' && !scannedEmployee && (
+              {protectedTabs.has(tab.id) && (!scannedEmployee || authorizedTab !== tab.id) && (
                 <Scan className="w-3 h-3 text-muted-foreground/50" />
               )}
             </button>
@@ -158,7 +174,11 @@ export default function EmployeePortal() {
           />
         )}
         {showGate && (
-          <EmployeeQRGate onEmployeeScanned={setScannedEmployee} promptMessage={`Scan your QR code to access ${tabs.find(t => t.id === activeTab)?.label}`} />
+          <EmployeeQRGate
+            key={`${activeTab}-${scanKey}`}
+            onEmployeeScanned={handleEmployeeScanned}
+            promptMessage={`Scan your QR code to access ${tabs.find(t => t.id === activeTab)?.label}`}
+          />
         )}
         {!showGate && activeTab === 'cash-advance' && <EmployeeCashAdvance employee={scannedEmployee} />}
         {!showGate && activeTab === 'profile' && <EmployeeProfile employee={scannedEmployee} />}

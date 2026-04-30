@@ -30,7 +30,10 @@ const FIELDS = [
   field('Employee ID', 'employee_id', 'text', true),
 ];
 
-export default function EmployeeForm({ employee, onSaved, onCancel }) {
+const PHOTO_TYPES = new Set(['image/png', 'image/jpeg']);
+const PHOTO_EXTENSIONS = /\.(png|jpe?g)$/i;
+
+export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated }) {
   const { activeCompanyId } = useCompany();
   const isEditing = !!employee?.id;
   const [form, setForm] = useState(employee || {
@@ -39,11 +42,21 @@ export default function EmployeeForm({ employee, onSaved, onCancel }) {
   const [saving, setSaving] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState('');
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const savePhotoUrl = async (fileUrl) => {
+    setPhotoError('');
+    set('photo_url', fileUrl);
+    if (employee?.id) {
+      await appApi.entities.Employee.update(employee.id, { photo_url: fileUrl });
+      onUpdated?.();
+    }
+  };
 
   const buildEmployeeId = (data) => {
     const f = (data.first_name?.[0] || '').toUpperCase();
@@ -81,29 +94,50 @@ export default function EmployeeForm({ employee, onSaved, onCancel }) {
     canvas.toBlob(async (blob) => {
       setUploadingPhoto(true);
       const file = new File([blob], 'photo.jpg', { type: 'image/jpeg' });
-      const { file_url } = await appApi.integrations.Core.UploadFile({ file });
-      set('photo_url', file_url);
-      setUploadingPhoto(false);
-      stopCamera();
+      try {
+        const { file_url } = await appApi.integrations.Core.UploadFile({ file });
+        await savePhotoUrl(file_url);
+        stopCamera();
+      } catch (error) {
+        setPhotoError(error.message || 'Unable to save photo');
+      } finally {
+        setUploadingPhoto(false);
+      }
     }, 'image/jpeg', 0.9);
   };
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (!PHOTO_TYPES.has(file.type) || !PHOTO_EXTENSIONS.test(file.name)) {
+      setPhotoError('Upload a PNG, JPG, or JPEG photo.');
+      e.target.value = '';
+      return;
+    }
+
+    setPhotoError('');
     setUploadingPhoto(true);
-    const { file_url } = await appApi.integrations.Core.UploadFile({ file });
-    set('photo_url', file_url);
-    setUploadingPhoto(false);
+    try {
+      const { file_url } = await appApi.integrations.Core.UploadFile({ file });
+      await savePhotoUrl(file_url);
+    } catch (error) {
+      setPhotoError(error.message || 'Unable to upload photo');
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
   };
 
-  const generateQR = async () => {
-    let tradeName = '';
-    const companies = await appApi.entities.CompanyProfile.list();
-    if (companies?.length > 0) tradeName = companies[0].trade_name || companies[0].company_name || '';
-    const suffix = tradeName ? `-${tradeName.replace(/\s+/g, '')}` : '';
-    const qr = `${form.employee_id || Date.now()}${suffix}`;
-    set('qr_code', qr);
+  const removePhoto = async () => {
+    try {
+      await savePhotoUrl('');
+    } catch (error) {
+      setPhotoError(error.message || 'Unable to remove photo');
+    }
+  };
+
+  const generateQR = () => {
+    set('qr_code', form.employee_id || String(Date.now()));
   };
 
   const handleSubmit = async (e) => {
@@ -172,21 +206,28 @@ export default function EmployeeForm({ employee, onSaved, onCancel }) {
               <div className="absolute bottom-1 right-1 bg-black/40 text-white text-[9px] px-1 rounded">2×2</div>
             </div>
             <div className="flex gap-2">
-              <Button type="button" size="sm" variant="outline" className="gap-1" onClick={startCamera}>
+              <Button type="button" size="sm" variant="outline" className="gap-1" onClick={startCamera} disabled={uploadingPhoto}>
                 <Camera className="w-3.5 h-3.5" /> Camera
               </Button>
-              <Button type="button" size="sm" variant="outline" className="gap-1" onClick={() => fileInputRef.current?.click()}>
+              <Button type="button" size="sm" variant="outline" className="gap-1" onClick={() => fileInputRef.current?.click()} disabled={uploadingPhoto}>
                 <Upload className="w-3.5 h-3.5" /> {uploadingPhoto ? 'Uploading...' : 'Upload'}
               </Button>
               {form.photo_url && (
-                <Button type="button" size="sm" variant="ghost" className="gap-1 text-destructive" onClick={() => set('photo_url', '')}>
+                <Button type="button" size="sm" variant="ghost" className="gap-1 text-destructive" onClick={removePhoto}>
                   <X className="w-3.5 h-3.5" /> Remove
                 </Button>
               )}
             </div>
+            {photoError && <p className="text-xs text-destructive text-center">{photoError}</p>}
           </div>
         )}
-        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+          className="hidden"
+          onChange={handleFileUpload}
+        />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -236,7 +277,7 @@ export default function EmployeeForm({ employee, onSaved, onCancel }) {
           <Select value={form.status || 'active'} onValueChange={v => set('status', v)}>
             <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {['active', 'inactive', 'terminated'].map(t => (
+              {['active', 'inactive', 'resigned', 'terminated', 'archived'].map(t => (
                 <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>
               ))}
             </SelectContent>

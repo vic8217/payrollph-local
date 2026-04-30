@@ -13,6 +13,27 @@ const shiftConfig = {
   night_shift: { label: 'Night Shift', icon: Moon, className: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
 };
 
+const breakTimeOptions = Array.from({ length: 48 }, (_, index) => {
+  const hours = Math.floor(index / 2);
+  const minutes = index % 2 === 0 ? '00' : '30';
+  return `${String(hours).padStart(2, '0')}:${minutes}`;
+});
+
+function formatTime(value) {
+  if (!value) return 'No break';
+  const [hours, minutes] = value.split(':');
+  const date = new Date();
+  date.setHours(Number(hours), Number(minutes), 0, 0);
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function addThirtyMinutes(value) {
+  if (!value) return '';
+  const [hours, minutes] = value.split(':').map(Number);
+  const totalMinutes = (hours * 60 + minutes + 30) % (24 * 60);
+  return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
+}
+
 function ShiftBadge({ shift }) {
   const resolved = shift || 'day_shift';
   const cfg = shiftConfig[resolved];
@@ -37,17 +58,22 @@ export default function WorkSchedule() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, work_schedule }) => appApi.entities.Employee.update(id, { work_schedule }),
+    mutationFn: ({ id, data }) => appApi.entities.Employee.update(id, data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['employees'] });
       setSavingId(null);
-      toast({ title: 'Shift updated', description: 'Work schedule saved successfully.' });
+      toast({ title: 'Work schedule updated', description: 'Schedule settings saved successfully.' });
     },
   });
 
   const handleShiftChange = (emp, value) => {
     setSavingId(emp.id);
-    updateMutation.mutate({ id: emp.id, work_schedule: value });
+    updateMutation.mutate({ id: emp.id, data: { work_schedule: value } });
+  };
+
+  const handleBreakTimeChange = (emp, value) => {
+    setSavingId(emp.id);
+    updateMutation.mutate({ id: emp.id, data: { break_time: value === 'none' ? '' : value } });
   };
 
   const filtered = employees
@@ -121,12 +147,13 @@ export default function WorkSchedule() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Employee</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs hidden sm:table-cell">Department</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Current Shift</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Break Time</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Assign Shift</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={4} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
+                <tr><td colSpan={5} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
               ) : (
                 filtered.map(emp => (
                   <tr key={emp.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
@@ -147,8 +174,11 @@ export default function WorkSchedule() {
                     <td className="px-4 py-3">
                       <ShiftBadge shift={emp.work_schedule || 'day_shift'} />
                     </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {emp.break_time ? `${formatTime(emp.break_time)} - ${formatTime(addThirtyMinutes(emp.break_time))}` : '—'}
+                    </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Select
                           value={emp.work_schedule || 'day_shift'}
                           onValueChange={v => handleShiftChange(emp, v)}
@@ -163,6 +193,22 @@ export default function WorkSchedule() {
                             <SelectItem value="night_shift">
                               <span className="flex items-center gap-1.5"><Moon className="w-3.5 h-3.5 text-indigo-500" /> Night Shift</span>
                             </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={emp.break_time || 'none'}
+                          onValueChange={v => handleBreakTimeChange(emp, v)}
+                        >
+                          <SelectTrigger className="h-8 text-xs w-40">
+                            <SelectValue placeholder="Break time..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No auto break</SelectItem>
+                            {breakTimeOptions.map(time => (
+                              <SelectItem key={time} value={time}>
+                                {formatTime(time)}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                         {savingId === emp.id && (

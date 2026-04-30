@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Building2, Save, Plus, Upload } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import ImageWithFallback from '@/components/ImageWithFallback';
+import { useCompany } from '@/lib/CompanyContext';
 
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
@@ -80,6 +81,7 @@ async function uploadFile(file) {
 export default function CompanyProfile() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { refreshCompanies } = useCompany();
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [showForm, setShowForm] = useState(false);
@@ -96,8 +98,9 @@ export default function CompanyProfile() {
       }
       return entities.create('CompanyProfile', data);
     },
-    onSuccess: () => {
+    onSuccess: async (company) => {
       queryClient.invalidateQueries({ queryKey: ['company-profiles'] });
+      await refreshCompanies(editingId ? undefined : { selectCompanyId: company?.id });
       setShowForm(false);
       setEditingId(null);
       setForm({});

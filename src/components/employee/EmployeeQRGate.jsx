@@ -104,8 +104,13 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
     const trimmed = value.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
 
     // Use backend function (service role) so it works even when user is not logged in
-    const res = await appApi.functions.invoke('lookupEmployee', { code: trimmed });
-    const emp = res.data?.found ? res.data.employee : null;
+    let emp = null;
+    try {
+      const res = await appApi.functions.invoke('lookupEmployee', { code: trimmed });
+      emp = res.employee;
+    } catch {
+      emp = null;
+    }
 
     if (!emp) {
       setResult({ success: false, message: 'Employee ID not found' });
@@ -126,16 +131,18 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
     // Full attendance logging — use backend function (service role, works on public portal)
     const empName = `${emp.first_name} ${emp.last_name}`;
     const logRes = await appApi.functions.invoke('logAttendance', { employee_id: emp.employee_id, today });
-    const { action, logId } = logRes.data;
+    const { action, log } = logRes;
     const now = new Date();
+    const actionLabels = {
+      time_in: 'Time In',
+      break_time_out: 'Break Out',
+      break_time_in: 'Break In',
+      time_out: 'Time Out',
+    };
+    const actionLabel = actionLabels[action] || 'Attendance';
 
-    if (action === 'time_in') {
-      setResult({ success: true, message: 'Time In recorded', name: empName, time: format(now, 'h:mm a') });
-      onAttendanceLogged?.({ name: empName, action: 'Time In', time: format(now, 'h:mm a'), logId });
-    } else {
-      setResult({ success: true, message: 'Time Out recorded', name: empName, time: format(now, 'h:mm a') });
-      onAttendanceLogged?.({ name: empName, action: 'Time Out', time: format(now, 'h:mm a'), logId });
-    }
+    setResult({ success: true, message: `${actionLabel} recorded`, name: empName, time: format(now, 'h:mm a') });
+    onAttendanceLogged?.({ name: empName, action: actionLabel, time: format(now, 'h:mm a'), logId: log?.id });
 
     setInput('');
     setProcessing(false);

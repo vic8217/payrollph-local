@@ -100,7 +100,7 @@ export default function Dashboard() {
         const byEmployee = {};
         cashAdvances.filter(ca => activeStatuses.includes(ca.status)).forEach(ca => {
           if (!byEmployee[ca.employee_id]) byEmployee[ca.employee_id] = { name: ca.employee_name, department: ca.department, regular: 0, emergency: 0 };
-          const amt = ca.amount_approved || ca.amount_requested || 0;
+          const amt = ca.remaining_balance != null ? ca.remaining_balance : (ca.amount_approved || ca.amount_requested || 0);
           if (ca.advance_type === 'emergency') byEmployee[ca.employee_id].emergency += amt;
           else byEmployee[ca.employee_id].regular += amt;
         });

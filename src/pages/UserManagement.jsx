@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Users, Save, X, CheckCircle2, Clock3 } from 'lucide-react';
+import { Users, Save, X, CheckCircle2, Clock3, XCircle, Ban, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 export default function UserManagement() {
@@ -49,6 +49,42 @@ export default function UserManagement() {
     },
   });
 
+  const denyMutation = useMutation({
+    mutationFn: (id) =>
+      requestJson('/api/users', {
+        method: 'PATCH',
+        body: JSON.stringify({ id, data: { approval_status: 'denied' } }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast({ title: 'User denied and removed from the list' });
+    },
+  });
+
+  const suspendMutation = useMutation({
+    mutationFn: (id) =>
+      requestJson('/api/users', {
+        method: 'PATCH',
+        body: JSON.stringify({ id, data: { approval_status: 'suspended' } }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast({ title: 'User suspended successfully' });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (id) =>
+      requestJson('/api/users', {
+        method: 'DELETE',
+        body: JSON.stringify({ id }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast({ title: 'User removed successfully' });
+    },
+  });
+
   const handleEdit = (user) => {
     setEditingUserId(user.id);
     setEditForm({ role: user.role || 'user', company_profile_id: user.company_profile_id || '' });
@@ -58,6 +94,11 @@ export default function UserManagement() {
     const data = { ...editForm };
     if (!data.company_profile_id) delete data.company_profile_id;
     updateMutation.mutate({ id: userId, data });
+  };
+
+  const handleRemove = (user) => {
+    if (!window.confirm(`Remove ${user.full_name || user.email} from user management? This cannot be undone.`)) return;
+    removeMutation.mutate(user.id);
   };
 
   const roleColors = {
@@ -75,6 +116,15 @@ export default function UserManagement() {
   const statusColors = {
     approved: 'bg-emerald-100 text-emerald-700 border-emerald-200',
     pending: 'bg-amber-100 text-amber-700 border-amber-200',
+    denied: 'bg-red-100 text-red-700 border-red-200',
+    suspended: 'bg-slate-100 text-slate-700 border-slate-200',
+  };
+
+  const statusLabels = {
+    approved: 'Approved',
+    pending: 'Pending Approval',
+    denied: 'Denied',
+    suspended: 'Suspended',
   };
 
   return (
@@ -97,6 +147,8 @@ export default function UserManagement() {
             const assignedCompany = companies.find(c => c.id === user.company_profile_id);
             const isEditing = editingUserId === user.id;
             const isPending = user.approval_status === 'pending';
+            const isApprovedEmployee = user.approval_status === 'approved' && user.role !== 'super_admin';
+            const actionDisabled = approveMutation.isPending || denyMutation.isPending || suspendMutation.isPending || removeMutation.isPending;
 
             return (
               <Card key={user.id}>
@@ -109,7 +161,7 @@ export default function UserManagement() {
                           {roleLabels[user.role] || user.role || 'User / HR Officer'}
                         </span>
                         <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${statusColors[user.approval_status] || statusColors.approved}`}>
-                          {user.approval_status === 'pending' ? 'Pending Approval' : 'Approved'}
+                          {statusLabels[user.approval_status] || 'Approved'}
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground mt-0.5">{user.email}</p>
@@ -122,17 +174,53 @@ export default function UserManagement() {
                     </div>
 
                     {!isEditing ? (
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap justify-end gap-2">
                         {isPending && (
-                          <Button
-                            size="sm"
-                            onClick={() => approveMutation.mutate(user.id)}
-                            disabled={approveMutation.isPending}
-                            className="gap-1"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Approve
-                          </Button>
+                          <>
+                            <Button
+                              size="sm"
+                              onClick={() => approveMutation.mutate(user.id)}
+                              disabled={actionDisabled}
+                              className="gap-1"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => denyMutation.mutate(user.id)}
+                              disabled={actionDisabled}
+                              className="gap-1"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              Deny
+                            </Button>
+                          </>
+                        )}
+                        {isApprovedEmployee && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => suspendMutation.mutate(user.id)}
+                              disabled={actionDisabled}
+                              className="gap-1"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              Suspend
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleRemove(user)}
+                              disabled={actionDisabled}
+                              className="gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Remove
+                            </Button>
+                          </>
                         )}
                         <Button size="sm" variant="outline" onClick={() => handleEdit(user)}>
                           {isPending ? (
