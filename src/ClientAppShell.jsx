@@ -9,6 +9,6 @@ const ClientApp = dynamic(() => import("@/App"), {
   ),
 });
 
-export default function AppShell() {
+export default function ClientAppShell() {
   return <ClientApp />;
 }

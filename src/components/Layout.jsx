@@ -2,10 +2,10 @@ import { Outlet, NavLink } from 'react-router-dom';
 import { appApi } from '@/lib/appApi';
 import { useState } from 'react';
 import {
-  LayoutDashboard, Users, Clock, CreditCard,
-  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown
-} from 'lucide-react';
+	  LayoutDashboard, Users, Clock, CreditCard,
+	  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
+	  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark
+	} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useCompany } from '@/lib/CompanyContext';
@@ -20,6 +20,7 @@ const navItems = [
   { label: 'Attendance',      icon: Clock,             path: '/attendance',         roles: ['super_admin', 'admin', 'user'] },
   { label: 'Work Schedule',   icon: CalendarClock,     path: '/work-schedule',      roles: ['super_admin', 'admin', 'user'] },
   { label: 'Payroll',         icon: FileText,          path: '/payroll',            roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Statutory Rates', icon: Landmark,          path: '/statutory-rates',    roles: ['super_admin', 'admin', 'user'] },
   { label: 'Cash Advance',    icon: CreditCard,        path: '/cash-advance',       roles: ['super_admin', 'admin', 'user'] },
   { label: 'Holidays',        icon: CalendarDays,      path: '/holidays',           roles: ['super_admin', 'admin', 'user'] },
   { label: 'No-Work Days',    icon: CalendarOff,       path: '/no-work-days',       roles: ['super_admin', 'admin', 'user'] },

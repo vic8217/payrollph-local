@@ -34,6 +34,7 @@ const LABOR_CODE_INFO = {
     ],
   },
 };
+const BREAK_DURATION_MINUTES = 60;
 
 function addOneDay(date) {
   const d = new Date(`${date}T00:00:00+08:00`);
@@ -52,9 +53,9 @@ function scheduledBreak(employee, date) {
   };
 }
 
-function addThirtyMinutes(time) {
+function addBreakDuration(time) {
   const [hours, minutes] = String(time || '00:00').split(':').map(Number);
-  const total = hours * 60 + minutes + 30;
+  const total = hours * 60 + minutes + BREAK_DURATION_MINUTES;
   const normalized = total % (24 * 60);
   return {
     time: `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`,
@@ -67,7 +68,7 @@ function scheduledBreakIn(employee, date) {
 
   const [breakHour] = employee.break_time.split(':').map(Number);
   const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12 ? addOneDay(date) : date;
-  const breakIn = addThirtyMinutes(employee.break_time);
+  const breakIn = addBreakDuration(employee.break_time);
   const breakInDate = breakIn.crossesMidnight ? addOneDay(breakDate) : breakDate;
 
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();

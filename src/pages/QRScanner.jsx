@@ -10,6 +10,9 @@ import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
 
 const normalizeQrValue = (value) => String(value || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/-PayrollPH$/i, '');
+const BREAK_DURATION_MINUTES = 60;
+const DUPLICATE_SCAN_WINDOW_MS = 2 * 60 * 1000;
+const MIN_STEP_INTERVAL_MS = 5 * 60 * 1000;
 
 function addOneDay(date) {
   const d = new Date(`${date}T00:00:00+08:00`);
@@ -17,12 +20,23 @@ function addOneDay(date) {
   return format(d, 'yyyy-MM-dd');
 }
 
+function scheduledBreak(employee, date) {
+  if (!employee?.break_time) return null;
+
+  const [breakHour] = String(employee.break_time).split(':').map(Number);
+  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12 ? addOneDay(date) : date;
+
+  return {
+    break_time_out: new Date(`${breakDate}T${employee.break_time}:00+08:00`).toISOString(),
+  };
+}
+
 function scheduledBreakIn(employee, date) {
   if (!employee?.break_time) return null;
 
   const [hours, minutes] = String(employee.break_time).split(':').map(Number);
   const breakDate = employee.work_schedule === 'night_shift' && hours < 12 ? addOneDay(date) : date;
-  const total = hours * 60 + minutes + 30;
+  const total = hours * 60 + minutes + BREAK_DURATION_MINUTES;
   const normalized = total % (24 * 60);
   const breakInDate = total >= 24 * 60 ? addOneDay(breakDate) : breakDate;
   const breakInTime = `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
@@ -33,6 +47,21 @@ function scheduledBreakIn(employee, date) {
 function isAutoScheduledBreakIn(employee, date, value) {
   const autoBreakIn = scheduledBreakIn(employee, date);
   return !!value && !!autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime();
+}
+
+function minutesSince(value, now = new Date()) {
+  if (!value) return Infinity;
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return Infinity;
+  return now.getTime() - time;
+}
+
+function lastManualPunch(log) {
+  return [log?.time_out, log?.break_time_in, log?.break_time_out, log?.time_in]
+    .filter(Boolean)
+    .map(value => ({ value, time: new Date(value).getTime() }))
+    .filter(entry => Number.isFinite(entry.time))
+    .sort((a, b) => b.time - a.time)[0]?.value || null;
 }
 
 export default function QRScanner() {
@@ -91,14 +120,48 @@ export default function QRScanner() {
     const existing = await appApi.entities.AttendanceLog.filter({ employee_id: employee.employee_id, date: today });
     const sorted = existing.sort((a, b) => (b.time_in || '').localeCompare(a.time_in || ''));
     const todayLog = sorted[0];
+    const now = new Date();
 
     let action;
     const hasActualBreakIn = todayLog?.break_time_in && !isAutoScheduledBreakIn(employee, today, todayLog.break_time_in);
     if (!todayLog || !todayLog.time_in) {
       action = 'time_in';
     } else if (employee.break_time && !hasActualBreakIn && !todayLog.time_out) {
+      const lastPunch = lastManualPunch(todayLog);
+      if (minutesSince(lastPunch, now) < DUPLICATE_SCAN_WINDOW_MS) {
+        setScanError('Scan already recorded. Please wait before scanning again.');
+        setLoading(false);
+        lockedRef.current = false;
+        return;
+      }
+
+      const autoBreakIn = scheduledBreakIn(employee, today);
+      const isScheduledBreakOut = todayLog.break_time_out && scheduledBreak(employee, today)?.break_time_out &&
+        new Date(todayLog.break_time_out).getTime() === new Date(scheduledBreak(employee, today).break_time_out).getTime();
+      if (isScheduledBreakOut && autoBreakIn && now.getTime() < new Date(autoBreakIn).getTime()) {
+        setScanError('Break In is not available until the scheduled 1-hour break is over.');
+        setLoading(false);
+        lockedRef.current = false;
+        return;
+      }
+
+      if (!isScheduledBreakOut && minutesSince(todayLog.break_time_out || todayLog.time_in, now) < MIN_STEP_INTERVAL_MS) {
+        setScanError('Last scan was just recorded. Please wait before scanning again.');
+        setLoading(false);
+        lockedRef.current = false;
+        return;
+      }
+
       action = 'break_time_in';
     } else if (todayLog.time_in && !todayLog.time_out) {
+      const lastPunch = lastManualPunch(todayLog);
+      if (minutesSince(lastPunch, now) < MIN_STEP_INTERVAL_MS) {
+        setScanError('Last scan was just recorded. Please wait before recording Time Out.');
+        setLoading(false);
+        lockedRef.current = false;
+        return;
+      }
+
       action = 'time_out';
     } else {
       setScanError(`${employee.first_name} already completed attendance today.`);

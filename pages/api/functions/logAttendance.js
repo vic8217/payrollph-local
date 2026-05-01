@@ -14,6 +14,10 @@ function diffHours(start, end) {
   return Math.max(0, (new Date(end).getTime() - new Date(start).getTime()) / 36e5);
 }
 
+const BREAK_DURATION_MINUTES = 60;
+const DUPLICATE_SCAN_WINDOW_MS = 2 * 60 * 1000;
+const MIN_STEP_INTERVAL_MS = 5 * 60 * 1000;
+
 function addDays(date, days) {
   const d = new Date(`${date}T00:00:00+08:00`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -38,9 +42,9 @@ function scheduledBreak(employee, date) {
   };
 }
 
-function addThirtyMinutes(time) {
+function addBreakDuration(time) {
   const [hours, minutes] = String(time || "00:00").split(":").map(Number);
-  const total = hours * 60 + minutes + 30;
+  const total = hours * 60 + minutes + BREAK_DURATION_MINUTES;
   const normalized = total % (24 * 60);
   return {
     time: `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`,
@@ -55,7 +59,7 @@ function scheduledBreakIn(employee, date) {
   const breakDate = employee.work_schedule === "night_shift" && breakHour < 12
     ? addDays(date, 1)
     : date;
-  const breakIn = addThirtyMinutes(employee.break_time);
+  const breakIn = addBreakDuration(employee.break_time);
   const breakInDate = breakIn.crossesMidnight ? addDays(breakDate, 1) : breakDate;
 
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
@@ -64,6 +68,30 @@ function scheduledBreakIn(employee, date) {
 function isAutoScheduledBreakIn(employee, date, value) {
   const autoBreakIn = scheduledBreakIn(employee, date);
   return Boolean(value && autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime());
+}
+
+function minutesSince(value, now = new Date()) {
+  if (!value) return Infinity;
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return Infinity;
+  return now.getTime() - time;
+}
+
+function lastManualPunch(log) {
+  return [log.time_out, log.break_time_in, log.break_time_out, log.time_in]
+    .filter(Boolean)
+    .map((value) => ({ value, time: new Date(value).getTime() }))
+    .filter((entry) => Number.isFinite(entry.time))
+    .sort((a, b) => b.time - a.time)[0]?.value || null;
+}
+
+function rejectRapidScan(res, log, action, message = "Scan already recorded. Please wait before scanning again.") {
+  return res.status(200).json({
+    action,
+    log,
+    duplicate: true,
+    message,
+  });
 }
 
 export default async function handler(req, res) {
@@ -98,7 +126,8 @@ export default async function handler(req, res) {
     limit: 1,
   });
 
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
   const employeeName = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
   const [lastLog] = existingLogs;
 
@@ -119,6 +148,11 @@ export default async function handler(req, res) {
 
   let currentLog = lastLog;
   const autoBreak = scheduledBreak(employee, date);
+  const lastPunch = lastManualPunch(currentLog);
+  if (lastPunch && minutesSince(lastPunch, nowDate) < DUPLICATE_SCAN_WINDOW_MS) {
+    return rejectRapidScan(res, currentLog, "duplicate_scan");
+  }
+
   if (autoBreak && !currentLog.break_time_out) {
     currentLog = await updateRecord("AttendanceLog", currentLog.id, {
       break_time_out: autoBreak.break_time_out,
@@ -132,6 +166,10 @@ export default async function handler(req, res) {
   }
 
   if (!currentLog.break_time_out) {
+    if (minutesSince(currentLog.time_in, nowDate) < MIN_STEP_INTERVAL_MS) {
+      return rejectRapidScan(res, currentLog, "time_in", "Time In was just recorded. Please wait before recording Break Out.");
+    }
+
     const log = await updateRecord("AttendanceLog", currentLog.id, {
       break_time_out: now,
     });
@@ -139,6 +177,18 @@ export default async function handler(req, res) {
   }
 
   if (!currentLog.break_time_in) {
+    const breakOutTime = currentLog.break_time_out;
+    const isScheduledBreakOut = autoBreak?.break_time_out &&
+      new Date(breakOutTime).getTime() === new Date(autoBreak.break_time_out).getTime();
+
+    if (!isScheduledBreakOut && minutesSince(breakOutTime, nowDate) < MIN_STEP_INTERVAL_MS) {
+      return rejectRapidScan(res, currentLog, "break_time_out", "Break Out was just recorded. Please wait before recording Break In.");
+    }
+
+    if (isScheduledBreakOut && new Date(now).getTime() < new Date(scheduledBreakIn(employee, date)).getTime()) {
+      return rejectRapidScan(res, currentLog, "break_time_out", "Break In is not available until the scheduled 1-hour break is over.");
+    }
+
     const log = await updateRecord("AttendanceLog", currentLog.id, {
       break_time_in: now,
     });
@@ -146,6 +196,10 @@ export default async function handler(req, res) {
   }
 
   if (!currentLog.time_out) {
+    if (minutesSince(currentLog.break_time_in || currentLog.time_in, nowDate) < MIN_STEP_INTERVAL_MS) {
+      return rejectRapidScan(res, currentLog, "break_time_in", "Last scan was just recorded. Please wait before recording Time Out.");
+    }
+
     const grossHours = diffHours(currentLog.time_in, now);
     const breakHours =
       currentLog.break_time_out && currentLog.break_time_in

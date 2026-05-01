@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCompany } from '@/lib/CompanyContext';
 import { Search, Sun, Moon, UserCircle, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +19,7 @@ const breakTimeOptions = Array.from({ length: 48 }, (_, index) => {
   const minutes = index % 2 === 0 ? '00' : '30';
   return `${String(hours).padStart(2, '0')}:${minutes}`;
 });
+const BREAK_DURATION_MINUTES = 60;
 
 function formatTime(value) {
   if (!value) return 'No break';
@@ -27,10 +29,10 @@ function formatTime(value) {
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
-function addThirtyMinutes(value) {
+function addBreakDuration(value) {
   if (!value) return '';
   const [hours, minutes] = value.split(':').map(Number);
-  const totalMinutes = (hours * 60 + minutes + 30) % (24 * 60);
+  const totalMinutes = (hours * 60 + minutes + BREAK_DURATION_MINUTES) % (24 * 60);
   return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
@@ -51,16 +53,19 @@ export default function WorkSchedule() {
   const [savingId, setSavingId] = useState(null);
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { activeCompanyId } = useCompany();
 
   const { data: employees = [], isLoading } = useQuery({
-    queryKey: ['employees'],
-    queryFn: () => appApi.entities.Employee.filter({ status: 'active' }),
+    queryKey: ['employees', activeCompanyId, 'work-schedule'],
+    queryFn: () => appApi.entities.Employee.filter({ status: 'active', company_profile_id: activeCompanyId }),
+    enabled: !!activeCompanyId,
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => appApi.entities.Employee.update(id, data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['employees'] });
+      qc.invalidateQueries({ queryKey: ['employees', activeCompanyId] });
+      qc.invalidateQueries({ queryKey: ['employees', activeCompanyId, 'work-schedule'] });
       setSavingId(null);
       toast({ title: 'Work schedule updated', description: 'Schedule settings saved successfully.' });
     },
@@ -175,7 +180,7 @@ export default function WorkSchedule() {
                       <ShiftBadge shift={emp.work_schedule || 'day_shift'} />
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {emp.break_time ? `${formatTime(emp.break_time)} - ${formatTime(addThirtyMinutes(emp.break_time))}` : '—'}
+                      {emp.break_time ? `${formatTime(emp.break_time)} - ${formatTime(addBreakDuration(emp.break_time))}` : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">

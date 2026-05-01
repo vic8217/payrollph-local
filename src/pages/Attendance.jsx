@@ -21,10 +21,11 @@ const statusColors = {
 
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
+const BREAK_DURATION_MINUTES = 60;
 
-function addThirtyMinutes(time) {
+function addBreakDuration(time) {
   const [hours, minutes] = String(time || '00:00').split(':').map(Number);
-  const total = hours * 60 + minutes + 30;
+  const total = hours * 60 + minutes + BREAK_DURATION_MINUTES;
   const normalized = total % (24 * 60);
   return {
     time: `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`,
@@ -55,7 +56,7 @@ function scheduledBreakIn(employee, date) {
   const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12
     ? format(addDays(new Date(`${date}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
     : date;
-  const breakIn = addThirtyMinutes(employee.break_time);
+  const breakIn = addBreakDuration(employee.break_time);
   const breakInDate = breakIn.crossesMidnight
     ? format(addDays(new Date(`${breakDate}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
     : breakDate;
@@ -400,6 +401,7 @@ export default function Attendance() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [filterDept, setFilterDept] = useState('all');
   const [editingLog, setEditingLog] = useState(null);
+  const [photoLog, setPhotoLog] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('all');
   const [showQuickView, setShowQuickView] = useState(false);
@@ -885,6 +887,13 @@ export default function Attendance() {
                                 <Pencil className="w-3.5 h-3.5" />
                               </Button>
                             )}
+                            {log.photo_url && (
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-sky-600 hover:bg-sky-50"
+                                title="View employee photo"
+                                onClick={() => setPhotoLog(log)}>
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                            )}
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:bg-green-50"
                               onClick={() => approveMutation.mutate({ id: log.id, status: 'approved' })}>
                               <CheckCircle2 className="w-4 h-4" />
@@ -914,6 +923,42 @@ export default function Attendance() {
           onSave={updateLog}
         />
       )}
+
+      <Dialog open={!!photoLog} onOpenChange={(open) => !open && setPhotoLog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Employee Capture Photo</DialogTitle>
+          </DialogHeader>
+          {photoLog && (
+            <div className="space-y-3">
+              <div className="rounded-xl overflow-hidden border border-border bg-muted">
+                <img src={photoLog.photo_url} alt="Employee attendance capture" className="w-full max-h-[70vh] object-contain" />
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                <div>
+                  <p className="font-medium text-foreground">Employee</p>
+                  <p>{photoLog.employee_name || selectedEmployee?.first_name || '—'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Date</p>
+                  <p>{photoLog.date || '—'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Time In</p>
+                  <p>{photoLog.time_in ? format(new Date(photoLog.time_in), 'hh:mm a') : '—'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Time Out</p>
+                  <p>{photoLog.time_out ? format(new Date(photoLog.time_out), 'hh:mm a') : '—'}</p>
+                </div>
+              </div>
+              <Button variant="outline" className="w-full" onClick={() => window.open(photoLog.photo_url, '_blank', 'noopener,noreferrer')}>
+                Open Full Size
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

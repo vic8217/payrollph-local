@@ -13,6 +13,7 @@ import QRScanner from '@/pages/QRScanner';
 import Attendance from '@/pages/Attendance';
 import Payroll from '@/pages/Payroll';
 import PayrollDashboard from '@/pages/PayrollDashboard';
+import StatutoryRates from '@/pages/StatutoryRates';
 import CashAdvance from '@/pages/CashAdvance';
 import Holidays from '@/pages/Holidays';
 
@@ -77,6 +78,7 @@ const AuthenticatedApp = () => {
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/payroll" element={<Payroll />} />
         <Route path="/payroll-dashboard" element={<PayrollDashboard />} />
+        <Route path="/statutory-rates" element={<StatutoryRates />} />
         <Route path="/cash-advance" element={<CashAdvance />} />
         <Route path="/holidays" element={<Holidays />} />
         <Route path="/no-work-days" element={<NoWorkDays />} />

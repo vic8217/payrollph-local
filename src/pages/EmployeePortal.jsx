@@ -28,6 +28,7 @@ export default function EmployeePortal() {
   const [scanKey, setScanKey] = useState(0); // increment to reset EmployeeQRGate back to camera
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
+  const [photoCaptureKey, setPhotoCaptureKey] = useState(0);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -38,6 +39,7 @@ export default function EmployeePortal() {
   // Start camera and auto-capture when modal opens
   useEffect(() => {
     if (!scanConfirm) return;
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     setPhotoDataUrl(null);
     setPhotoStatus('capturing');
 
@@ -78,7 +80,7 @@ export default function EmployeePortal() {
     return () => {
       if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     };
-  }, [scanConfirm]);
+  }, [scanConfirm, photoCaptureKey]);
 
   const handleTabChange = (tabId) => {
     setActiveTab(tabId);
@@ -253,6 +255,17 @@ export default function EmployeePortal() {
                   </div>
                 )}
               </div>
+              {(photoStatus === 'done' || photoStatus === 'error') && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full gap-2"
+                  onClick={() => setPhotoCaptureKey(k => k + 1)}
+                >
+                  <Camera className="w-3.5 h-3.5" /> Retake Photo
+                </Button>
+              )}
             </div>
 
             <Button
