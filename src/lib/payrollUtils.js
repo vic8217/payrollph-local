@@ -1,42 +1,20 @@
 // Philippine Payroll Computation Utilities
 
-// SSS Contribution Table (2024 rates)
+// SSS Contribution Table effective January 2025 and used for 2026.
+// Regular employee share: 5% of MSC. Employer share: 10% of MSC.
+// MSC is bracketed every ₱500 from ₱5,000 to ₱35,000.
 export function computeSSS(monthlyRate) {
-  if (monthlyRate < 4250) return { employee: 180, employer: 380 };
-  if (monthlyRate < 4750) return { employee: 202.50, employer: 427.50 };
-  if (monthlyRate < 5250) return { employee: 225, employer: 475 };
-  if (monthlyRate < 5750) return { employee: 247.50, employer: 522.50 };
-  if (monthlyRate < 6250) return { employee: 270, employer: 570 };
-  if (monthlyRate < 6750) return { employee: 292.50, employer: 617.50 };
-  if (monthlyRate < 7250) return { employee: 315, employer: 665 };
-  if (monthlyRate < 7750) return { employee: 337.50, employer: 712.50 };
-  if (monthlyRate < 8250) return { employee: 360, employer: 760 };
-  if (monthlyRate < 8750) return { employee: 382.50, employer: 807.50 };
-  if (monthlyRate < 9250) return { employee: 405, employer: 855 };
-  if (monthlyRate < 9750) return { employee: 427.50, employer: 902.50 };
-  if (monthlyRate < 10250) return { employee: 450, employer: 950 };
-  if (monthlyRate < 10750) return { employee: 472.50, employer: 997.50 };
-  if (monthlyRate < 11250) return { employee: 495, employer: 1045 };
-  if (monthlyRate < 11750) return { employee: 517.50, employer: 1092.50 };
-  if (monthlyRate < 12250) return { employee: 540, employer: 1140 };
-  if (monthlyRate < 12750) return { employee: 562.50, employer: 1187.50 };
-  if (monthlyRate < 13250) return { employee: 585, employer: 1235 };
-  if (monthlyRate < 13750) return { employee: 607.50, employer: 1282.50 };
-  if (monthlyRate < 14250) return { employee: 630, employer: 1330 };
-  if (monthlyRate < 14750) return { employee: 652.50, employer: 1377.50 };
-  if (monthlyRate < 15250) return { employee: 675, employer: 1425 };
-  if (monthlyRate < 15750) return { employee: 697.50, employer: 1472.50 };
-  if (monthlyRate < 16250) return { employee: 720, employer: 1520 };
-  if (monthlyRate < 16750) return { employee: 742.50, employer: 1567.50 };
-  if (monthlyRate < 17250) return { employee: 765, employer: 1615 };
-  if (monthlyRate < 17750) return { employee: 787.50, employer: 1662.50 };
-  if (monthlyRate < 18250) return { employee: 810, employer: 1710 };
-  if (monthlyRate < 18750) return { employee: 832.50, employer: 1757.50 };
-  if (monthlyRate < 19250) return { employee: 855, employer: 1805 };
-  if (monthlyRate < 19750) return { employee: 877.50, employer: 1852.50 };
-  if (monthlyRate < 20250) return { employee: 900, employer: 1900 };
-  // Cap at 20,000
-  return { employee: 900, employer: 1900 };
+  const salary = Number(monthlyRate) || 0;
+  const msc = Math.min(35000, Math.max(5000, Math.round(salary / 500) * 500));
+  const ec = msc >= 15000 ? 30 : 10;
+
+  return {
+    employee: parseFloat((msc * 0.05).toFixed(2)),
+    employer: parseFloat((msc * 0.10).toFixed(2)),
+    ec,
+    total: parseFloat((msc * 0.15 + ec).toFixed(2)),
+    monthly_salary_credit: msc,
+  };
 }
 
 // PhilHealth Contribution (2024: 5% of monthly salary, split 50/50, max salary credit 80,000)

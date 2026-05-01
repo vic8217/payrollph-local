@@ -7,7 +7,7 @@ import { computePagIbig, computePhilHealth, computeSSS } from '@/lib/payrollUtil
 const formatPeso = (value) =>
   `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const sampleSalaries = [4250, 5000, 10000, 15000, 20000, 30000, 50000, 80000];
+const sampleSalaries = [5000, 10000, 15000, 17000, 18000, 19000, 20000, 30000, 35000];
 
 function RateCard({ icon: Icon, title, children }) {
   return (
@@ -47,7 +47,7 @@ export default function StatutoryRates() {
       philHealth,
       pagIbig,
       employeeMonthly: sss.employee + philHealth.employee + pagIbig.employee,
-      employerMonthly: sss.employer + philHealth.employer + pagIbig.employer,
+      employerMonthly: sss.employer + sss.ec + philHealth.employer + pagIbig.employer,
       employeeWeekly: (sss.employee + philHealth.employee + pagIbig.employee) / 4.33,
     };
   }, [salary]);
@@ -61,10 +61,12 @@ export default function StatutoryRates() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <RateCard icon={ShieldCheck} title="SSS">
-          <Row label="Method" value="Salary bracket table" />
-          <Row label="App cap" value="₱20,000 monthly rate" />
-          <Row label="Employee at cap" value={formatPeso(computeSSS(20000).employee)} />
-          <Row label="Employer at cap" value={formatPeso(computeSSS(20000).employer)} />
+          <Row label="Method" value="MSC bracket table" />
+          <Row label="MSC range" value="₱5,000 - ₱35,000" />
+          <Row label="Employee share" value="5%" />
+          <Row label="Employer share" value="10% + EC" />
+          <Row label="Employee at ₱20,000 MSC" value={formatPeso(computeSSS(20000).employee)} />
+          <Row label="Employer at ₱20,000 MSC" value={formatPeso(computeSSS(20000).employer)} />
         </RateCard>
 
         <RateCard icon={HeartPulse} title="PhilHealth">
@@ -108,8 +110,10 @@ export default function StatutoryRates() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="rounded-lg border border-border p-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">SSS</p>
+            <Row label="MSC" value={formatPeso(preview.sss.monthly_salary_credit)} />
             <Row label="Employee" value={formatPeso(preview.sss.employee)} />
             <Row label="Employer" value={formatPeso(preview.sss.employer)} />
+            <Row label="EC" value={formatPeso(preview.sss.ec)} />
           </div>
           <div className="rounded-lg border border-border p-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">PhilHealth</p>
@@ -142,13 +146,15 @@ export default function StatutoryRates() {
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">SSS</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">PhilHealth</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Pag-IBIG</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">SSS EC</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Monthly Total</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Weekly Deduction</th>
               </tr>
             </thead>
             <tbody>
               {sampleSalaries.map(amount => {
-                const sss = computeSSS(amount).employee;
+                const sssInfo = computeSSS(amount);
+                const sss = sssInfo.employee;
                 const philHealth = computePhilHealth(amount).employee;
                 const pagIbig = computePagIbig(amount).employee;
                 const total = sss + philHealth + pagIbig;
@@ -158,6 +164,7 @@ export default function StatutoryRates() {
                     <td className="px-4 py-3 text-right font-mono">{formatPeso(sss)}</td>
                     <td className="px-4 py-3 text-right font-mono">{formatPeso(philHealth)}</td>
                     <td className="px-4 py-3 text-right font-mono">{formatPeso(pagIbig)}</td>
+                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">{formatPeso(sssInfo.ec)}</td>
                     <td className="px-4 py-3 text-right font-mono font-semibold">{formatPeso(total)}</td>
                     <td className="px-4 py-3 text-right font-mono text-destructive">{formatPeso(total / 4.33)}</td>
                   </tr>
