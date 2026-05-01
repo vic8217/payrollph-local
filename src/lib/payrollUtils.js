@@ -17,20 +17,36 @@ export function computeSSS(monthlyRate) {
   };
 }
 
-// PhilHealth Contribution (2024: 5% of monthly salary, split 50/50, max salary credit 80,000)
+// PhilHealth Contribution (2025/2026: 5%, split 50/50, salary credit ₱10,000-₱100,000)
 export function computePhilHealth(monthlyRate) {
   const rate = 0.05;
   const minSalaryCredit = 10000;
-  const maxSalaryCredit = 80000;
-  const salaryCredit = Math.min(Math.max(monthlyRate, minSalaryCredit), maxSalaryCredit);
+  const maxSalaryCredit = 100000;
+  const salary = Number(monthlyRate) || 0;
+  const salaryCredit = Math.min(Math.max(salary, minSalaryCredit), maxSalaryCredit);
   const total = salaryCredit * rate;
-  return { employee: total / 2, employer: total / 2 };
+  return {
+    employee: parseFloat((total / 2).toFixed(2)),
+    employer: parseFloat((total / 2).toFixed(2)),
+    total: parseFloat(total.toFixed(2)),
+    salary_credit: salaryCredit,
+  };
 }
 
-// Pag-IBIG Contribution (2% employee if > 1500, max 100)
+// Pag-IBIG Contribution (effective Feb 2024: 2% employer, employee 1% up to ₱1,500 else 2%, MFS cap ₱10,000)
 export function computePagIbig(monthlyRate) {
-  if (monthlyRate <= 1500) return { employee: monthlyRate * 0.01, employer: monthlyRate * 0.02 };
-  return { employee: Math.min(100, monthlyRate * 0.02), employer: Math.min(100, monthlyRate * 0.02) };
+  const salary = Number(monthlyRate) || 0;
+  const fundSalary = Math.min(Math.max(salary, 0), 10000);
+  const employeeRate = fundSalary <= 1500 ? 0.01 : 0.02;
+  const employee = fundSalary * employeeRate;
+  const employer = fundSalary * 0.02;
+
+  return {
+    employee: parseFloat(employee.toFixed(2)),
+    employer: parseFloat(employer.toFixed(2)),
+    total: parseFloat((employee + employer).toFixed(2)),
+    fund_salary: fundSalary,
+  };
 }
 
 // Withholding Tax (based on TRAIN Law, weekly taxable income)
@@ -45,26 +61,80 @@ export function computeWithholdingTax(weeklyTaxableIncome) {
   return (200833.33 + (monthly - 666667) * 0.35) / 4.33;
 }
 
-// Overtime pay computation
-export function computeOvertimePay(hourlyRate, overtimeHours, dayType, isRestDay) {
-  let multiplier = 1.25; // Regular OT
-  if (isRestDay) multiplier = 1.30;
-  if (dayType === 'regular_holiday') multiplier = 2.60;
-  if (dayType === 'special_holiday') multiplier = 1.69;
+export const DAY_PAY_MULTIPLIERS = {
+  regular: 1,
+  special_working_holiday: 1,
+  rest_day: 1.30,
+  special_holiday: 1.30,
+  special_holiday_rest_day: 1.50,
+  double_special_holiday: 1.50,
+  double_special_holiday_rest_day: 1.95,
+  regular_holiday: 2.00,
+  regular_holiday_rest_day: 2.60,
+  double_holiday: 3.00,
+  double_holiday_rest_day: 3.90,
+};
+
+export const OVERTIME_MULTIPLIERS = {
+  regular: 1.25,
+  special_working_holiday: 1.25,
+  rest_day: 1.69,
+  special_holiday: 1.69,
+  special_holiday_rest_day: 1.95,
+  double_special_holiday: 1.95,
+  double_special_holiday_rest_day: 2.535,
+  regular_holiday: 2.60,
+  regular_holiday_rest_day: 3.38,
+  double_holiday: 3.90,
+  double_holiday_rest_day: 5.07,
+};
+
+const REGULAR_HOLIDAY_TYPES = new Set(['regular_holiday', 'regular_holiday_rest_day', 'double_holiday', 'double_holiday_rest_day']);
+
+function resolvePayDayType(log, holidayTypes = []) {
+  const logDate = new Date(log.date);
+  const isSunday = logDate.getDay() === 0;
+  const rawDayType = log.day_type || 'regular';
+  // Company default work week: Monday-Saturday work days, Sunday scheduled rest day.
+  const isRestDay = isSunday || rawDayType === 'rest_day';
+
+  const explicitRegularHoliday = rawDayType === 'regular_holiday' ? 1 : 0;
+  const calendarRegularHolidays = holidayTypes.filter(type => type === 'regular_holiday').length;
+  const regularHolidayCount = Math.max(explicitRegularHoliday, calendarRegularHolidays);
+
+  const explicitSpecialHoliday = rawDayType === 'special_holiday' ? 1 : 0;
+  const calendarSpecialHolidays = holidayTypes.filter(type => type === 'special_holiday').length;
+  const specialHolidayCount = Math.max(explicitSpecialHoliday, calendarSpecialHolidays);
+  const hasSpecialWorkingHoliday = rawDayType === 'special_working_holiday' || holidayTypes.includes('special_working_holiday');
+
+  if (regularHolidayCount >= 2) return isRestDay ? 'double_holiday_rest_day' : 'double_holiday';
+  if (regularHolidayCount === 1) return isRestDay ? 'regular_holiday_rest_day' : 'regular_holiday';
+  if (specialHolidayCount >= 2) return isRestDay ? 'double_special_holiday_rest_day' : 'double_special_holiday';
+  if (specialHolidayCount === 1) return isRestDay ? 'special_holiday_rest_day' : 'special_holiday';
+  if (hasSpecialWorkingHoliday) return isRestDay ? 'rest_day' : 'special_working_holiday';
+  if (isRestDay) return 'rest_day';
+  return 'regular';
+}
+
+// Overtime pay computation based on DOLE minimum statutory pay rates.
+export function computeOvertimePay(hourlyRate, overtimeHours, dayType) {
+  const multiplier = OVERTIME_MULTIPLIERS[dayType] || OVERTIME_MULTIPLIERS.regular;
   return hourlyRate * overtimeHours * multiplier;
 }
 
-// Holiday pay multipliers
+// Holiday/rest-day pay multipliers for the first eight hours.
 export function getHolidayMultiplier(dayType, worked) {
-  if (dayType === 'regular_holiday') return worked ? 2.0 : 1.0; // 200% if worked, 100% if not
-  if (dayType === 'special_holiday') return worked ? 1.30 : 0; // 130% if worked, no pay if not
-  if (dayType === 'rest_day') return worked ? 1.30 : 0;
-  return worked ? 1.0 : 0;
+  if (!worked && REGULAR_HOLIDAY_TYPES.has(dayType)) {
+    return dayType.startsWith('double_holiday') ? 2.0 : 1.0;
+  }
+  if (!worked) return 0;
+  return DAY_PAY_MULTIPLIERS[dayType] || DAY_PAY_MULTIPLIERS.regular;
 }
 
-// Night differential pay (10% of hourly rate per ND hour — Philippine Labor Code)
-export function computeNightDiffPay(hourlyRate, nightDiffHours) {
-  return hourlyRate * 0.10 * (nightDiffHours || 0);
+// Night differential is an additional 10% of the applicable hourly rate for the day.
+export function computeNightDiffPay(hourlyRate, nightDiffHours, dayType) {
+  const dayMultiplier = DAY_PAY_MULTIPLIERS[dayType] || DAY_PAY_MULTIPLIERS.regular;
+  return hourlyRate * dayMultiplier * 0.10 * (nightDiffHours || 0);
 }
 
 // Compute full weekly payroll for an employee
@@ -93,6 +163,7 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
   let lateDeduction = 0;
   let undertimeDeduction = 0;
   let absentDeduction = 0;
+  let workedDays = 0;
   let regularDays = 0;
   let restDayWorked = 0;
   let regularHolidayWorked = 0;
@@ -100,28 +171,32 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
   let totalOvertimeHours = 0;
   let totalNightDiffHours = 0;
 
-  const holidayDates = new Set(holidays.map(h => h.date));
   const holidayMap = {};
-  holidays.forEach(h => { holidayMap[h.date] = h.type; });
+  holidays.forEach(h => {
+    if (!holidayMap[h.date]) holidayMap[h.date] = [];
+    holidayMap[h.date].push(h.type);
+  });
 
   // No-work days declared by management (no work = no pay, except regular holiday still pays)
   const noWorkDaySet = new Set((noWorkDays || []).map(d => d.date));
 
   for (const log of attendanceLogs.filter(l => l.status !== 'pending')) {
-    // Saturday (day 6) is a regular working day — treat as regular if marked as rest_day
-    const logDate = new Date(log.date);
-    const isSaturday = logDate.getDay() === 6;
+    const dayType = resolvePayDayType(log, holidayMap[log.date] || []);
+    const holidayMultiplier = getHolidayMultiplier(dayType, !!log.time_in);
 
     if (log.is_absent) {
-      // If absent on a no-work day: no deduction (they didn't need to come)
-      // If absent on a regular holiday: still gets paid (handled below via holiday pay)
-      if (!noWorkDaySet.has(log.date)) {
+      if (holidayMultiplier > 0 && REGULAR_HOLIDAY_TYPES.has(dayType)) {
+        holidayPay += dailyRate * holidayMultiplier;
+      } else if (!noWorkDaySet.has(log.date)) {
         absentDeduction += dailyRate;
       }
       continue;
     }
     if (!log.time_in) {
-      // No time_in (not scanned), treat same as absent logic above
+      if (holidayMultiplier > 0 && REGULAR_HOLIDAY_TYPES.has(dayType)) {
+        holidayPay += dailyRate * holidayMultiplier;
+        continue;
+      }
       if (noWorkDaySet.has(log.date)) continue; // no-work day, skip
       continue;
     }
@@ -129,10 +204,9 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
     // If this is a declared no-work day and the employee did NOT work, skip pay
     // (If they did work, time_in exists and we fall through to normal pay below)
 
-    // Saturday treated as ordinary workday (regular), not rest_day
-    const dayType = (isSaturday && log.day_type === 'rest_day') ? 'regular' : (log.day_type || 'regular');
     const worked = !!log.time_in;
     const multiplier = getHolidayMultiplier(dayType, worked);
+    if (worked) workedDays++;
 
     // Prorate pay based on actual hours worked (max 8h = full day)
     const hoursWorked = log.hours_worked || 0;
@@ -143,30 +217,32 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
     const undertimeFromHours = hoursWorked > 0 && hoursWorked < 8 ? (8 - hoursWorked) * 60 : 0;
     const undertimeMins = log.undertime_minutes > 0 ? log.undertime_minutes : undertimeFromHours;
 
-    if (dayType === 'regular') {
+    if (dayType === 'regular' || dayType === 'special_working_holiday') {
       regularDays++;
       basicPay += effectivePay;
     } else if (dayType === 'rest_day') {
       restDayWorked++;
       basicPay += effectivePay;
-    } else if (dayType === 'regular_holiday') {
+    } else if (dayType === 'regular_holiday' || dayType === 'regular_holiday_rest_day' || dayType === 'double_holiday' || dayType === 'double_holiday_rest_day') {
       regularHolidayWorked++;
+      if (dayType.endsWith('_rest_day')) restDayWorked++;
       holidayPay += effectivePay;
-    } else if (dayType === 'special_holiday') {
+    } else if (dayType === 'special_holiday' || dayType === 'special_holiday_rest_day' || dayType === 'double_special_holiday' || dayType === 'double_special_holiday_rest_day') {
       specialHolidayWorked++;
+      if (dayType.endsWith('_rest_day')) restDayWorked++;
       holidayPay += effectivePay;
     }
 
     // Overtime
     if (log.overtime_hours > 0) {
       totalOvertimeHours += log.overtime_hours;
-      overtimePay += computeOvertimePay(hourlyRate, log.overtime_hours, dayType, dayType === 'rest_day');
+      overtimePay += computeOvertimePay(hourlyRate, log.overtime_hours, dayType);
     }
 
     // Night differential (10% premium per ND hour)
     if (log.night_diff_hours > 0) {
       totalNightDiffHours += log.night_diff_hours;
-      nightDiffPay += computeNightDiffPay(hourlyRate, log.night_diff_hours);
+      nightDiffPay += computeNightDiffPay(hourlyRate, log.night_diff_hours, dayType);
     }
 
     // Late deduction (per minute = hourly rate / 60), minus grace period
@@ -210,7 +286,7 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
     cash_advance_deduction: cashAdvanceDeduction || 0,
     total_deductions: parseFloat(totalDeductions.toFixed(2)),
     net_pay: parseFloat(netPay.toFixed(2)),
-    days_worked: regularDays + restDayWorked + regularHolidayWorked + specialHolidayWorked,
+    days_worked: workedDays,
     regular_days: regularDays,
     rest_day_worked: restDayWorked,
     regular_holiday_worked: regularHolidayWorked,

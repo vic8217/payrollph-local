@@ -871,7 +871,8 @@ export default function Attendance() {
                               <SelectItem value="regular">Regular</SelectItem>
                               <SelectItem value="rest_day">Rest Day</SelectItem>
                               <SelectItem value="regular_holiday">Regular Holiday</SelectItem>
-                              <SelectItem value="special_holiday">Special Holiday</SelectItem>
+                              <SelectItem value="special_holiday">Special Non-Working Holiday</SelectItem>
+                              <SelectItem value="special_working_holiday">Special Working Holiday</SelectItem>
                             </SelectContent>
                           </Select>
                         </td>

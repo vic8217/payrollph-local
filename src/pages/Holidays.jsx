@@ -63,6 +63,7 @@ export default function Holidays() {
 
   const regular = holidays.filter(h => h.type === 'regular_holiday');
   const special = holidays.filter(h => h.type === 'special_holiday');
+  const specialWorking = holidays.filter(h => h.type === 'special_working_holiday');
 
   const HolidayList = ({ items, color }) => (
     <div className="space-y-2">
@@ -90,7 +91,7 @@ export default function Holidays() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Philippine Holidays</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">Regular (200% pay) · Special (130% pay)</p>
+          <p className="text-muted-foreground text-sm mt-0.5">Regular (200%) · Special non-working (130%) · Special working (ordinary day)</p>
         </div>
         <div className="flex gap-2">
           {holidays.length === 0 && (
@@ -104,7 +105,7 @@ export default function Holidays() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <Card className="border border-border shadow-sm">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -123,6 +124,16 @@ export default function Holidays() {
             </CardTitle>
           </CardHeader>
           <CardContent><HolidayList items={special} color="text-orange-500" /></CardContent>
+        </Card>
+
+        <Card className="border border-border shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Badge className="bg-blue-100 text-blue-700 text-xs">Special Working</Badge>
+              <span className="text-muted-foreground font-normal">Ordinary day</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent><HolidayList items={specialWorking} color="text-blue-500" /></CardContent>
         </Card>
       </div>
 
@@ -144,7 +155,8 @@ export default function Holidays() {
                 <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="regular_holiday">Regular Holiday (200%)</SelectItem>
-                  <SelectItem value="special_holiday">Special Holiday (130%)</SelectItem>
+                  <SelectItem value="special_holiday">Special Non-Working Holiday (130%)</SelectItem>
+                  <SelectItem value="special_working_holiday">Special Working Holiday (100%)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -10,13 +10,15 @@ const dayTypeColors = {
   rest_day: 'bg-purple-50 text-purple-700',
   regular_holiday: 'bg-red-50 text-red-700',
   special_holiday: 'bg-orange-50 text-orange-700',
+  special_working_holiday: 'bg-blue-50 text-blue-700',
 };
 
 const dayTypeLabels = {
   regular: 'Regular',
   rest_day: 'Rest Day',
   regular_holiday: 'Regular Holiday',
-  special_holiday: 'Special Holiday',
+  special_holiday: 'Special Non-Working Holiday',
+  special_working_holiday: 'Special Working Holiday',
 };
 
 export default function EmployeeAttendance({ employee }) {

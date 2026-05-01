@@ -155,6 +155,11 @@ export default function Payroll() {
     }
 
     let totalGross = 0, totalDed = 0, totalNet = 0;
+    const periodHolidays = holidays.filter(h => h.date >= startStr && h.date <= endStr);
+    const periodNoWorkDays = noWorkDays.filter(d => d.date >= startStr && d.date <= endStr);
+    const regularHolidayDates = periodHolidays
+      .filter(h => h.type === 'regular_holiday')
+      .map(h => h.date);
 
     for (const emp of activeEmployees) {
       const empLogs = allLogs.filter(l =>
@@ -162,6 +167,20 @@ export default function Payroll() {
         l.date >= startStr && l.date <= endStr &&
         (l.status === 'approved' || l.status === 'pending')
       );
+      const empLogDates = new Set(empLogs.map(l => l.date));
+      const payrollLogs = [
+        ...empLogs,
+        ...regularHolidayDates
+          .filter(date => !empLogDates.has(date))
+          .map(date => ({
+            employee_id: emp.employee_id,
+            date,
+            status: 'approved',
+            day_type: 'regular_holiday',
+            time_in: null,
+            is_absent: false,
+          })),
+      ];
 
       // Find all active CAs for this employee (can have multiple)
       const empCAs = approvedCA.filter(ca => ca.employee_id === emp.employee_id);
@@ -179,9 +198,7 @@ export default function Payroll() {
       });
       const caDeductionThisPeriod = caDeductions.reduce((sum, item) => sum + item.amount, 0);
 
-      const periodHolidays = holidays.filter(h => h.date >= startStr && h.date <= endStr);
-      const periodNoWorkDays = noWorkDays.filter(d => d.date >= startStr && d.date <= endStr);
-      const computed = computeWeeklyPayroll(emp, empLogs, periodHolidays, caDeductionThisPeriod, periodNoWorkDays);
+      const computed = computeWeeklyPayroll(emp, payrollLogs, periodHolidays, caDeductionThisPeriod, periodNoWorkDays);
 
       // Upsert payroll record
       const existing = await appApi.entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });
