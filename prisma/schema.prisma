@@ -19,6 +19,7 @@ model AppUser {
   companyProfileId       String?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
+  passwordResetTokens    PasswordResetToken[]
 }
 
 model EntityRecord {
@@ -29,4 +30,17 @@ model EntityRecord {
   updatedAt DateTime @updatedAt
 
   @@index([entity])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }

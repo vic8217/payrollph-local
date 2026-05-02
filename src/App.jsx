@@ -60,6 +60,7 @@ const AuthenticatedApp = () => {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/landing" element={<Landing />} />
+        <Route path="/reset-password" element={<Landing />} />
         <Route path="/scan/confirm" element={<ScanConfirm />} />
         <Route path="/employee-portal-qr" element={<EmployeePortalQR />} />
         <Route path="/employee-portal" element={<EmployeePortal />} />

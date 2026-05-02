@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { prisma } from "@/server/prisma";
 
-const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+const SESSION_MAX_AGE_SECONDS = 60 * 60;
 
 export const authOptions = {
   session: {
@@ -42,20 +42,29 @@ export const authOptions = {
 
         const sessionId = randomUUID();
         const sessionExpiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
-        const activeSession = await prisma.appUser.updateMany({
-          where: {
-            id: user.id,
-            OR: [
-              { activeSessionId: null },
-              { activeSessionExpiresAt: null },
-              { activeSessionExpiresAt: { lt: new Date() } },
-            ],
-          },
-          data: {
-            activeSessionId: sessionId,
-            activeSessionExpiresAt: sessionExpiresAt,
-          },
-        });
+        const activeSession =
+          user.role === "super_admin"
+            ? await prisma.appUser.updateMany({
+                where: { id: user.id },
+                data: {
+                  activeSessionId: sessionId,
+                  activeSessionExpiresAt: sessionExpiresAt,
+                },
+              })
+            : await prisma.appUser.updateMany({
+                where: {
+                  id: user.id,
+                  OR: [
+                    { activeSessionId: null },
+                    { activeSessionExpiresAt: null },
+                    { activeSessionExpiresAt: { lt: new Date() } },
+                  ],
+                },
+                data: {
+                  activeSessionId: sessionId,
+                  activeSessionExpiresAt: sessionExpiresAt,
+                },
+              });
 
         if (activeSession.count === 0) {
           throw new Error("ACCOUNT_ALREADY_ACTIVE");
