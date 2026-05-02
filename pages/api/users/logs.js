@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "../auth/[...nextauth]/index";
+import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
 
 function toPublicUserStatus(user) {

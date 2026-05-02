@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { createHash, randomInt } from "crypto";
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "../auth/[...nextauth]/index";
+import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
 
 const RESET_PASSCODE_TTL_MINUTES = 30;

@@ -2,7 +2,7 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/server/prisma";
 
-const ALLOWED_ROLES = new Set(["admin", "user"]);
+const ALLOWED_ROLES = new Set(["super_admin", "admin", "user"]);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -14,6 +14,7 @@ export default async function handler(req, res) {
   const password = String(req.body?.password || "");
   const name = String(req.body?.name || "").trim();
   const role = String(req.body?.role || "user").trim();
+  const superAdminRecoveryKey = String(req.body?.superAdminRecoveryKey || "");
 
   if (!email || !password || !name) {
     return res.status(400).json({ error: "Name, email, and password are required" });
@@ -24,7 +25,16 @@ export default async function handler(req, res) {
   }
 
   if (!ALLOWED_ROLES.has(role)) {
-    return res.status(400).json({ error: "Role must be admin or user" });
+    return res.status(400).json({ error: "Role must be super admin, admin, or user" });
+  }
+
+  if (role === "super_admin") {
+    if (!process.env.SUPER_ADMIN_RECOVERY_KEY) {
+      return res.status(500).json({ error: "Super admin registration key is not configured" });
+    }
+    if (superAdminRecoveryKey !== process.env.SUPER_ADMIN_RECOVERY_KEY) {
+      return res.status(403).json({ error: "Invalid super admin recovery key" });
+    }
   }
 
   try {
@@ -40,7 +50,7 @@ export default async function handler(req, res) {
         name,
         passwordHash,
         role,
-        approvalStatus: "pending",
+        approvalStatus: role === "super_admin" ? "approved" : "pending",
       },
     });
 

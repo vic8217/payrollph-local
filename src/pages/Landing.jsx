@@ -58,6 +58,7 @@ export default function Landing() {
     email: "",
     password: "",
     role: "user",
+    superAdminRecoveryKey: "",
   });
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -109,6 +110,7 @@ export default function Landing() {
           email: registerForm.email,
           password: registerForm.password,
           role: registerForm.role,
+          superAdminRecoveryKey: registerForm.superAdminRecoveryKey,
         }),
       });
 
@@ -118,10 +120,13 @@ export default function Landing() {
       }
 
       toast({
-        title: "Registration submitted",
-        description: "Your account is pending super admin approval before you can sign in.",
+        title: registerForm.role === "super_admin" ? "Super admin registered" : "Registration submitted",
+        description:
+          registerForm.role === "super_admin"
+            ? "You can now sign in with this super admin account."
+            : "Your account is pending super admin approval before you can sign in.",
       });
-      setRegisterForm((prev) => ({ ...prev, password: "" }));
+      setRegisterForm((prev) => ({ ...prev, password: "", superAdminRecoveryKey: "" }));
       setLoginForm((prev) => ({ ...prev, email: String(registerForm.email || "").trim().toLowerCase() }));
     } catch (error) {
       toast({
@@ -472,7 +477,16 @@ export default function Landing() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[11px] tracking-[0.28em] text-slate-400">ROLE</Label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Button
+                      type="button"
+                      variant={registerForm.role === "super_admin" ? "default" : "outline"}
+                      className="justify-start gap-2"
+                      onClick={() => setRegisterForm((p) => ({ ...p, role: "super_admin" }))}
+                    >
+                      <KeyRound className="w-4 h-4" />
+                      Super Admin
+                    </Button>
                     <Button
                       type="button"
                       variant={registerForm.role === "admin" ? "default" : "outline"}
@@ -493,6 +507,22 @@ export default function Landing() {
                     </Button>
                   </div>
                 </div>
+                {registerForm.role === "super_admin" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="register-super-admin-key" className="text-[11px] tracking-[0.28em] text-slate-400">
+                      SUPER ADMIN RECOVERY KEY
+                    </Label>
+                    <Input
+                      id="register-super-admin-key"
+                      type="password"
+                      value={registerForm.superAdminRecoveryKey}
+                      onChange={(e) => setRegisterForm((p) => ({ ...p, superAdminRecoveryKey: e.target.value }))}
+                      className="rounded-none border-0 border-b border-slate-300 px-0 focus-visible:ring-0 focus-visible:border-violet-500"
+                      required
+                    />
+                    <p className="text-xs text-slate-500">Required only when creating a super admin account.</p>
+                  </div>
+                )}
                 <Button
                   type="submit"
                   className="h-10 w-full rounded-none bg-gradient-to-r from-sky-500 via-blue-600 to-fuchsia-500 text-[13px] font-semibold tracking-[0.24em] text-white hover:opacity-95"

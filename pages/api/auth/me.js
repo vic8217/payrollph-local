@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { getServerSession } from "next-auth/next";
-import { authOptions } from "./[...nextauth]/index";
+import { authOptions } from "./[...nextauth]";
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
