@@ -4,16 +4,21 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { appApi, requestJson } from '@/lib/appApi';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Users, Save, X, CheckCircle2, Clock3, XCircle, Ban, Trash2 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Users, Save, X, CheckCircle2, Clock3, XCircle, Ban, Trash2, KeyRound } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import { ACCESS_SCHEDULE_DAYS, DEFAULT_ACCESS_SCHEDULE, describeAccessSchedule } from '@/lib/accessSchedule';
 
 export default function UserManagement() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [editingUserId, setEditingUserId] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [resetPasscodes, setResetPasscodes] = useState({});
 
   const { data: users = [], isLoading: loadingUsers } = useQuery({
     queryKey: ['users'],
@@ -85,15 +90,64 @@ export default function UserManagement() {
     },
   });
 
+  const resetPasscodeMutation = useMutation({
+    mutationFn: (id) =>
+      requestJson('/api/users/reset-passcode', {
+        method: 'POST',
+        body: JSON.stringify({ id }),
+      }),
+    onSuccess: (data) => {
+      setResetPasscodes((prev) => ({ ...prev, [data.email]: data }));
+      toast({
+        title: 'Reset passcode created',
+        description: `Give this code to ${data.email}. It expires in 30 minutes.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to create passcode',
+        description: error.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    },
+  });
+
   const handleEdit = (user) => {
     setEditingUserId(user.id);
-    setEditForm({ role: user.role || 'user', company_profile_id: user.company_profile_id || '' });
+    setEditForm({
+      role: user.role || 'user',
+      company_profile_id: user.company_profile_id || '',
+      access_schedule: user.access_schedule || { ...DEFAULT_ACCESS_SCHEDULE },
+    });
   };
 
   const handleSave = (userId) => {
     const data = { ...editForm };
     if (!data.company_profile_id) delete data.company_profile_id;
+    if (data.role === 'super_admin') {
+      data.access_schedule = null;
+    }
     updateMutation.mutate({ id: userId, data });
+  };
+
+  const updateAccessSchedule = (patch) => {
+    setEditForm((prev) => ({
+      ...prev,
+      access_schedule: {
+        ...DEFAULT_ACCESS_SCHEDULE,
+        ...(prev.access_schedule || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  const toggleAccessDay = (day, checked) => {
+    const currentDays = editForm.access_schedule?.days || DEFAULT_ACCESS_SCHEDULE.days;
+    updateAccessSchedule({
+      days: checked
+        ? [...new Set([...currentDays, day])].sort((a, b) => a - b)
+        : currentDays.filter((currentDay) => currentDay !== day),
+    });
   };
 
   const handleRemove = (user) => {
@@ -109,7 +163,7 @@ export default function UserManagement() {
 
   const roleLabels = {
     super_admin: 'Super Admin',
-    admin: 'Admin',
+    admin: 'Management / Admin',
     user: 'User / HR Officer',
   };
 
@@ -148,7 +202,8 @@ export default function UserManagement() {
             const isEditing = editingUserId === user.id;
             const isPending = user.approval_status === 'pending';
             const isApprovedEmployee = user.approval_status === 'approved' && user.role !== 'super_admin';
-            const actionDisabled = approveMutation.isPending || denyMutation.isPending || suspendMutation.isPending || removeMutation.isPending;
+            const resetPasscode = resetPasscodes[user.email];
+            const actionDisabled = approveMutation.isPending || denyMutation.isPending || suspendMutation.isPending || removeMutation.isPending || resetPasscodeMutation.isPending;
 
             return (
               <Card key={user.id}>
@@ -170,6 +225,11 @@ export default function UserManagement() {
                       )}
                       {!isEditing && !assignedCompany && user.role !== 'super_admin' && (
                         <p className="text-xs text-muted-foreground mt-1 italic">No company assigned (sees all)</p>
+                      )}
+                      {!isEditing && user.role !== 'super_admin' && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          System access: {describeAccessSchedule(user.access_schedule)}
+                        </p>
                       )}
                     </div>
 
@@ -203,6 +263,16 @@ export default function UserManagement() {
                             <Button
                               size="sm"
                               variant="outline"
+                              onClick={() => resetPasscodeMutation.mutate(user.id)}
+                              disabled={actionDisabled}
+                              className="gap-1"
+                            >
+                              <KeyRound className="w-3.5 h-3.5" />
+                              Reset Code
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
                               onClick={() => suspendMutation.mutate(user.id)}
                               disabled={actionDisabled}
                               className="gap-1"
@@ -221,6 +291,18 @@ export default function UserManagement() {
                               Remove
                             </Button>
                           </>
+                        )}
+                        {user.role === 'super_admin' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => resetPasscodeMutation.mutate(user.id)}
+                            disabled={actionDisabled}
+                            className="gap-1"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                            Reset Code
+                          </Button>
                         )}
                         <Button size="sm" variant="outline" onClick={() => handleEdit(user)}>
                           {isPending ? (
@@ -253,7 +335,7 @@ export default function UserManagement() {
                           <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="super_admin">Super Admin (all access)</SelectItem>
-                            <SelectItem value="admin">Admin (no passcode/user mgmt)</SelectItem>
+                            <SelectItem value="admin">Management / Admin</SelectItem>
                             <SelectItem value="user">User / HR Officer</SelectItem>
                           </SelectContent>
                         </Select>
@@ -274,6 +356,80 @@ export default function UserManagement() {
                           </SelectContent>
                         </Select>
                         <p className="text-xs text-muted-foreground">Leave empty to allow access to all companies. Only Super Admins always see all companies.</p>
+                      </div>
+
+                      {editForm.role !== 'super_admin' && (
+                        <div className="sm:col-span-2 rounded-md border border-border p-3 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <Label className="text-xs">Access to System Schedule</Label>
+                              <p className="text-xs text-muted-foreground">Set specific allowed days and covered hours for HR officers and management.</p>
+                            </div>
+                            <Switch
+                              checked={Boolean(editForm.access_schedule?.enabled)}
+                              onCheckedChange={(checked) => updateAccessSchedule({ enabled: checked })}
+                            />
+                          </div>
+
+                          {editForm.access_schedule?.enabled && (
+                            <div className="space-y-3">
+                              <div className="space-y-1">
+                                <Label className="text-xs">Specific Days</Label>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                                  {ACCESS_SCHEDULE_DAYS.map((day) => (
+                                    <label
+                                      key={day.value}
+                                      className="flex h-8 items-center gap-2 rounded-md border border-border px-2 text-xs"
+                                    >
+                                      <Checkbox
+                                        checked={(editForm.access_schedule?.days || []).includes(day.value)}
+                                        onCheckedChange={(checked) => toggleAccessDay(day.value, checked === true)}
+                                      />
+                                      {day.short}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label className="text-xs">Specific Covered Hours</Label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <div className="space-y-1">
+                                    <Label className="text-xs text-muted-foreground">From</Label>
+                                    <Input
+                                      type="time"
+                                      value={editForm.access_schedule?.start_time || DEFAULT_ACCESS_SCHEDULE.start_time}
+                                      onChange={(event) => updateAccessSchedule({ start_time: event.target.value })}
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-xs text-muted-foreground">Until</Label>
+                                    <Input
+                                      type="time"
+                                      value={editForm.access_schedule?.end_time || DEFAULT_ACCESS_SCHEDULE.end_time}
+                                      onChange={(event) => updateAccessSchedule({ end_time: event.target.value })}
+                                    />
+                                  </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground">Use any covered hours, including weekends or after-office windows. Overnight windows like 20:00 to 02:00 are allowed.</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {resetPasscode && (
+                    <div className="mt-4 rounded-md border border-violet-200 bg-violet-50 p-3 text-sm">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-medium text-violet-800">Temporary reset passcode</p>
+                          <p className="text-xs text-violet-700">Give this to the user. It can be used once and expires in 30 minutes.</p>
+                        </div>
+                        <div className="select-all rounded bg-white px-3 py-2 font-mono text-base font-semibold tracking-[0.2em] text-violet-800">
+                          {resetPasscode.passcode}
+                        </div>
                       </div>
                     </div>
                   )}

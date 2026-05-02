@@ -4,7 +4,7 @@ import { useState } from 'react';
 import {
 	  LayoutDashboard, Users, Clock, CreditCard,
 	  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-	  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark
+	  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity
 	} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ const navItems = [
   { label: 'No-Work Days',    icon: CalendarOff,       path: '/no-work-days',       roles: ['super_admin', 'admin', 'user'] },
   { label: 'Daily Passcode',  icon: KeyRound,          path: '/passcode-manager',   roles: ['super_admin'] },
   { label: 'User Management', icon: Users,             path: '/user-management',    roles: ['super_admin'] },
+  { label: 'Users Log',       icon: Activity,          path: '/users-log',          roles: ['super_admin'] },
   { label: 'Company Profile', icon: Building2,         path: '/company-profile',    roles: ['super_admin', 'admin', 'user'] },
   { label: 'Shift Settings',  icon: Settings,          path: '/settings',           roles: ['super_admin', 'admin'] },
   { label: 'Portal QR Code',  icon: QrCode,            path: '/employee-portal-qr', roles: ['super_admin', 'admin', 'user'] },

@@ -31,6 +31,9 @@ async function signInWithCredentials(email, password) {
     if (data?.error === "ACCOUNT_ALREADY_ACTIVE") {
       throw new Error("This account is already signed in on another session. Please sign out first.");
     }
+    if (data?.error === "ACCESS_SCHEDULE_BLOCKED") {
+      throw new Error("Your account is outside its allowed access schedule. Please contact the super admin.");
+    }
 
     throw new Error("Invalid email or password");
   }
@@ -41,10 +44,15 @@ export default function Landing() {
   const [authMode, setAuthMode] = useState("login");
   const [rememberMe, setRememberMe] = useState(false);
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
-  const [resetRequestForm, setResetRequestForm] = useState({ email: "" });
+  const [resetRequestForm, setResetRequestForm] = useState({
+    email: "",
+    passcode: "",
+    recoveryKey: "",
+    password: "",
+    confirmPassword: "",
+  });
   const [resetConfirmForm, setResetConfirmForm] = useState({ password: "", confirmPassword: "" });
   const [resetToken, setResetToken] = useState("");
-  const [resetLink, setResetLink] = useState("");
   const [registerForm, setRegisterForm] = useState({
     name: "",
     email: "",
@@ -53,7 +61,9 @@ export default function Landing() {
   });
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
-  const [isRequestingReset, setIsRequestingReset] = useState(false);
+  const [isUsingPasscode, setIsUsingPasscode] = useState(false);
+  const [isUsingRecoveryKey, setIsUsingRecoveryKey] = useState(false);
+  const [showSuperAdminRecovery, setShowSuperAdminRecovery] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
@@ -124,38 +134,113 @@ export default function Landing() {
     }
   };
 
-  const handleResetRequest = async (event) => {
+  const handlePasscodeReset = async (event) => {
     event.preventDefault();
-    setIsRequestingReset(true);
-    setResetLink("");
+    const rawPasscode = String(resetRequestForm.passcode || "");
+    const normalizedPasscode = rawPasscode.replace(/[^a-z0-9]/gi, "");
+    const looksLikeRecoveryKey =
+      /[+/=]/.test(rawPasscode) || normalizedPasscode.length > 12;
+
+    if (looksLikeRecoveryKey) {
+      setResetRequestForm((prev) => ({
+        ...prev,
+        passcode: "",
+        recoveryKey: prev.passcode,
+      }));
+      setShowSuperAdminRecovery(true);
+      toast({
+        title: "Use recovery key mode",
+        description: "That looks like a private recovery key. Please submit it in the recovery key form.",
+      });
+      return;
+    }
+
+    if (resetRequestForm.password !== resetRequestForm.confirmPassword) {
+      toast({
+        title: "Passwords do not match",
+        description: "Enter the same password in both fields.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUsingPasscode(true);
     try {
-      const response = await fetch("/api/auth/password-reset/request", {
+      const response = await fetch("/api/auth/password-reset/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: resetRequestForm.email }),
+        body: JSON.stringify({
+          email: resetRequestForm.email,
+          passcode: resetRequestForm.passcode,
+          password: resetRequestForm.password,
+        }),
       });
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data?.error || "Unable to prepare reset link");
-      }
-
-      if (data?.resetLink) {
-        setResetLink(data.resetLink);
+        throw new Error(data?.error || "Unable to reset password");
       }
 
       toast({
-        title: "Password reset",
-        description: data?.message || "If the account exists, a reset link has been prepared.",
+        title: "Password updated",
+        description: data?.message || "You can now sign in.",
       });
+      setResetRequestForm({ email: "", passcode: "", recoveryKey: "", password: "", confirmPassword: "" });
+      setAuthMode("login");
     } catch (error) {
       toast({
         title: "Reset failed",
-        description: error.message || "Please try again.",
+        description: error.message || "Ask the super admin for a new passcode.",
         variant: "destructive",
       });
     } finally {
-      setIsRequestingReset(false);
+      setIsUsingPasscode(false);
+    }
+  };
+
+  const handleSuperAdminRecovery = async (event) => {
+    event.preventDefault();
+    if (resetRequestForm.password !== resetRequestForm.confirmPassword) {
+      toast({
+        title: "Passwords do not match",
+        description: "Enter the same password in both fields.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUsingRecoveryKey(true);
+    try {
+      const response = await fetch("/api/auth/super-admin-recovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: resetRequestForm.email,
+          recoveryKey: resetRequestForm.recoveryKey,
+          password: resetRequestForm.password,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to recover super admin account");
+      }
+
+      toast({
+        title: "Super admin recovered",
+        description: data?.message || "You can now sign in.",
+      });
+      setResetRequestForm({ email: "", passcode: "", recoveryKey: "", password: "", confirmPassword: "" });
+      setShowSuperAdminRecovery(false);
+      setAuthMode("login");
+    } catch (error) {
+      toast({
+        title: "Recovery failed",
+        description: error.message || "Check the private recovery key and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUsingRecoveryKey(false);
     }
   };
 
@@ -318,7 +403,7 @@ export default function Landing() {
                     type="button"
                     className="text-slate-500 transition hover:text-violet-600"
                     onClick={() => {
-                      setResetRequestForm({ email: loginForm.email });
+                      setResetRequestForm((prev) => ({ ...prev, email: loginForm.email }));
                       setAuthMode("reset-request");
                     }}
                   >
@@ -395,7 +480,7 @@ export default function Landing() {
                       onClick={() => setRegisterForm((p) => ({ ...p, role: "admin" }))}
                     >
                       <ShieldCheck className="w-4 h-4" />
-                      Admin
+                      Management
                     </Button>
                     <Button
                       type="button"
@@ -427,14 +512,16 @@ export default function Landing() {
                 </p>
               </form>
             ) : authMode === "reset-request" ? (
-              <form onSubmit={handleResetRequest} className="mt-8 space-y-5">
+              <form onSubmit={showSuperAdminRecovery ? handleSuperAdminRecovery : handlePasscodeReset} className="mt-8 space-y-4">
                 <div className="space-y-1">
                   <p className="flex items-center gap-2 text-base font-medium text-foreground">
                     <KeyRound className="h-4 w-4 text-violet-600" />
-                    Recover Password
+                    {showSuperAdminRecovery ? "Super Admin Recovery" : "Recover Password"}
                   </p>
                   <p className="text-sm text-slate-500">
-                    Enter your account email to prepare a secure reset link.
+                    {showSuperAdminRecovery
+                      ? "Enter the super admin email, private recovery key, and new password."
+                      : "Enter your email, the passcode from the super admin, and your new password."}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -450,21 +537,80 @@ export default function Landing() {
                     required
                   />
                 </div>
-                {resetLink ? (
-                  <div className="break-words rounded-md border border-violet-100 bg-violet-50 p-3 text-xs text-slate-600">
-                    <p className="mb-1 font-medium text-violet-700">Reset link</p>
-                    <a href={resetLink} className="text-violet-700 underline">
-                      {resetLink}
-                    </a>
+                {showSuperAdminRecovery ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="super-admin-recovery-key" className="text-[11px] tracking-[0.28em] text-slate-400">
+                      PRIVATE RECOVERY KEY
+                    </Label>
+                    <Input
+                      id="super-admin-recovery-key"
+                      type="password"
+                      value={resetRequestForm.recoveryKey}
+                      onChange={(e) => setResetRequestForm((p) => ({ ...p, recoveryKey: e.target.value }))}
+                      className="rounded-none border-0 border-b border-slate-300 px-0 focus-visible:ring-0 focus-visible:border-violet-500"
+                      required
+                    />
                   </div>
-                ) : null}
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="reset-passcode" className="text-[11px] tracking-[0.28em] text-slate-400">
+                      RESET PASSCODE
+                    </Label>
+                    <Input
+                      id="reset-passcode"
+                      placeholder="ABCD-1234"
+                      value={resetRequestForm.passcode}
+                      onChange={(e) => setResetRequestForm((p) => ({ ...p, passcode: e.target.value }))}
+                      className="rounded-none border-0 border-b border-slate-300 px-0 uppercase tracking-[0.18em] focus-visible:ring-0 focus-visible:border-violet-500"
+                      required
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="reset-new-password" className="text-[11px] tracking-[0.28em] text-slate-400">
+                    NEW PASSWORD
+                  </Label>
+                  <Input
+                    id="reset-new-password"
+                    type="password"
+                    minLength={8}
+                    value={resetRequestForm.password}
+                    onChange={(e) => setResetRequestForm((p) => ({ ...p, password: e.target.value }))}
+                    className="rounded-none border-0 border-b border-slate-300 px-0 focus-visible:ring-0 focus-visible:border-violet-500"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="reset-confirm-password" className="text-[11px] tracking-[0.28em] text-slate-400">
+                    CONFIRM PASSWORD
+                  </Label>
+                  <Input
+                    id="reset-confirm-password"
+                    type="password"
+                    minLength={8}
+                    value={resetRequestForm.confirmPassword}
+                    onChange={(e) => setResetRequestForm((p) => ({ ...p, confirmPassword: e.target.value }))}
+                    className="rounded-none border-0 border-b border-slate-300 px-0 focus-visible:ring-0 focus-visible:border-violet-500"
+                    required
+                  />
+                </div>
                 <Button
                   type="submit"
-                  disabled={isRequestingReset}
+                  disabled={isUsingPasscode || isUsingRecoveryKey}
                   className="h-10 w-full rounded-none bg-gradient-to-r from-sky-500 via-blue-600 to-fuchsia-500 text-[13px] font-semibold tracking-[0.2em] text-white hover:opacity-95"
                 >
-                  {isRequestingReset ? "PREPARING..." : "SEND RESET LINK"}
+                  {isUsingPasscode || isUsingRecoveryKey ? "UPDATING..." : "UPDATE PASSWORD"}
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSuperAdminRecovery((value) => !value);
+                    setResetRequestForm((prev) => ({ ...prev, passcode: "", recoveryKey: "" }));
+                  }}
+                  className="block w-full text-center text-[11px] font-medium text-slate-500 transition hover:text-violet-600"
+                >
+                  {showSuperAdminRecovery ? "Use reset passcode instead" : "Use super admin recovery key"}
+                </button>
               </form>
             ) : (
               <form onSubmit={handlePasswordReset} className="mt-8 space-y-5">

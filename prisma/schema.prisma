@@ -17,9 +17,11 @@ model AppUser {
   role                   String    @default("user")
   approvalStatus         String    @default("approved")
   companyProfileId       String?
+  accessSchedule         Json?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
   passwordResetTokens    PasswordResetToken[]
+  accessLogs             UserAccessLog[]
 }
 
 model EntityRecord {
@@ -43,4 +45,23 @@ model PasswordResetToken {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model UserAccessLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email      String
+  name       String?
+  role       String
+  eventType  String
+  sessionId  String?
+  ipAddress  String?
+  userAgent  String?
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([occurredAt])
 }

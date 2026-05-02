@@ -1,5 +1,7 @@
 // @ts-nocheck
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/prisma";
+import { normalizeAccessSchedule } from "@/lib/accessSchedule";
 
 function toPublicUser(user) {
   return {
@@ -10,6 +12,7 @@ function toPublicUser(user) {
     role: user.role,
     approval_status: user.approvalStatus || "approved",
     company_profile_id: user.companyProfileId,
+    access_schedule: user.accessSchedule,
     created_date: user.createdAt.toISOString(),
     updated_date: user.updatedAt.toISOString(),
   };
@@ -48,6 +51,13 @@ export default async function handler(req, res) {
         }
       }
 
+      const nextAccessSchedule =
+        data?.access_schedule !== undefined
+          ? data?.role === "super_admin"
+            ? Prisma.DbNull
+            : normalizeAccessSchedule(data.access_schedule) || Prisma.DbNull
+          : undefined;
+
       const user = await prisma.appUser.update({
         where: { id },
         data: {
@@ -58,6 +68,9 @@ export default async function handler(req, res) {
             : {}),
           ...(data?.company_profile_id !== undefined
             ? { companyProfileId: data.company_profile_id || null }
+            : {}),
+          ...(data?.access_schedule !== undefined
+            ? { accessSchedule: nextAccessSchedule }
             : {}),
         },
       });

@@ -27,6 +27,7 @@ import Settings from '@/pages/Settings';
 import WorkSchedule from '@/pages/WorkSchedule';
 import EmployeePortalQR from '@/pages/EmployeePortalQR';
 import UserManagement from '@/pages/UserManagement';
+import UsersLog from '@/pages/UsersLog';
 import Landing from '@/pages/Landing';
 
 const AuthenticatedApp = () => {
@@ -89,6 +90,7 @@ const AuthenticatedApp = () => {
         <Route path="/settings" element={<Settings />} />
         <Route path="/work-schedule" element={<WorkSchedule />} />
         <Route path="/user-management" element={<UserManagement />} />
+        <Route path="/users-log" element={<UsersLog />} />
       </Route>
       <Route path="/scan/confirm" element={<ScanConfirm />} />
       <Route path="/employee-portal-qr" element={<EmployeePortalQR />} />

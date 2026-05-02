@@ -7,6 +7,10 @@ function hashToken(token) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function normalizePasscode(passcode) {
+  return String(passcode || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -14,23 +18,33 @@ export default async function handler(req, res) {
   }
 
   const token = String(req.body?.token || "").trim();
+  const email = String(req.body?.email || "").toLowerCase().trim();
+  const passcode = normalizePasscode(req.body?.passcode);
   const password = String(req.body?.password || "");
 
-  if (!token) {
-    return res.status(400).json({ error: "Reset token is required" });
+  if (!token && (!email || !passcode)) {
+    return res.status(400).json({ error: "Email and reset passcode are required" });
   }
 
   if (password.length < 8) {
     return res.status(400).json({ error: "Password must be at least 8 characters" });
   }
 
-  const resetToken = await prisma.passwordResetToken.findUnique({
-    where: { tokenHash: hashToken(token) },
-    include: { user: true },
-  });
+  const resetToken = token
+    ? await prisma.passwordResetToken.findUnique({
+        where: { tokenHash: hashToken(token) },
+        include: { user: true },
+      })
+    : await prisma.passwordResetToken.findFirst({
+        where: {
+          tokenHash: hashToken(passcode),
+          user: { email },
+        },
+        include: { user: true },
+      });
 
   if (!resetToken || resetToken.usedAt || resetToken.expiresAt <= new Date() || !resetToken.user) {
-    return res.status(400).json({ error: "This password reset link is invalid or expired" });
+    return res.status(400).json({ error: "This reset passcode is invalid or expired" });
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
