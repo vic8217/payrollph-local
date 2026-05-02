@@ -8,15 +8,17 @@ datasource db {
 }
 
 model AppUser {
-  id               String   @id @default(cuid())
-  email            String   @unique
-  name             String?
-  passwordHash     String?
-  role             String   @default("user")
-  approvalStatus   String   @default("approved")
-  companyProfileId String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                     String    @id @default(cuid())
+  email                  String    @unique
+  name                   String?
+  passwordHash           String?
+  activeSessionId        String?
+  activeSessionExpiresAt DateTime?
+  role                   String    @default("user")
+  approvalStatus         String    @default("approved")
+  companyProfileId       String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 }
 
 model EntityRecord {

@@ -28,6 +28,10 @@ async function signInWithCredentials(email, password) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data?.ok === false || data?.error) {
+    if (data?.error === "ACCOUNT_ALREADY_ACTIVE") {
+      throw new Error("This account is already signed in on another session. Please sign out first.");
+    }
+
     throw new Error("Invalid email or password");
   }
 }
