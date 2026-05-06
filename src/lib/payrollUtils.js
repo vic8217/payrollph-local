@@ -164,6 +164,7 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
   let undertimeDeduction = 0;
   let absentDeduction = 0;
   let workedDays = 0;
+  let totalHoursWorked = 0;
   let regularDays = 0;
   let restDayWorked = 0;
   let regularHolidayWorked = 0;
@@ -210,6 +211,7 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
 
     // Prorate pay based on actual hours worked (max 8h = full day)
     const hoursWorked = log.hours_worked || 0;
+    totalHoursWorked += hoursWorked;
     const dayFraction = hoursWorked >= 8 ? 1 : hoursWorked / 8;
     const effectivePay = dailyRate * multiplier * dayFraction;
 
@@ -287,6 +289,7 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
     total_deductions: parseFloat(totalDeductions.toFixed(2)),
     net_pay: parseFloat(netPay.toFixed(2)),
     days_worked: workedDays,
+    hours_worked: parseFloat(totalHoursWorked.toFixed(2)),
     regular_days: regularDays,
     rest_day_worked: restDayWorked,
     regular_holiday_worked: regularHolidayWorked,

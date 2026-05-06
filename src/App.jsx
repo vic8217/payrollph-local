@@ -17,6 +17,8 @@ import StatutoryRates from '@/pages/StatutoryRates';
 import CashAdvance from '@/pages/CashAdvance';
 import PersonalLeave from '@/pages/PersonalLeave';
 import Holidays from '@/pages/Holidays';
+import ThirteenthMonthPay from '@/pages/ThirteenthMonthPay';
+import SeparationPay from '@/pages/SeparationPay';
 
 import EmployeePortal from '@/pages/EmployeePortal';
 import NoWorkDays from '@/pages/NoWorkDays';
@@ -81,6 +83,8 @@ const AuthenticatedApp = () => {
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/payroll" element={<Payroll />} />
         <Route path="/payroll-dashboard" element={<PayrollDashboard />} />
+        <Route path="/thirteenth-month-pay" element={<ThirteenthMonthPay />} />
+        <Route path="/separation-pay" element={<SeparationPay />} />
         <Route path="/statutory-rates" element={<StatutoryRates />} />
         <Route path="/cash-advance" element={<CashAdvance />} />
         <Route path="/personal-leave" element={<PersonalLeave />} />

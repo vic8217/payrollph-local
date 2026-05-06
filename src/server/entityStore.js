@@ -17,7 +17,9 @@ const ENTITY_NAMES = new Set([
   "PayrollPeriod",
   "PayrollRecord",
   "PersonalLeave",
+  "SeparationPay",
   "Settings",
+  "ThirteenthMonthPay",
   "User",
   "VehicleTripReport",
 ]);

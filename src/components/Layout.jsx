@@ -4,7 +4,7 @@ import { useState } from 'react';
 import {
 	  LayoutDashboard, Users, Clock, CreditCard,
 	  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-	  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree
+	  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen
 	} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,8 @@ const navItems = [
   { label: 'Attendance',      icon: Clock,             path: '/attendance',         roles: ['super_admin', 'admin', 'user'] },
   { label: 'Work Schedule',   icon: CalendarClock,     path: '/work-schedule',      roles: ['super_admin', 'admin', 'user'] },
   { label: 'Payroll',         icon: FileText,          path: '/payroll',            roles: ['super_admin', 'admin', 'user'] },
+  { label: '13th Month Pay',  icon: Gift,              path: '/thirteenth-month-pay', roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Separation Pay',  icon: DoorOpen,          path: '/separation-pay',     roles: ['super_admin', 'admin', 'user'] },
   { label: 'Statutory Rates', icon: Landmark,          path: '/statutory-rates',    roles: ['super_admin', 'admin', 'user'] },
   { label: 'Cash Advance',    icon: CreditCard,        path: '/cash-advance',       roles: ['super_admin', 'admin', 'user'] },
   { label: 'Personal Leave',  icon: Palmtree,         path: '/personal-leave',     roles: ['super_admin', 'admin', 'user'] },
