@@ -19,8 +19,17 @@ function sendError(res, error) {
   });
 }
 
+function entityNameFromQuery(query) {
+  const raw = query.entity;
+  if (Array.isArray(raw)) return raw[0];
+  return raw;
+}
+
 export default async function handler(req, res) {
-  const { entity } = req.query;
+  const entity = entityNameFromQuery(req.query);
+  if (!entity) {
+    return res.status(400).json({ error: "Entity name required" });
+  }
 
   try {
     if (req.method === "GET") {

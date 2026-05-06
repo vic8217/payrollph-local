@@ -3,7 +3,8 @@ import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { useCompany } from '@/lib/CompanyContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format, startOfWeek, addWeeks, addDays } from 'date-fns';
+import { addDays, format } from 'date-fns';
+import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -406,14 +407,15 @@ export default function Attendance() {
   const [selectedPeriod, setSelectedPeriod] = useState('all');
   const [showQuickView, setShowQuickView] = useState(false);
   const { user: currentUser } = useAuth();
-  const { activeCompanyId } = useCompany();
+  const { activeCompanyId, activeCompany } = useCompany();
   const qc = useQueryClient();
 
   const baseWeek = new Date();
-  const weekStart = startOfWeek(addWeeks(baseWeek, weekOffset), { weekStartsOn: 6 });
-  const weekEnd = addDays(weekStart, 6);
-  const startStr = format(weekStart, 'yyyy-MM-dd');
-  const endStr = format(weekEnd, 'yyyy-MM-dd');
+  const activePeriodConfig = getPayrollPeriodForDate(baseWeek, activeCompany, weekOffset);
+  const weekStart = activePeriodConfig.start;
+  const weekEnd = activePeriodConfig.end;
+  const startStr = activePeriodConfig.start_date;
+  const endStr = activePeriodConfig.end_date;
 
   const { data: employees = [], isLoading: loadingEmployees } = useQuery({
     queryKey: ['employees', activeCompanyId],
@@ -506,15 +508,12 @@ export default function Attendance() {
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
   const derivedPayrollPeriods = [...new Set(allAttendanceLogs.map(log => log.date).filter(Boolean))]
     .map(date => {
-      const periodStart = startOfWeek(new Date(`${date}T00:00:00`), { weekStartsOn: 6 });
-      const periodEnd = addDays(periodStart, 6);
-      const startDate = format(periodStart, 'yyyy-MM-dd');
-      const endDate = format(periodEnd, 'yyyy-MM-dd');
+      const period = getPayrollPeriodForDate(new Date(`${date}T00:00:00`), activeCompany);
       return {
-        id: `derived-${startDate}`,
-        period_name: `Week of ${format(periodStart, 'MMM d')} - ${format(periodEnd, 'MMM d, yyyy')}`,
-        start_date: startDate,
-        end_date: endDate,
+        id: `derived-${period.start_date}`,
+        period_name: `Payroll Period: ${period.label}`,
+        start_date: period.start_date,
+        end_date: period.end_date,
       };
     })
     .filter((period, index, periods) => periods.findIndex(p => p.id === period.id) === index)
@@ -790,7 +789,7 @@ export default function Attendance() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(w => w - 1)}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <Button variant="outline" size="sm" className="h-8" onClick={() => setWeekOffset(0)}>Current Week</Button>
+          <Button variant="outline" size="sm" className="h-8" onClick={() => setWeekOffset(0)}>Current Period</Button>
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(w => w + 1)}>
             <ChevronRight className="w-4 h-4" />
           </Button>

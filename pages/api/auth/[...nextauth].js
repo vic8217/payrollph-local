@@ -1,10 +1,22 @@
 // @ts-nocheck
-import NextAuth from "next-auth";
-import CredentialsProvider from "next-auth/providers/credentials";
+import NextAuthImport from "next-auth";
+import CredentialsImport from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { prisma } from "@/server/prisma";
 import { isWithinAccessSchedule } from "@/lib/accessSchedule";
+
+/** Webpack + CJS interop: default export may be nested as `{ default: fn }`. */
+function unwrapDefault(m) {
+  let cur = m;
+  for (let i = 0; i < 3 && cur != null && typeof cur !== "function"; i += 1) {
+    cur = cur?.default;
+  }
+  return typeof cur === "function" ? cur : m;
+}
+
+const NextAuth = unwrapDefault(NextAuthImport);
+const CredentialsProvider = unwrapDefault(CredentialsImport);
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60;
 

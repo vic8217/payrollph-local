@@ -10,6 +10,8 @@ import { Building2, Save, Plus, Upload } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import ImageWithFallback from '@/components/ImageWithFallback';
 import { useCompany } from '@/lib/CompanyContext';
+import { PAYROLL_WEEKDAY_OPTIONS, DEFAULT_PAYROLL_LENGTH_DAYS, DEFAULT_PAYROLL_START_DAY, getPayrollPeriodSummary } from '@/lib/payrollPeriod';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
@@ -121,7 +123,11 @@ export default function CompanyProfile() {
   };
 
   const handleSave = () => {
-    saveMutation.mutate(form);
+    saveMutation.mutate({
+      ...form,
+      payroll_period_start_day: Number(form.payroll_period_start_day ?? DEFAULT_PAYROLL_START_DAY),
+      payroll_period_length_days: Number(form.payroll_period_length_days ?? DEFAULT_PAYROLL_LENGTH_DAYS),
+    });
   };
 
   const fields = [
@@ -180,6 +186,42 @@ export default function CompanyProfile() {
                 placeholder="Complete business address"
                 rows={3}
               />
+            </div>
+
+            <div className="rounded-lg border border-border p-4 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Payroll Period</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Controls the period used when HR generates payroll for this company.</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label>Period Start Day</Label>
+                  <Select
+                    value={String(form.payroll_period_start_day ?? DEFAULT_PAYROLL_START_DAY)}
+                    onValueChange={(value) => setForm({ ...form, payroll_period_start_day: Number(value) })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYROLL_WEEKDAY_OPTIONS.map((day) => (
+                        <SelectItem key={day.value} value={String(day.value)}>{day.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="payroll_period_length_days">Period Length (Days)</Label>
+                  <Input
+                    id="payroll_period_length_days"
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={form.payroll_period_length_days ?? DEFAULT_PAYROLL_LENGTH_DAYS}
+                    onChange={(e) => setForm({ ...form, payroll_period_length_days: e.target.value })}
+                  />
+                </div>
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -316,6 +358,10 @@ export default function CompanyProfile() {
                       <p className="font-semibold mt-0.5">{company.email}</p>
                     </div>
                   )}
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground font-medium">Payroll Period</p>
+                    <p className="font-semibold mt-0.5">{getPayrollPeriodSummary(company)}</p>
+                  </div>
                 </div>
               </CardContent>
             </Card>

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery } from '@tanstack/react-query';
-import { format, startOfWeek, addDays } from 'date-fns';
 import { DollarSign, ChevronDown, ChevronUp, Eye } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
+import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -99,7 +99,7 @@ function PeriodCard({ period, defaultOpen = false }) {
 
 export default function PayrollSummary() {
   const [showAll, setShowAll] = useState(false);
-  const { activeCompanyId } = useCompany();
+  const { activeCompanyId, activeCompany } = useCompany();
 
   const { data: periods = [], isLoading } = useQuery({
     queryKey: ['payrollPeriods', activeCompanyId],
@@ -107,13 +107,12 @@ export default function PayrollSummary() {
     enabled: !!activeCompanyId,
   });
 
-  const weekStart = startOfWeek(new Date(), { weekStartsOn: 6 });
-  const weekEnd = addDays(weekStart, 6);
-  const startStr = format(weekStart, 'yyyy-MM-dd');
-  const endStr = format(weekEnd, 'yyyy-MM-dd');
+  const currentPeriodConfig = getPayrollPeriodForDate(new Date(), activeCompany);
+  const startStr = currentPeriodConfig.start_date;
+  const endStr = currentPeriodConfig.end_date;
 
   const approvedPeriods = periods.filter(p => p.status === 'approved' || p.status === 'released');
-  const currentWeek = approvedPeriods.find(p => p.start_date === startStr && p.end_date === endStr);
+  const currentPeriod = approvedPeriods.find(p => p.start_date === startStr && p.end_date === endStr);
   const previousApproved = approvedPeriods
     .filter(p => !(p.start_date === startStr && p.end_date === endStr))
     .sort((a, b) => b.start_date.localeCompare(a.start_date));
@@ -133,24 +132,24 @@ export default function PayrollSummary() {
         </div>
       ) : (
         <>
-          {/* Current Week */}
+          {/* Current Period */}
           <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Current Week</p>
-            {currentWeek ? (
-              <PeriodCard period={currentWeek} defaultOpen={true} />
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Current Period</p>
+            {currentPeriod ? (
+              <PeriodCard period={currentPeriod} defaultOpen={true} />
             ) : (
               <Card className="border border-border shadow-sm">
                 <CardContent className="py-8 text-center text-muted-foreground text-sm">
                   <DollarSign className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  No approved payroll for the current week yet.
+                  No approved payroll for the current period yet.
                 </CardContent>
               </Card>
             )}
           </div>
 
-          {/* Previous Weeks */}
+          {/* Previous Periods */}
           <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Previous Weeks</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Previous Periods</p>
             {previousApproved.length === 0 ? (
               <Card className="border border-border shadow-sm">
                 <CardContent className="py-8 text-center text-muted-foreground text-sm">

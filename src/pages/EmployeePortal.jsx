@@ -1,22 +1,24 @@
 import { useState, useEffect, useRef } from 'react';
 import { appApi } from '@/lib/appApi';
-import { QrCode, CreditCard, User, LogOut, Building2, Scan, CheckCircle2, Camera, BookOpen, Car } from 'lucide-react';
+import { QrCode, CreditCard, User, LogOut, Building2, Scan, CheckCircle2, Camera, BookOpen, Car, Palmtree } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import EmployeeQRGate from '@/components/employee/EmployeeQRGate';
 import EmployeeCashAdvance from '@/components/employee/EmployeeCashAdvance';
 import EmployeeProfile from '@/components/employee/EmployeeProfile';
 import EmployeePolicies from '@/components/employee/EmployeePolicies';
 import EmployeeVehicleTripReport from '@/components/employee/EmployeeVehicleTripReport';
+import EmployeePersonalLeave from '@/components/employee/EmployeePersonalLeave';
 
 const tabs = [
   { id: 'scan', label: 'Attendance Logger', icon: QrCode },
   { id: 'cash-advance', label: 'Cash Advance', icon: CreditCard },
+  { id: 'personal-leave', label: 'Personal Leave', icon: Palmtree },
   { id: 'profile', label: 'My Profile', icon: User },
   { id: 'policies', label: 'Policies & Procedures', icon: BookOpen },
   { id: 'trip-report', label: 'Vehicle Trip Report', icon: Car },
 ];
 
-const protectedTabs = new Set(['cash-advance', 'profile', 'trip-report']);
+const protectedTabs = new Set(['cash-advance', 'personal-leave', 'profile', 'trip-report']);
 
 export default function EmployeePortal() {
   const [activeTab, setActiveTab] = useState('scan');
@@ -183,6 +185,7 @@ export default function EmployeePortal() {
           />
         )}
         {!showGate && activeTab === 'cash-advance' && <EmployeeCashAdvance employee={scannedEmployee} />}
+        {!showGate && activeTab === 'personal-leave' && <EmployeePersonalLeave employee={scannedEmployee} />}
         {!showGate && activeTab === 'profile' && <EmployeeProfile employee={scannedEmployee} />}
         {activeTab === 'policies' && <EmployeePolicies />}
         {activeTab === 'trip-report' && <EmployeeVehicleTripReport employee={scannedEmployee} />}

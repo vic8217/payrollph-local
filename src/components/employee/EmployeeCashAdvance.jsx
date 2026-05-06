@@ -11,7 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { format, startOfWeek, endOfWeek } from 'date-fns';
+import { format } from 'date-fns';
+import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 
 const statusColors = {
   pending: 'bg-yellow-100 text-yellow-700',
@@ -110,10 +111,11 @@ export default function EmployeeCashAdvance({ employee }) {
     return byRequest;
   }, {}));
 
-  // Current payroll period = current week (Mon–Sun)
+  // Current payroll period follows the employee's active company settings.
   const today = new Date();
-  const periodStart = format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd');
-  const periodEnd = format(endOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+  const currentPayrollPeriod = getPayrollPeriodForDate(today, activeCompany);
+  const periodStart = currentPayrollPeriod.start_date;
+  const periodEnd = currentPayrollPeriod.end_date;
 
   const { data: periodAttendance = [], isLoading: loadingAttendance } = useQuery({
     queryKey: ['workedDayAttendance', employee?.employee_id, periodStart],

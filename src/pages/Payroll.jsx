@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format, startOfWeek, addWeeks, addDays } from 'date-fns';
+import { format } from 'date-fns';
 import { Play, CheckCircle2, FileText, Printer, History, X, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCompany } from '@/lib/CompanyContext';
 import { computeWeeklyPayroll } from '@/lib/payrollUtils';
+import { getPayrollPeriodForDate, getPayrollPeriodName } from '@/lib/payrollPeriod';
 import PayslipView from '@/components/payroll/PayslipView';
 import GrossBreakdownDialog from '@/components/payroll/GrossBreakdownDialog';
 
@@ -29,14 +30,14 @@ export default function Payroll() {
   const [incompleteLogsError, setIncompleteLogsError] = useState(null); // { employeeName, date }[]
   const [pendingAttendanceError, setPendingAttendanceError] = useState(null); // { employeeName, count }[]
   const qc = useQueryClient();
-  const { activeCompanyId } = useCompany();
+  const { activeCompanyId, activeCompany } = useCompany();
 
   const baseWeek = new Date();
-  // Week starts on Saturday (pay day), ends on Friday
-  const weekStart = startOfWeek(addWeeks(baseWeek, weekOffset), { weekStartsOn: 6 });
-  const weekEnd = addDays(weekStart, 6); // Saturday + 6 = Friday
-  const startStr = format(weekStart, 'yyyy-MM-dd');
-  const endStr = format(weekEnd, 'yyyy-MM-dd');
+  const activePeriodConfig = getPayrollPeriodForDate(baseWeek, activeCompany, weekOffset);
+  const weekStart = activePeriodConfig.start;
+  const weekEnd = activePeriodConfig.end;
+  const startStr = activePeriodConfig.start_date;
+  const endStr = activePeriodConfig.end_date;
 
   const { data: periods = [] } = useQuery({
     queryKey: ['payrollPeriods', activeCompanyId],
@@ -76,7 +77,7 @@ export default function Payroll() {
     setGenerating(true);
     setIncompleteLogsError(null);
     setPendingAttendanceError(null);
-    const periodName = `Week of ${format(weekStart, 'MMM d')} – ${format(weekEnd, 'MMM d, yyyy')}`;
+    const periodName = getPayrollPeriodName(activePeriodConfig);
 
     // Pre-check: block if any employee has time_in but no time_out
     const allLogsForCheck = await appApi.entities.AttendanceLog.list('-date', 1000);
@@ -253,7 +254,7 @@ export default function Payroll() {
 
   // Current week period
   const currentWeekPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
-  // Previous periods (excluding current week)
+  // Previous periods (excluding the current configured payroll period)
   const previousPeriods = periods.filter(p => !(p.start_date === startStr && p.end_date === endStr))
     .sort((a, b) => b.start_date.localeCompare(a.start_date));
 
@@ -266,7 +267,7 @@ export default function Payroll() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="gap-2" onClick={() => { setIncompleteLogsError(null); setShowHistory(true); }}>
-            <History className="w-4 h-4" /> Previous Weeks
+            <History className="w-4 h-4" /> Previous Periods
           </Button>
           <Button
             onClick={generatePayroll}
@@ -333,7 +334,7 @@ export default function Payroll() {
           <div className="absolute inset-0 bg-black/40" onClick={() => setShowHistory(false)} />
           <div className="relative ml-auto w-80 h-full bg-card shadow-2xl flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-border">
-              <p className="font-semibold text-foreground">Previous Weeks</p>
+              <p className="font-semibold text-foreground">Previous Periods</p>
               <button onClick={() => setShowHistory(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -456,7 +457,7 @@ export default function Payroll() {
           ) : (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <FileText className="w-10 h-10 mb-3 opacity-30" />
-              <p className="text-sm">Generate payroll for this week or select a previous period</p>
+              <p className="text-sm">Generate payroll for this period or select a previous period</p>
             </div>
           )}
       </div>

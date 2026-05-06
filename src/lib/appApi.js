@@ -19,7 +19,11 @@ export async function requestJson(path, options = {}) {
   }
 
   if (!response.ok) {
-    const error = new Error(data?.error || "Request failed");
+    let message = data?.error || "Request failed";
+    if (typeof message === "string" && message.trimStart().startsWith("<!")) {
+      message = `Request failed (${response.status} ${response.statusText || ""})`.trim();
+    }
+    const error = new Error(message);
     error.status = response.status;
     throw error;
   }
