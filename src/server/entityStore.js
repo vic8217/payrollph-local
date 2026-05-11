@@ -46,6 +46,7 @@ const seedRecords = [
       setting_name: "Day Shift",
       shift_start_time: "08:00",
       shift_end_time: "17:00",
+      overtime_start_time: "17:30",
       grace_period_minutes: 15,
       is_default: true,
     },

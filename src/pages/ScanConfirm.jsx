@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { appApi } from '@/lib/appApi';
+import { computeCreditedHoursWorked, computeOvertimeHours } from '@/lib/payrollUtils';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { LogIn, LogOut, Camera, CameraOff, CheckCircle2, AlertTriangle, Shield, UserCheck, ArrowLeft } from 'lucide-react';
@@ -77,10 +78,6 @@ function scheduledBreakIn(employee, date) {
 function isAutoScheduledBreakIn(employee, date, value) {
   const autoBreakIn = scheduledBreakIn(employee, date);
   return !!value && !!autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime();
-}
-
-function diffHours(start, end) {
-  return Math.max(0, (new Date(end).getTime() - new Date(start).getTime()) / 3600000);
 }
 
 // Face capture component
@@ -262,10 +259,27 @@ export default function ScanConfirm() {
       } : {};
       const effectiveBreakOut = breakUpdates.break_time_out || todayLog.break_time_out;
       const effectiveBreakIn = breakUpdates.break_time_in === null ? null : todayLog.break_time_in;
-      const grossHours = diffHours(todayLog.time_in, now);
-      const breakHours = effectiveBreakOut && effectiveBreakIn ? diffHours(effectiveBreakOut, effectiveBreakIn) : 0;
-      const hoursWorked = Math.max(0, grossHours - breakHours);
-      const overtime = Math.max(0, hoursWorked - 8);
+      const [defaultShift] = await appApi.entities.Settings.filter({ company_profile_id: employee.company_profile_id, is_default: true }, undefined, 1);
+      const hoursWorked = computeCreditedHoursWorked({
+        ...todayLog,
+        ...breakUpdates,
+        time_out: now,
+        break_time_out: effectiveBreakOut,
+        break_time_in: effectiveBreakIn,
+      }, {
+        shiftStartTime: defaultShift?.shift_start_time || '08:00',
+        timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
+      });
+      const overtimeHours = computeOvertimeHours({
+        ...todayLog,
+        ...breakUpdates,
+        time_out: now,
+        break_time_out: effectiveBreakOut,
+        break_time_in: effectiveBreakIn,
+      }, hoursWorked, {
+        shiftStartTime: defaultShift?.shift_start_time || '08:00',
+        overtimeStartTime: defaultShift?.overtime_start_time || '17:30',
+      });
       const timeIn = new Date(todayLog.time_in);
       const workStart = new Date(timeIn);
       workStart.setHours(8, 0, 0, 0);
@@ -275,7 +289,7 @@ export default function ScanConfirm() {
         ...breakUpdates,
         time_out: now,
         hours_worked: parseFloat(hoursWorked.toFixed(2)),
-        overtime_hours: parseFloat(overtime.toFixed(2)),
+        overtime_hours: parseFloat(overtimeHours.toFixed(2)),
         late_minutes: lateMinutes,
         notes: capturedPhoto ? 'Photo captured on time-out' : '',
       });

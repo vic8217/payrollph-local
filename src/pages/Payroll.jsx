@@ -57,6 +57,7 @@ export default function Payroll() {
   const { data: holidays = [] } = useQuery({ queryKey: ['holidays', activeCompanyId], queryFn: () => appApi.entities.Holiday.filter({ company_profile_id: activeCompanyId }), enabled: !!activeCompanyId });
   const { data: cashAdvances = [] } = useQuery({ queryKey: ['cashAdvances', activeCompanyId], queryFn: () => appApi.entities.CashAdvance.filter({ company_profile_id: activeCompanyId }), enabled: !!activeCompanyId });
   const { data: noWorkDays = [] } = useQuery({ queryKey: ['noWorkDays', activeCompanyId], queryFn: () => appApi.entities.NoWorkDay.filter({ company_profile_id: activeCompanyId }), enabled: !!activeCompanyId });
+  const { data: shiftSettings = [] } = useQuery({ queryKey: ['settings', activeCompanyId], queryFn: () => appApi.entities.Settings.filter({ company_profile_id: activeCompanyId }), enabled: !!activeCompanyId });
 
   const { data: periodAttendanceLogs = [] } = useQuery({
     queryKey: ['attendanceLogs', selectedPeriod?.start_date, selectedPeriod?.end_date, activeCompanyId],
@@ -161,6 +162,10 @@ export default function Payroll() {
     const regularHolidayDates = periodHolidays
       .filter(h => h.type === 'regular_holiday')
       .map(h => h.date);
+    const defaultShift = shiftSettings.find(s => s.is_default) || shiftSettings[0] || {};
+    const gracePeriodMinutes = Number(defaultShift.grace_period_minutes) || 0;
+    const timeInAllowanceMinutes = Number(defaultShift.time_in_allowance_minutes) || 0;
+    const overtimeStartTime = defaultShift.overtime_start_time || '17:30';
 
     for (const emp of activeEmployees) {
       const empLogs = allLogs.filter(l =>
@@ -199,7 +204,19 @@ export default function Payroll() {
       });
       const caDeductionThisPeriod = caDeductions.reduce((sum, item) => sum + item.amount, 0);
 
-      const computed = computeWeeklyPayroll(emp, payrollLogs, periodHolidays, caDeductionThisPeriod, periodNoWorkDays);
+      const computed = computeWeeklyPayroll(
+        emp,
+        payrollLogs,
+        periodHolidays,
+        caDeductionThisPeriod,
+        periodNoWorkDays,
+        gracePeriodMinutes,
+        {
+          shiftStartTime: defaultShift.shift_start_time || '08:00',
+          overtimeStartTime,
+          timeInAllowanceMinutes,
+        }
+      );
 
       // Upsert payroll record
       const existing = await appApi.entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });

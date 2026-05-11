@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Clock, Plus, Pencil, Trash2, Star } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
 
@@ -14,7 +14,9 @@ function ShiftForm({ shift, onSave, onClose }) {
     setting_name: shift?.setting_name || '',
     shift_start_time: shift?.shift_start_time || '08:00',
     shift_end_time: shift?.shift_end_time || '17:00',
+    overtime_start_time: shift?.overtime_start_time || '17:30',
     grace_period_minutes: shift?.grace_period_minutes || 0,
+    time_in_allowance_minutes: shift?.time_in_allowance_minutes || 0,
     is_default: shift?.is_default || false,
   });
 
@@ -28,6 +30,9 @@ function ShiftForm({ shift, onSave, onClose }) {
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>{shift ? 'Edit Shift' : 'Add Shift'}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Configure shift start, end, overtime, grace period, and time-in allowance.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -63,6 +68,17 @@ function ShiftForm({ shift, onSave, onClose }) {
             </div>
           </div>
           <div>
+            <label className="text-sm font-medium">Overtime Starts</label>
+            <Input
+              type="time"
+              className="mt-1"
+              value={form.overtime_start_time}
+              onChange={e => setForm(f => ({ ...f, overtime_start_time: e.target.value }))}
+              required
+            />
+            <p className="text-xs text-muted-foreground mt-1">Time after which completed work is counted as overtime</p>
+          </div>
+          <div>
             <label className="text-sm font-medium">Grace Period (minutes)</label>
             <Input
               type="number"
@@ -73,6 +89,18 @@ function ShiftForm({ shift, onSave, onClose }) {
               onChange={e => setForm(f => ({ ...f, grace_period_minutes: parseInt(e.target.value) || 0 }))}
             />
             <p className="text-xs text-muted-foreground mt-1">Minutes not to be considered late for payroll</p>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Time In(1) Allowance (minutes)</label>
+            <Input
+              type="number"
+              min="0"
+              className="mt-1"
+              placeholder="0"
+              value={form.time_in_allowance_minutes}
+              onChange={e => setForm(f => ({ ...f, time_in_allowance_minutes: parseInt(e.target.value) || 0 }))}
+            />
+            <p className="text-xs text-muted-foreground mt-1">Credited toward worked hours when first time-in is within this many minutes after shift start</p>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -196,8 +224,12 @@ export default function Settings() {
                     </div>
                     <p className="text-sm text-muted-foreground mt-0.5">
                       {formatTime(shift.shift_start_time)} — {formatTime(shift.shift_end_time)}
+                      <span className="text-xs ml-2">• OT starts: {formatTime(shift.overtime_start_time || '17:30')}</span>
                       {shift.grace_period_minutes > 0 && (
                         <span className="text-xs ml-2">• Grace: {shift.grace_period_minutes}min</span>
+                      )}
+                      {shift.time_in_allowance_minutes > 0 && (
+                        <span className="text-xs ml-2">• Time In(1) allowance: {shift.time_in_allowance_minutes}min</span>
                       )}
                     </p>
                   </div>

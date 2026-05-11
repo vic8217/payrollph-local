@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createRecord, listRecords, updateRecord } from "@/server/entityStore";
+import { computeCreditedHoursWorked, computeOvertimeHours } from "@/lib/payrollUtils";
 
 function todayInManila() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -8,10 +9,6 @@ function todayInManila() {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-}
-
-function diffHours(start, end) {
-  return Math.max(0, (new Date(end).getTime() - new Date(start).getTime()) / 36e5);
 }
 
 const BREAK_DURATION_MINUTES = 60;
@@ -200,16 +197,23 @@ export default async function handler(req, res) {
       return rejectRapidScan(res, currentLog, "break_time_in", "Last scan was just recorded. Please wait before recording Time Out.");
     }
 
-    const grossHours = diffHours(currentLog.time_in, now);
-    const breakHours =
-      currentLog.break_time_out && currentLog.break_time_in
-        ? diffHours(currentLog.break_time_out, currentLog.break_time_in)
-        : 0;
-    const hoursWorked = Math.max(0, grossHours - breakHours);
+    const [defaultShift] = await listRecords("Settings", {
+      filter: { company_profile_id: employee.company_profile_id, is_default: true },
+      limit: 1,
+    });
+    const completedLog = { ...currentLog, time_out: now };
+    const hoursWorked = computeCreditedHoursWorked(completedLog, {
+      shiftStartTime: defaultShift?.shift_start_time || "08:00",
+      timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
+    });
+    const overtimeHours = computeOvertimeHours(completedLog, hoursWorked, {
+      shiftStartTime: defaultShift?.shift_start_time || "08:00",
+      overtimeStartTime: defaultShift?.overtime_start_time || "17:30",
+    });
     const log = await updateRecord("AttendanceLog", currentLog.id, {
       time_out: now,
       hours_worked: Number(hoursWorked.toFixed(2)),
-      overtime_hours: Number(Math.max(0, hoursWorked - 8).toFixed(2)),
+      overtime_hours: Number(overtimeHours.toFixed(2)),
     });
     return res.status(200).json({ action: "time_out", log });
   }

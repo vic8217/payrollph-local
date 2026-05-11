@@ -137,11 +137,101 @@ export function computeNightDiffPay(hourlyRate, nightDiffHours, dayType) {
   return hourlyRate * dayMultiplier * 0.10 * (nightDiffHours || 0);
 }
 
+function toValidDate(value) {
+  const date = value ? new Date(value) : null;
+  return date && Number.isFinite(date.getTime()) ? date : null;
+}
+
+function resolveScheduledTime(logDate, time) {
+  if (!logDate || !time) return null;
+  const [hours, minutes] = String(time).split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return new Date(`${logDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00+08:00`);
+}
+
+export function computeCreditedHoursWorked(log, {
+  shiftStartTime = '08:00',
+  timeInAllowanceMinutes = 0,
+} = {}) {
+  const timeIn = toValidDate(log.time_in);
+  const timeOut = toValidDate(log.time_out);
+  if (!timeIn || !timeOut) return Number(log.hours_worked) || 0;
+
+  const allowance = Math.max(0, Number(timeInAllowanceMinutes) || 0);
+  const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
+  let effectiveTimeIn = timeIn;
+
+  if (scheduledStart) {
+    const minutesAfterStart = (timeIn.getTime() - scheduledStart.getTime()) / 60000;
+    if (minutesAfterStart > 0 && minutesAfterStart <= allowance) {
+      effectiveTimeIn = scheduledStart;
+    }
+  }
+
+  const breakOut = toValidDate(log.break_time_out);
+  const breakIn = toValidDate(log.break_time_in);
+  let hoursWorked = 0;
+
+  if (breakOut && breakIn) {
+    hoursWorked += Math.max(0, (breakOut.getTime() - effectiveTimeIn.getTime()) / 36e5);
+    hoursWorked += Math.max(0, (timeOut.getTime() - breakIn.getTime()) / 36e5);
+  } else {
+    hoursWorked = Math.max(0, (timeOut.getTime() - effectiveTimeIn.getTime()) / 36e5);
+  }
+
+  return parseFloat(hoursWorked.toFixed(2));
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function overlapHours(startA, endA, startB, endB) {
+  if (!startA || !endA || !startB || !endB) return 0;
+  const start = Math.max(startA.getTime(), startB.getTime());
+  const end = Math.min(endA.getTime(), endB.getTime());
+  return Math.max(0, (end - start) / 36e5);
+}
+
+export function computeOvertimeHours(log, hoursWorked, {
+  shiftStartTime = '08:00',
+  overtimeStartTime,
+} = {}) {
+  if (!overtimeStartTime) {
+    return parseFloat(Math.max(0, (Number(hoursWorked) || 0) - 8).toFixed(2));
+  }
+
+  const timeOut = toValidDate(log.time_out);
+  if (!timeOut) return Number(log.overtime_hours) || 0;
+
+  const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
+  let overtimeStart = resolveScheduledTime(log.date, overtimeStartTime);
+  if (!overtimeStart) {
+    return parseFloat(Math.max(0, (Number(hoursWorked) || 0) - 8).toFixed(2));
+  }
+
+  if (scheduledStart && overtimeStart.getTime() <= scheduledStart.getTime()) {
+    overtimeStart = addDays(overtimeStart, 1);
+  }
+
+  const overtimeWindowStart = new Date(Math.max(overtimeStart.getTime(), toValidDate(log.time_in)?.getTime() || overtimeStart.getTime()));
+  let overtimeHours = Math.max(0, (timeOut.getTime() - overtimeWindowStart.getTime()) / 36e5);
+
+  const breakOut = toValidDate(log.break_time_out);
+  const breakIn = toValidDate(log.break_time_in);
+  overtimeHours -= overlapHours(overtimeWindowStart, timeOut, breakOut, breakIn);
+
+  return parseFloat(Math.max(0, overtimeHours).toFixed(2));
+}
+
 // Compute full weekly payroll for an employee
 // cashAdvanceDeduction: the fixed per-payroll deduction amount for this period
 // noWorkDays: array of NoWorkDay records { date, reason }
 // gracePeriodMinutes: number of minutes not to be considered late (default 0)
-export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdvanceDeduction, noWorkDays = [], gracePeriodMinutes = 0) {
+// options.timeInAllowanceMinutes: Time In(1) allowance credited toward worked hours.
+export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdvanceDeduction, noWorkDays = [], gracePeriodMinutes = 0, options = {}) {
   const agencyFeePercentage = employee.agency_fee_percentage || 0;
   const dailyRate = employee.daily_rate || 0;
   const monthlyRate = employee.monthly_rate || dailyRate * 26;
@@ -210,7 +300,7 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
     if (worked) workedDays++;
 
     // Prorate pay based on actual hours worked (max 8h = full day)
-    const hoursWorked = log.hours_worked || 0;
+    const hoursWorked = computeCreditedHoursWorked(log, options);
     totalHoursWorked += hoursWorked;
     const dayFraction = hoursWorked >= 8 ? 1 : hoursWorked / 8;
     const effectivePay = dailyRate * multiplier * dayFraction;
@@ -236,9 +326,12 @@ export function computeWeeklyPayroll(employee, attendanceLogs, holidays, cashAdv
     }
 
     // Overtime
-    if (log.overtime_hours > 0) {
-      totalOvertimeHours += log.overtime_hours;
-      overtimePay += computeOvertimePay(hourlyRate, log.overtime_hours, dayType);
+    const overtimeHours = options.overtimeStartTime
+      ? computeOvertimeHours(log, hoursWorked, options)
+      : Number(log.overtime_hours) || 0;
+    if (overtimeHours > 0) {
+      totalOvertimeHours += overtimeHours;
+      overtimePay += computeOvertimePay(hourlyRate, overtimeHours, dayType);
     }
 
     // Night differential (10% premium per ND hour)

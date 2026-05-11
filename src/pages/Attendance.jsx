@@ -5,6 +5,7 @@ import { useCompany } from '@/lib/CompanyContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, format } from 'date-fns';
 import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
+import { computeCreditedHoursWorked, computeOvertimeHours } from '@/lib/payrollUtils';
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -44,10 +45,6 @@ function scheduledBreak(employee, date) {
   return {
     break_time_out: new Date(`${breakDate}T${employee.break_time}:00+08:00`).toISOString(),
   };
-}
-
-function diffHours(start, end) {
-  return Math.max(0, (new Date(end).getTime() - new Date(start).getTime()) / 3600000);
 }
 
 function scheduledBreakIn(employee, date) {
@@ -248,17 +245,28 @@ function EditAttendanceModal({ log, onClose, onSave, currentUser, activeCompanyI
     const effTimeOut = updates.time_out || log.time_out;
 
     if (effTimeIn && effTimeOut) {
-      let hrs = 0;
-      if (effBreakOut && effBreakIn) {
-        // 1st half + 2nd half
-        hrs += (new Date(effBreakOut).getTime() - new Date(effTimeIn).getTime()) / 3600000;
-        hrs += (new Date(effTimeOut).getTime() - new Date(effBreakIn).getTime()) / 3600000;
-      } else {
-        hrs = (new Date(effTimeOut).getTime() - new Date(effTimeIn).getTime()) / 3600000;
-      }
-      hrs = Math.max(0, hrs);
+      const [defaultShift] = await entities.filter('Settings', { company_profile_id: activeCompanyId, is_default: true }, undefined, 1);
+      const hrs = computeCreditedHoursWorked({
+        ...log,
+        time_in: effTimeIn,
+        break_time_out: effBreakOut,
+        break_time_in: effBreakIn,
+        time_out: effTimeOut,
+      }, {
+        shiftStartTime: defaultShift?.shift_start_time || '08:00',
+        timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
+      });
       updates.hours_worked = parseFloat(hrs.toFixed(2));
-      updates.overtime_hours = parseFloat(Math.max(0, hrs - 8).toFixed(2));
+      updates.overtime_hours = computeOvertimeHours({
+        ...log,
+        time_in: effTimeIn,
+        break_time_out: effBreakOut,
+        break_time_in: effBreakIn,
+        time_out: effTimeOut,
+      }, hrs, {
+        shiftStartTime: defaultShift?.shift_start_time || '08:00',
+        overtimeStartTime: defaultShift?.overtime_start_time || '17:30',
+      });
     }
 
     let photoUrl = '';
@@ -444,6 +452,12 @@ export default function Attendance() {
     enabled: !!activeCompanyId,
   });
 
+  const { data: shiftSettings = [] } = useQuery({
+    queryKey: ['settings', activeCompanyId],
+    queryFn: () => entities.filter('Settings', { company_profile_id: activeCompanyId }),
+    enabled: !!activeCompanyId,
+  });
+
   const approveMutation = useMutation({
     mutationFn: ({ id, status }) => entities.update('AttendanceLog', id, { status }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['attendance'] }),
@@ -485,11 +499,26 @@ export default function Attendance() {
         const effectiveBreakOut = updates.break_time_out || log.break_time_out;
         const effectiveBreakIn = shouldClearAutoBreakIn ? null : log.break_time_in;
         if (log.time_out && effectiveBreakOut && effectiveBreakIn) {
-          const grossHours = diffHours(log.time_in, log.time_out);
-          const breakHours = diffHours(effectiveBreakOut, effectiveBreakIn);
-          const hoursWorked = Math.max(0, grossHours - breakHours);
+          const defaultShift = shiftSettings.find(s => s.is_default) || shiftSettings[0] || {};
+          const hoursWorked = computeCreditedHoursWorked({
+            ...log,
+            ...updates,
+            break_time_out: effectiveBreakOut,
+            break_time_in: effectiveBreakIn,
+          }, {
+            shiftStartTime: defaultShift.shift_start_time || '08:00',
+            timeInAllowanceMinutes: defaultShift.time_in_allowance_minutes || 0,
+          });
           updates.hours_worked = Number(hoursWorked.toFixed(2));
-          updates.overtime_hours = Number(Math.max(0, hoursWorked - 8).toFixed(2));
+          updates.overtime_hours = computeOvertimeHours({
+            ...log,
+            ...updates,
+            break_time_out: effectiveBreakOut,
+            break_time_in: effectiveBreakIn,
+          }, hoursWorked, {
+            shiftStartTime: defaultShift.shift_start_time || '08:00',
+            overtimeStartTime: defaultShift.overtime_start_time || '17:30',
+          });
         }
 
         return entities.update('AttendanceLog', log.id, updates);
@@ -502,7 +531,7 @@ export default function Attendance() {
 
     applyScheduledBreaks().catch(console.error);
     return () => { cancelled = true; };
-  }, [selectedEmployee?.id, selectedEmployee?.break_time, selectedEmployee?.work_schedule, logs, qc]);
+  }, [selectedEmployee?.id, selectedEmployee?.break_time, selectedEmployee?.work_schedule, logs, shiftSettings, qc]);
 
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
