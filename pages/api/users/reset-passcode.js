@@ -7,6 +7,25 @@ import { prisma } from "@/server/prisma";
 const RESET_PASSCODE_TTL_MINUTES = 30;
 const PASSCODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+function parseCompanyProfileIds(value) {
+  return String(value || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+function sessionCompanyProfileIds(session) {
+  return Array.isArray(session?.user?.company_profile_ids) && session.user.company_profile_ids.length
+    ? session.user.company_profile_ids
+    : parseCompanyProfileIds(session?.user?.company_profile_id);
+}
+
+function hasCompanyOverlap(leftIds, rightIds) {
+  if (!leftIds.length || !rightIds.length) return false;
+  const right = new Set(rightIds);
+  return leftIds.some((id) => right.has(id));
+}
+
 function normalizePasscode(passcode) {
   return String(passcode || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
 }
@@ -30,8 +49,8 @@ export default async function handler(req, res) {
   }
 
   const session = await getServerSession(req, res, authOptions);
-  if (session?.user?.role !== "super_admin") {
-    return res.status(403).json({ error: "Only super admin can create reset passcodes" });
+  if (!["super_admin", "admin"].includes(session?.user?.role)) {
+    return res.status(403).json({ error: "Only super admin or admin can create reset passcodes" });
   }
 
   const userId = String(req.body?.id || "").trim();
@@ -41,11 +60,19 @@ export default async function handler(req, res) {
 
   const user = await prisma.appUser.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, name: true },
+    select: { id: true, email: true, name: true, role: true, companyProfileId: true },
   });
 
   if (!user) {
     return res.status(404).json({ error: "User not found" });
+  }
+
+  if (
+    session.user.role !== "super_admin" &&
+    (user.role === "super_admin" ||
+      !hasCompanyOverlap(sessionCompanyProfileIds(session), parseCompanyProfileIds(user.companyProfileId)))
+  ) {
+    return res.status(403).json({ error: "Admin users can only reset users assigned to their companies" });
   }
 
   const passcode = generatePasscode();

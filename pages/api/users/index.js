@@ -20,6 +20,31 @@ function serializeCompanyProfileIds(value) {
   return ids.length ? [...new Set(ids)].join(",") : null;
 }
 
+function sessionCompanyProfileIds(session) {
+  return Array.isArray(session?.user?.company_profile_ids) && session.user.company_profile_ids.length
+    ? session.user.company_profile_ids
+    : parseCompanyProfileIds(session?.user?.company_profile_id);
+}
+
+function hasCompanyOverlap(leftIds, rightIds) {
+  if (!leftIds.length || !rightIds.length) return false;
+  const right = new Set(rightIds);
+  return leftIds.some((id) => right.has(id));
+}
+
+function adminCanManageUser(session, user) {
+  if (session?.user?.role === "super_admin") return true;
+  if (user.role === "super_admin") return false;
+  return hasCompanyOverlap(sessionCompanyProfileIds(session), parseCompanyProfileIds(user.companyProfileId));
+}
+
+function assertAdminCanManageUser(session, user) {
+  if (adminCanManageUser(session, user)) return;
+  const error = new Error("Admin users can only manage users assigned to their companies");
+  error.statusCode = 403;
+  throw error;
+}
+
 async function assertAdminCanAssignCompanies(session, companyProfileIds) {
   if (session?.user?.role === "super_admin") {
     return;
@@ -71,7 +96,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "GET") {
-      const users = await prisma.appUser.findMany({
+      let users = await prisma.appUser.findMany({
         where: {
           approvalStatus: {
             not: "denied",
@@ -79,6 +104,10 @@ export default async function handler(req, res) {
         },
         orderBy: { createdAt: "asc" },
       });
+
+      if (session.user.role !== "super_admin") {
+        users = users.filter((user) => adminCanManageUser(session, user));
+      }
 
       return res.status(200).json(users.map(toPublicUser));
     }
@@ -90,15 +119,19 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "User id is required" });
       }
 
-      if (["denied", "suspended"].includes(data?.approval_status)) {
-        const existingUser = await prisma.appUser.findUnique({
-          where: { id },
-          select: { role: true },
-        });
+      const existingUser = await prisma.appUser.findUnique({
+        where: { id },
+        select: { role: true, companyProfileId: true },
+      });
 
-        if (existingUser?.role === "super_admin") {
-          return res.status(400).json({ error: "Super admin cannot be suspended or denied" });
-        }
+      if (!existingUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      assertAdminCanManageUser(session, existingUser);
+
+      if (["denied", "suspended"].includes(data?.approval_status) && existingUser.role === "super_admin") {
+        return res.status(400).json({ error: "Super admin cannot be suspended or denied" });
       }
 
       if (session.user.role !== "super_admin" && data?.role === "super_admin") {

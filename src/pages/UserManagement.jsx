@@ -294,26 +294,30 @@ export default function UserManagement() {
                               <KeyRound className="w-3.5 h-3.5" />
                               Reset Code
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => suspendMutation.mutate(user.id)}
-                              disabled={actionDisabled}
-                              className="gap-1"
-                            >
-                              <Ban className="w-3.5 h-3.5" />
-                              Suspend
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => handleRemove(user)}
-                              disabled={actionDisabled}
-                              className="gap-1"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              Remove
-                            </Button>
+                            {currentUser?.role === 'super_admin' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => suspendMutation.mutate(user.id)}
+                                  disabled={actionDisabled}
+                                  className="gap-1"
+                                >
+                                  <Ban className="w-3.5 h-3.5" />
+                                  Suspend
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleRemove(user)}
+                                  disabled={actionDisabled}
+                                  className="gap-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Remove
+                                </Button>
+                              </>
+                            )}
                           </>
                         )}
                         {user.role === 'super_admin' && (
