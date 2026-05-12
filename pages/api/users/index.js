@@ -1,9 +1,53 @@
 // @ts-nocheck
 import { Prisma } from "@prisma/client";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
 import { normalizeAccessSchedule } from "@/lib/accessSchedule";
+import { listRecords } from "@/server/entityStore";
+
+function parseCompanyProfileIds(value) {
+  return String(value || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+function serializeCompanyProfileIds(value) {
+  const ids = Array.isArray(value)
+    ? value.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  return ids.length ? [...new Set(ids)].join(",") : null;
+}
+
+async function assertAdminCanAssignCompanies(session, companyProfileIds) {
+  if (session?.user?.role === "super_admin") {
+    return;
+  }
+
+  if (!companyProfileIds?.length) {
+    const error = new Error("Admin users must select at least one company they created");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const companies = await listRecords("CompanyProfile");
+  const allowedIds = new Set(
+    companies
+      .filter((company) => company.created_by_user_id === session?.user?.id)
+      .map((company) => company.id)
+  );
+  const blockedIds = companyProfileIds.filter((id) => !allowedIds.has(id));
+
+  if (blockedIds.length) {
+    const error = new Error("Admin users can only assign companies they created");
+    error.statusCode = 403;
+    throw error;
+  }
+}
 
 function toPublicUser(user) {
+  const companyProfileIds = parseCompanyProfileIds(user.companyProfileId);
   return {
     id: user.id,
     email: user.email,
@@ -11,7 +55,8 @@ function toPublicUser(user) {
     full_name: user.name,
     role: user.role,
     approval_status: user.approvalStatus || "approved",
-    company_profile_id: user.companyProfileId,
+    company_profile_id: companyProfileIds.length === 1 ? companyProfileIds[0] : null,
+    company_profile_ids: companyProfileIds,
     access_schedule: user.accessSchedule,
     created_date: user.createdAt.toISOString(),
     updated_date: user.updatedAt.toISOString(),
@@ -20,6 +65,11 @@ function toPublicUser(user) {
 
 export default async function handler(req, res) {
   try {
+    const session = await getServerSession(req, res, authOptions);
+    if (!["super_admin", "admin"].includes(session?.user?.role)) {
+      return res.status(403).json({ error: "Only super admin or admin can manage users" });
+    }
+
     if (req.method === "GET") {
       const users = await prisma.appUser.findMany({
         where: {
@@ -51,12 +101,26 @@ export default async function handler(req, res) {
         }
       }
 
+      if (session.user.role !== "super_admin" && data?.role === "super_admin") {
+        return res.status(403).json({ error: "Admin users cannot assign Super Admin role" });
+      }
+
       const nextAccessSchedule =
         data?.access_schedule !== undefined
           ? data?.role === "super_admin"
             ? Prisma.DbNull
             : normalizeAccessSchedule(data.access_schedule) || Prisma.DbNull
           : undefined;
+      const nextCompanyProfileId =
+        data?.role === "super_admin"
+          ? null
+          : data?.company_profile_ids !== undefined
+            ? serializeCompanyProfileIds(data.company_profile_ids)
+            : data?.company_profile_id !== undefined
+              ? data.company_profile_id || null
+              : undefined;
+      const nextCompanyProfileIds = parseCompanyProfileIds(nextCompanyProfileId);
+      await assertAdminCanAssignCompanies(session, nextCompanyProfileIds);
 
       const user = await prisma.appUser.update({
         where: { id },
@@ -66,8 +130,8 @@ export default async function handler(req, res) {
           ...(data?.approval_status !== undefined
             ? { approvalStatus: data.approval_status }
             : {}),
-          ...(data?.company_profile_id !== undefined
-            ? { companyProfileId: data.company_profile_id || null }
+          ...(nextCompanyProfileId !== undefined
+            ? { companyProfileId: nextCompanyProfileId }
             : {}),
           ...(data?.access_schedule !== undefined
             ? { accessSchedule: nextAccessSchedule }
@@ -79,6 +143,10 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "DELETE") {
+      if (session.user.role !== "super_admin") {
+        return res.status(403).json({ error: "Only super admin can remove users" });
+      }
+
       const { id } = req.body || {};
 
       if (!id) {
@@ -102,7 +170,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "GET,PATCH,DELETE");
     return res.status(405).json({ error: "Method not allowed" });
   } catch (error) {
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       error: error.message || "Unexpected server error",
     });
   }

@@ -27,6 +27,8 @@ const employeeInitials = (employee) =>
 const employeePhotoUrl = (employee) =>
   employee.photo_url || employee.photo || employee.image || employee.picture || '';
 
+const normalizeEmployeeId = (value) => String(value || '').trim().toLowerCase();
+
 export default function Employees() {
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -76,6 +78,10 @@ export default function Employees() {
         const lines = csv.split('\n').filter(line => line.trim());
         const headers = lines[0].split(',').map(h => h.trim());
 
+        const existingEmployeeIds = new Set(employees.map(emp => normalizeEmployeeId(emp.employee_id)).filter(Boolean));
+        const uploadedEmployeeIds = new Map();
+        const rowsToImport = [];
+
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(',').map(v => v.trim());
           const emp = {};
@@ -84,6 +90,15 @@ export default function Employees() {
           });
 
           if (emp.employee_id) {
+            const normalizedEmployeeId = normalizeEmployeeId(emp.employee_id);
+            if (existingEmployeeIds.has(normalizedEmployeeId)) {
+              throw new Error(`Row ${i + 1}: employee_id "${emp.employee_id}" already exists.`);
+            }
+            if (uploadedEmployeeIds.has(normalizedEmployeeId)) {
+              throw new Error(`Row ${i + 1}: employee_id "${emp.employee_id}" is repeated in the upload. First found on row ${uploadedEmployeeIds.get(normalizedEmployeeId)}.`);
+            }
+            uploadedEmployeeIds.set(normalizedEmployeeId, i + 1);
+
             emp.daily_rate = parseFloat(emp.daily_rate) || 0;
             emp.monthly_rate = parseFloat(emp.monthly_rate) || 0;
             emp.agency_fee_percentage = emp.agency_fee_percentage ? parseFloat(emp.agency_fee_percentage) : undefined;
@@ -100,6 +115,11 @@ export default function Employees() {
             emp.cash_advance_weekly_deduction = weeklyDeduction || undefined;
             emp.company_profile_id = activeCompanyId;
 
+            rowsToImport.push({ emp, beginningBalance, weeklyDeduction });
+          }
+        }
+
+        for (const { emp, beginningBalance, weeklyDeduction } of rowsToImport) {
             await appApi.entities.Employee.create(emp);
 
             if (beginningBalance > 0 && weeklyDeduction > 0) {
@@ -121,12 +141,11 @@ export default function Employees() {
                 company_profile_id: activeCompanyId,
               });
             }
-          }
         }
 
         qc.invalidateQueries({ queryKey: ['employees'] });
         qc.invalidateQueries({ queryKey: ['cashAdvances'] });
-        alert(`Successfully imported ${lines.length - 1} employee(s)`);
+        alert(`Successfully imported ${rowsToImport.length} employee(s)`);
       } catch (err) {
         alert(`Error importing employees: ${err.message}`);
       }

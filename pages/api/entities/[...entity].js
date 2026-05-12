@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]";
 import {
   createRecord,
   deleteRecord,
@@ -43,7 +45,21 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const record = await createRecord(entity, req.body);
+      let data = req.body;
+      if (entity === "CompanyProfile") {
+        const session = await getServerSession(req, res, authOptions);
+        data = {
+          ...(req.body || {}),
+          ...(session?.user?.id
+            ? {
+                created_by_user_id: req.body?.created_by_user_id || session.user.id,
+                created_by_user_email: req.body?.created_by_user_email || session.user.email || null,
+                created_by_user_name: req.body?.created_by_user_name || session.user.name || null,
+              }
+            : {}),
+        };
+      }
+      const record = await createRecord(entity, data);
       return res.status(201).json(record);
     }
 

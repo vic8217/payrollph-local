@@ -12,10 +12,12 @@ import { Switch } from '@/components/ui/switch';
 import { Users, Save, X, CheckCircle2, Clock3, XCircle, Ban, Trash2, KeyRound } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { ACCESS_SCHEDULE_DAYS, DEFAULT_ACCESS_SCHEDULE, describeAccessSchedule } from '@/lib/accessSchedule';
+import { useAuth } from '@/lib/AuthContext';
 
 export default function UserManagement() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user: currentUser } = useAuth();
   const [editingUserId, setEditingUserId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [resetPasscodes, setResetPasscodes] = useState({});
@@ -29,6 +31,9 @@ export default function UserManagement() {
     queryKey: ['company-profiles'],
     queryFn: () => appApi.entities.CompanyProfile.list(),
   });
+  const assignableCompanies = currentUser?.role === 'super_admin'
+    ? companies
+    : companies.filter((company) => company.created_by_user_id === currentUser?.id);
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => requestJson('/api/users', {
@@ -116,16 +121,18 @@ export default function UserManagement() {
     setEditingUserId(user.id);
     setEditForm({
       role: user.role || 'user',
-      company_profile_id: user.company_profile_id || '',
+      company_profile_ids: Array.isArray(user.company_profile_ids)
+        ? user.company_profile_ids
+        : (user.company_profile_id ? [user.company_profile_id] : []),
       access_schedule: user.access_schedule || { ...DEFAULT_ACCESS_SCHEDULE },
     });
   };
 
   const handleSave = (userId) => {
     const data = { ...editForm };
-    if (!data.company_profile_id) delete data.company_profile_id;
     if (data.role === 'super_admin') {
       data.access_schedule = null;
+      data.company_profile_ids = [];
     }
     updateMutation.mutate({ id: userId, data });
   };
@@ -147,6 +154,18 @@ export default function UserManagement() {
       days: checked
         ? [...new Set([...currentDays, day])].sort((a, b) => a - b)
         : currentDays.filter((currentDay) => currentDay !== day),
+    });
+  };
+
+  const toggleCompany = (companyId, checked) => {
+    setEditForm((prev) => {
+      const currentIds = Array.isArray(prev.company_profile_ids) ? prev.company_profile_ids : [];
+      return {
+        ...prev,
+        company_profile_ids: checked
+          ? [...new Set([...currentIds, companyId])]
+          : currentIds.filter((id) => id !== companyId),
+      };
     });
   };
 
@@ -198,7 +217,10 @@ export default function UserManagement() {
       ) : (
         <div className="space-y-3">
           {users.map((user) => {
-            const assignedCompany = companies.find(c => c.id === user.company_profile_id);
+            const assignedCompanyIds = Array.isArray(user.company_profile_ids)
+              ? user.company_profile_ids
+              : (user.company_profile_id ? [user.company_profile_id] : []);
+            const assignedCompanies = companies.filter(c => assignedCompanyIds.includes(c.id));
             const isEditing = editingUserId === user.id;
             const isPending = user.approval_status === 'pending';
             const isApprovedEmployee = user.approval_status === 'approved' && user.role !== 'super_admin';
@@ -220,10 +242,12 @@ export default function UserManagement() {
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground mt-0.5">{user.email}</p>
-                      {!isEditing && assignedCompany && (
-                        <p className="text-xs text-primary mt-1">🏢 {assignedCompany.company_name}</p>
+                      {!isEditing && assignedCompanies.length > 0 && (
+                        <p className="text-xs text-primary mt-1">
+                          Company access: {assignedCompanies.map(c => c.company_name).join(', ')}
+                        </p>
                       )}
-                      {!isEditing && !assignedCompany && user.role !== 'super_admin' && (
+                      {!isEditing && assignedCompanies.length === 0 && user.role !== 'super_admin' && (
                         <p className="text-xs text-muted-foreground mt-1 italic">No company assigned (sees all)</p>
                       )}
                       {!isEditing && user.role !== 'super_admin' && (
@@ -334,29 +358,39 @@ export default function UserManagement() {
                         <Select value={editForm.role} onValueChange={v => setEditForm(p => ({ ...p, role: v }))}>
                           <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="super_admin">Super Admin (all access)</SelectItem>
+                            {currentUser?.role === 'super_admin' && (
+                              <SelectItem value="super_admin">Super Admin (all access)</SelectItem>
+                            )}
                             <SelectItem value="admin">Management / Admin</SelectItem>
                             <SelectItem value="user">User / HR Officer</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
 
-                      <div className="space-y-1">
-                        <Label className="text-xs">Assigned Company</Label>
-                        <Select
-                          value={editForm.company_profile_id || 'all'}
-                          onValueChange={v => setEditForm(p => ({ ...p, company_profile_id: v === 'all' ? '' : v }))}
-                        >
-                          <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">— All Companies (no restriction) —</SelectItem>
-                            {companies.map(c => (
-                              <SelectItem key={c.id} value={c.id}>{c.company_name}</SelectItem>
+                      {editForm.role !== 'super_admin' && (
+                        <div className="space-y-2">
+                          <Label className="text-xs">Assigned Companies</Label>
+                          <div className="rounded-md border border-border p-2 space-y-2 max-h-40 overflow-y-auto">
+                            {assignableCompanies.map(c => (
+                              <label key={c.id} className="flex items-center gap-2 text-sm">
+                                <Checkbox
+                                  checked={(editForm.company_profile_ids || []).includes(c.id)}
+                                  onCheckedChange={(checked) => toggleCompany(c.id, checked === true)}
+                                />
+                                <span>{c.company_name}</span>
+                              </label>
                             ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">Leave empty to allow access to all companies. Only Super Admins always see all companies.</p>
-                      </div>
+                            {assignableCompanies.length === 0 && (
+                              <p className="text-xs text-muted-foreground">No companies available. Admins can only assign companies they created.</p>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {currentUser?.role === 'super_admin'
+                              ? 'Leave all unchecked to allow access to all companies. Select two or more to limit this user to only those companies.'
+                              : 'Admins can only assign companies they created. Select at least one company.'}
+                          </p>
+                        </div>
+                      )}
 
                       {editForm.role !== 'super_admin' && (
                         <div className="sm:col-span-2 rounded-md border border-border p-3 space-y-3">

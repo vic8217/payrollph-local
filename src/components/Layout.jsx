@@ -28,7 +28,7 @@ const navItems = [
   { label: 'Holidays',        icon: CalendarDays,      path: '/holidays',           roles: ['super_admin', 'admin', 'user'] },
   { label: 'No-Work Days',    icon: CalendarOff,       path: '/no-work-days',       roles: ['super_admin', 'admin', 'user'] },
   { label: 'Daily Passcode',  icon: KeyRound,          path: '/passcode-manager',   roles: ['super_admin'] },
-  { label: 'User Management', icon: Users,             path: '/user-management',    roles: ['super_admin'] },
+  { label: 'User Management', icon: Users,             path: '/user-management',    roles: ['super_admin', 'admin'] },
   { label: 'Users Log',       icon: Activity,          path: '/users-log',          roles: ['super_admin'] },
   { label: 'Company Profile', icon: Building2,         path: '/company-profile',    roles: ['super_admin', 'admin', 'user'] },
   { label: 'Shift Settings',  icon: Settings,          path: '/settings',           roles: ['super_admin', 'admin'] },
@@ -67,7 +67,7 @@ export default function Layout() {
         </div>
         {!effectiveCollapsed && activeCompany && (
           <div className="mt-3 relative">
-            {isCompanyRestricted ? (
+            {isCompanyRestricted && companies.length <= 1 ? (
               // Restricted users: just show the company name, no dropdown
               <div className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg bg-primary/10">
                 <Building2 className="w-3.5 h-3.5 text-primary flex-shrink-0" />

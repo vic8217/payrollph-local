@@ -20,6 +20,13 @@ const CredentialsProvider = unwrapDefault(CredentialsImport);
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60;
 
+function parseCompanyProfileIds(value) {
+  return String(value || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
 export const authOptions = {
   session: {
     strategy: "jwt",
@@ -111,7 +118,8 @@ export const authOptions = {
           email: user.email,
           name: user.name || user.email,
           role: user.role,
-          company_profile_id: user.companyProfileId,
+          company_profile_id: parseCompanyProfileIds(user.companyProfileId)[0] || null,
+          company_profile_ids: parseCompanyProfileIds(user.companyProfileId),
           active_session_id: sessionId,
         };
       },
@@ -122,6 +130,7 @@ export const authOptions = {
       if (user) {
         token.role = user.role;
         token.company_profile_id = user.company_profile_id;
+        token.company_profile_ids = user.company_profile_ids || [];
         token.active_session_id = user.active_session_id;
       }
 
@@ -139,11 +148,14 @@ export const authOptions = {
         if (activeUser) {
           const scheduleUser = await prisma.appUser.findUnique({
             where: { id: token.sub },
-            select: { role: true, accessSchedule: true },
+            select: { role: true, accessSchedule: true, companyProfileId: true },
           });
           token.active_session_valid =
             scheduleUser?.role === "super_admin" ||
             isWithinAccessSchedule(scheduleUser?.accessSchedule);
+          const companyProfileIds = parseCompanyProfileIds(scheduleUser?.companyProfileId);
+          token.company_profile_id = companyProfileIds[0] || null;
+          token.company_profile_ids = companyProfileIds;
         }
       }
       return token;
@@ -157,6 +169,7 @@ export const authOptions = {
         session.user.id = token.sub;
         session.user.role = token.role || "user";
         session.user.company_profile_id = token.company_profile_id || null;
+        session.user.company_profile_ids = token.company_profile_ids || [];
       }
       return session;
     },

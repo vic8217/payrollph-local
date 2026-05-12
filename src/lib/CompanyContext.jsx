@@ -14,16 +14,29 @@ export const CompanyProvider = ({ children }) => {
       appApi.auth.me().catch(() => null),
     ]);
 
-    setCompanies(list);
+    const assignedCompanyIds = currentUser?.role !== 'super_admin'
+      ? (Array.isArray(currentUser?.company_profile_ids) && currentUser.company_profile_ids.length
+        ? currentUser.company_profile_ids
+        : (currentUser?.company_profile_id ? [currentUser.company_profile_id] : []))
+      : [];
+    const visibleCompanies = assignedCompanyIds.length
+      ? list.filter(c => assignedCompanyIds.includes(c.id))
+      : list;
 
-    // If user has an assigned company and is not super_admin, restrict to that company
-    if (currentUser && currentUser.role !== 'super_admin' && currentUser.company_profile_id) {
-      const assigned = list.find(c => c.id === currentUser.company_profile_id);
-      if (assigned) {
-        setActiveCompanyId(assigned.id);
-        setIsCompanyRestricted(true);
-        return list;
-      }
+    setCompanies(visibleCompanies);
+
+    if (assignedCompanyIds.length) {
+      setIsCompanyRestricted(true);
+      setActiveCompanyId((currentId) => {
+        if (selectCompanyId && visibleCompanies.some(c => c.id === selectCompanyId)) {
+          return selectCompanyId;
+        }
+        if (currentId && visibleCompanies.some(c => c.id === currentId)) {
+          return currentId;
+        }
+        return visibleCompanies[0]?.id || null;
+      });
+      return visibleCompanies;
     }
 
     setIsCompanyRestricted(false);
@@ -48,7 +61,7 @@ export const CompanyProvider = ({ children }) => {
       return list[0]?.id || null;
     });
 
-    return list;
+    return visibleCompanies;
   }, []);
 
   useEffect(() => {
@@ -56,7 +69,7 @@ export const CompanyProvider = ({ children }) => {
   }, [refreshCompanies]);
 
   const setCompany = (id) => {
-    if (!isCompanyRestricted) setActiveCompanyId(id);
+    if (companies.some(c => c.id === id)) setActiveCompanyId(id);
   };
 
   const activeCompany = companies.find(c => c.id === activeCompanyId) || null;
