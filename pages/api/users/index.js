@@ -32,14 +32,24 @@ function hasCompanyOverlap(leftIds, rightIds) {
   return leftIds.some((id) => right.has(id));
 }
 
-function adminCanManageUser(session, user) {
-  if (session?.user?.role === "super_admin") return true;
-  if (user.role === "super_admin") return false;
-  return hasCompanyOverlap(sessionCompanyProfileIds(session), parseCompanyProfileIds(user.companyProfileId));
+async function adminScopedCompanyIds(session) {
+  if (session?.user?.role === "super_admin") return [];
+  const assignedIds = sessionCompanyProfileIds(session);
+  const companies = await listRecords("CompanyProfile");
+  const createdIds = companies
+    .filter((company) => company.created_by_user_id === session?.user?.id)
+    .map((company) => company.id);
+  return [...new Set([...assignedIds, ...createdIds])];
 }
 
-function assertAdminCanManageUser(session, user) {
-  if (adminCanManageUser(session, user)) return;
+async function adminCanManageUser(session, user) {
+  if (session?.user?.role === "super_admin") return true;
+  if (user.role === "super_admin") return false;
+  return hasCompanyOverlap(await adminScopedCompanyIds(session), parseCompanyProfileIds(user.companyProfileId));
+}
+
+async function assertAdminCanManageUser(session, user) {
+  if (await adminCanManageUser(session, user)) return;
   const error = new Error("Admin users can only manage users assigned to their companies");
   error.statusCode = 403;
   throw error;
@@ -106,7 +116,11 @@ export default async function handler(req, res) {
       });
 
       if (session.user.role !== "super_admin") {
-        users = users.filter((user) => adminCanManageUser(session, user));
+        const scopedCompanyIds = await adminScopedCompanyIds(session);
+        users = users.filter((user) =>
+          user.role !== "super_admin" &&
+          hasCompanyOverlap(scopedCompanyIds, parseCompanyProfileIds(user.companyProfileId))
+        );
       }
 
       return res.status(200).json(users.map(toPublicUser));
@@ -128,7 +142,7 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: "User not found" });
       }
 
-      assertAdminCanManageUser(session, existingUser);
+      await assertAdminCanManageUser(session, existingUser);
 
       if (["denied", "suspended"].includes(data?.approval_status) && existingUser.role === "super_admin") {
         return res.status(400).json({ error: "Super admin cannot be suspended or denied" });

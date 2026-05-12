@@ -31,9 +31,15 @@ export default function UserManagement() {
     queryKey: ['company-profiles'],
     queryFn: () => appApi.entities.CompanyProfile.list(),
   });
+  const currentUserCompanyIds = Array.isArray(currentUser?.company_profile_ids) && currentUser.company_profile_ids.length
+    ? currentUser.company_profile_ids
+    : (currentUser?.company_profile_id ? [currentUser.company_profile_id] : []);
   const assignableCompanies = currentUser?.role === 'super_admin'
     ? companies
-    : companies.filter((company) => company.created_by_user_id === currentUser?.id);
+    : companies.filter((company) =>
+        company.created_by_user_id === currentUser?.id ||
+        currentUserCompanyIds.includes(company.id)
+      );
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => requestJson('/api/users', {

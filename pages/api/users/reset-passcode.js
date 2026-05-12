@@ -3,6 +3,7 @@ import { createHash, randomInt } from "crypto";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
+import { listRecords } from "@/server/entityStore";
 
 const RESET_PASSCODE_TTL_MINUTES = 30;
 const PASSCODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -24,6 +25,16 @@ function hasCompanyOverlap(leftIds, rightIds) {
   if (!leftIds.length || !rightIds.length) return false;
   const right = new Set(rightIds);
   return leftIds.some((id) => right.has(id));
+}
+
+async function adminScopedCompanyIds(session) {
+  if (session?.user?.role === "super_admin") return [];
+  const assignedIds = sessionCompanyProfileIds(session);
+  const companies = await listRecords("CompanyProfile");
+  const createdIds = companies
+    .filter((company) => company.created_by_user_id === session?.user?.id)
+    .map((company) => company.id);
+  return [...new Set([...assignedIds, ...createdIds])];
 }
 
 function normalizePasscode(passcode) {
@@ -70,7 +81,7 @@ export default async function handler(req, res) {
   if (
     session.user.role !== "super_admin" &&
     (user.role === "super_admin" ||
-      !hasCompanyOverlap(sessionCompanyProfileIds(session), parseCompanyProfileIds(user.companyProfileId)))
+      !hasCompanyOverlap(await adminScopedCompanyIds(session), parseCompanyProfileIds(user.companyProfileId)))
   ) {
     return res.status(403).json({ error: "Admin users can only reset users assigned to their companies" });
   }

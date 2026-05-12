@@ -19,13 +19,16 @@ export const CompanyProvider = ({ children }) => {
         ? currentUser.company_profile_ids
         : (currentUser?.company_profile_id ? [currentUser.company_profile_id] : []))
       : [];
-    const visibleCompanies = assignedCompanyIds.length
-      ? list.filter(c => assignedCompanyIds.includes(c.id))
-      : list;
+    const visibleCompanies = currentUser?.role === 'super_admin'
+      ? list
+      : list.filter(c =>
+          assignedCompanyIds.includes(c.id) ||
+          c.created_by_user_id === currentUser?.id
+        );
 
     setCompanies(visibleCompanies);
 
-    if (assignedCompanyIds.length) {
+    if (currentUser?.role !== 'super_admin') {
       setIsCompanyRestricted(true);
       setActiveCompanyId((currentId) => {
         if (selectCompanyId && visibleCompanies.some(c => c.id === selectCompanyId)) {
