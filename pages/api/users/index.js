@@ -37,7 +37,7 @@ async function adminScopedCompanyIds(session) {
   const assignedIds = sessionCompanyProfileIds(session);
   const companies = await listRecords("CompanyProfile");
   const createdIds = companies
-    .filter((company) => company.created_by_user_id === session?.user?.id)
+    .filter((company) => company.status !== "archived" && company.created_by_user_id === session?.user?.id)
     .map((company) => company.id);
   return [...new Set([...assignedIds, ...createdIds])];
 }
@@ -69,7 +69,10 @@ async function assertAdminCanAssignCompanies(session, companyProfileIds) {
   const companies = await listRecords("CompanyProfile");
   const allowedIds = new Set(
     companies
-      .filter((company) => company.created_by_user_id === session?.user?.id)
+      .filter((company) =>
+        company.status !== "archived" &&
+        (company.created_by_user_id === session?.user?.id || !company.created_by_user_id)
+      )
       .map((company) => company.id)
   );
   const blockedIds = companyProfileIds.filter((id) => !allowedIds.has(id));

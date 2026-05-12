@@ -19,9 +19,10 @@ export const CompanyProvider = ({ children }) => {
         ? currentUser.company_profile_ids
         : (currentUser?.company_profile_id ? [currentUser.company_profile_id] : []))
       : [];
+    const activeCompanies = list.filter(c => c.status !== 'archived');
     const visibleCompanies = currentUser?.role === 'super_admin'
-      ? list
-      : list.filter(c =>
+      ? activeCompanies
+      : activeCompanies.filter(c =>
           assignedCompanyIds.includes(c.id) ||
           c.created_by_user_id === currentUser?.id
         );
@@ -45,23 +46,23 @@ export const CompanyProvider = ({ children }) => {
     setIsCompanyRestricted(false);
 
     setActiveCompanyId((currentId) => {
-      if (selectCompanyId && list.some(c => c.id === selectCompanyId)) {
+      if (selectCompanyId && activeCompanies.some(c => c.id === selectCompanyId)) {
         return selectCompanyId;
       }
 
-      if (currentId && list.some(c => c.id === currentId)) {
+      if (currentId && activeCompanies.some(c => c.id === currentId)) {
         return currentId;
       }
 
       // Otherwise derive active company from subdomain
       const subdomain = window.location.hostname.split('.')[0];
-      const matchBySubdomain = list.find(c => c.subdomain === subdomain);
+      const matchBySubdomain = activeCompanies.find(c => c.subdomain === subdomain);
 
       if (matchBySubdomain) {
         return matchBySubdomain.id;
       }
 
-      return list[0]?.id || null;
+      return activeCompanies[0]?.id || null;
     });
 
     return visibleCompanies;

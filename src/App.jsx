@@ -26,6 +26,7 @@ import ScanConfirm from '@/pages/ScanConfirm';
 import PayrollSummary from '@/pages/PayrollSummary';
 import PasscodeManager from '@/pages/PasscodeManager';
 import CompanyProfile from '@/pages/CompanyProfile';
+import ArchivedCompanies from '@/pages/ArchivedCompanies';
 import Settings from '@/pages/Settings';
 import WorkSchedule from '@/pages/WorkSchedule';
 import EmployeePortalQR from '@/pages/EmployeePortalQR';
@@ -93,6 +94,7 @@ const AuthenticatedApp = () => {
         <Route path="/payroll-summary" element={<PayrollSummary />} />
         <Route path="/passcode-manager" element={<PasscodeManager />} />
         <Route path="/company-profile" element={<CompanyProfile />} />
+        <Route path="/archived-companies" element={<ArchivedCompanies />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/work-schedule" element={<WorkSchedule />} />
         <Route path="/user-management" element={<UserManagement />} />

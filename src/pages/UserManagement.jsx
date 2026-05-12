@@ -31,13 +31,15 @@ export default function UserManagement() {
     queryKey: ['company-profiles'],
     queryFn: () => appApi.entities.CompanyProfile.list(),
   });
+  const activeCompanies = companies.filter((company) => company.status !== 'archived');
   const currentUserCompanyIds = Array.isArray(currentUser?.company_profile_ids) && currentUser.company_profile_ids.length
     ? currentUser.company_profile_ids
     : (currentUser?.company_profile_id ? [currentUser.company_profile_id] : []);
   const assignableCompanies = currentUser?.role === 'super_admin'
-    ? companies
-    : companies.filter((company) =>
+    ? activeCompanies
+    : activeCompanies.filter((company) =>
         company.created_by_user_id === currentUser?.id ||
+        !company.created_by_user_id ||
         currentUserCompanyIds.includes(company.id)
       );
 
@@ -226,7 +228,7 @@ export default function UserManagement() {
             const assignedCompanyIds = Array.isArray(user.company_profile_ids)
               ? user.company_profile_ids
               : (user.company_profile_id ? [user.company_profile_id] : []);
-            const assignedCompanies = companies.filter(c => assignedCompanyIds.includes(c.id));
+            const assignedCompanies = activeCompanies.filter(c => assignedCompanyIds.includes(c.id));
             const isEditing = editingUserId === user.id;
             const isPending = user.approval_status === 'pending';
             const isApprovedEmployee = user.approval_status === 'approved' && user.role !== 'super_admin';

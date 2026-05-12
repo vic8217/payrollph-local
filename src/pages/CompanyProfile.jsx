@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Building2, Save, Plus, Upload } from 'lucide-react';
+import { Archive, Building2, Save, Plus, Upload } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import ImageWithFallback from '@/components/ImageWithFallback';
 import { useCompany } from '@/lib/CompanyContext';
+import { useAuth } from '@/lib/AuthContext';
 import { PAYROLL_WEEKDAY_OPTIONS, DEFAULT_PAYROLL_LENGTH_DAYS, DEFAULT_PAYROLL_START_DAY, getPayrollPeriodSummary } from '@/lib/payrollPeriod';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -84,13 +85,17 @@ export default function CompanyProfile() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { refreshCompanies } = useCompany();
+  const { user } = useAuth();
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [showForm, setShowForm] = useState(false);
 
   const { data: companies = [], isLoading } = useQuery({
     queryKey: ['company-profiles'],
-    queryFn: () => entities.list('CompanyProfile'),
+    queryFn: async () => {
+      const list = await entities.list('CompanyProfile');
+      return list.filter((company) => company.status !== 'archived');
+    },
   });
 
   const saveMutation = useMutation({
@@ -107,6 +112,20 @@ export default function CompanyProfile() {
       setEditingId(null);
       setForm({});
       toast({ title: editingId ? 'Company updated' : 'Company created' });
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: (company) => entities.update('CompanyProfile', company.id, {
+      status: 'archived',
+      archived_at: new Date().toISOString(),
+      archived_by_user_id: user?.id,
+      archived_by_user_email: user?.email,
+    }),
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['company-profiles'] });
+      await refreshCompanies();
+      toast({ title: 'Company archived' });
     },
   });
 
@@ -128,6 +147,12 @@ export default function CompanyProfile() {
       payroll_period_start_day: Number(form.payroll_period_start_day ?? DEFAULT_PAYROLL_START_DAY),
       payroll_period_length_days: Number(form.payroll_period_length_days ?? DEFAULT_PAYROLL_LENGTH_DAYS),
     });
+  };
+
+  const handleArchive = (company) => {
+    if (user?.role !== 'super_admin') return;
+    if (!window.confirm(`Archive ${company.company_name}? It will no longer appear in company dropdowns or active company lists.`)) return;
+    archiveMutation.mutate(company);
   };
 
   const fields = [
@@ -318,7 +343,20 @@ export default function CompanyProfile() {
                       {company.address && <p className="text-xs text-muted-foreground mt-1">{company.address}</p>}
                     </div>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => handleEdit(company)}>Edit</Button>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => handleEdit(company)}>Edit</Button>
+                    {user?.role === 'super_admin' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleArchive(company)}
+                        disabled={archiveMutation.isPending}
+                        className="gap-1 text-destructive hover:text-destructive"
+                      >
+                        <Archive className="w-3.5 h-3.5" /> Archive
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
