@@ -230,7 +230,7 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
     const actionLabel = actionLabels[/** @type {AttendanceAction} */ (action)] || 'Attendance';
 
     setResult({ success: true, message: `${actionLabel} recorded`, name: empName, time: format(now, 'h:mm a') });
-    onAttendanceLogged?.({ name: empName, action: actionLabel, time: format(now, 'h:mm a'), logId: log?.id });
+    onAttendanceLogged?.({ name: empName, action: actionLabel, attendanceAction: action, time: format(now, 'h:mm a'), logId: log?.id });
 
     setInput('');
     setProcessing(false);

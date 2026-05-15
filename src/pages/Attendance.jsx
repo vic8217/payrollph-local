@@ -104,6 +104,35 @@ function scheduledBreakIn(employee, date) {
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
 }
 
+const punchPhotoFields = [
+  { action: 'time_in', label: 'Time In(1)', timeField: 'time_in', photoField: 'time_in_photo_url' },
+  { action: 'break_time_out', label: 'Time Out(1)', timeField: 'break_time_out', photoField: 'break_time_out_photo_url' },
+  { action: 'break_time_in', label: 'Time In(2)', timeField: 'break_time_in', photoField: 'break_time_in_photo_url' },
+  { action: 'time_out', label: 'Time Out(2)', timeField: 'time_out', photoField: 'time_out_photo_url' },
+];
+
+function attendancePhotoItems(log) {
+  const items = punchPhotoFields
+    .filter(item => log[item.photoField])
+    .map(item => ({
+      ...item,
+      photoUrl: log[item.photoField],
+      timeValue: log[item.timeField],
+    }));
+
+  if (log.photo_url && !items.some(item => item.photoUrl === log.photo_url)) {
+    const matchingPunch = punchPhotoFields.find(item => log[item.timeField] && log.photo_action === item.action);
+    items.push({
+      ...(matchingPunch || { label: 'Attendance', timeField: 'time_in' }),
+      photoUrl: log.photo_url,
+      timeValue: matchingPunch ? log[matchingPunch.timeField] : (log.time_out || log.break_time_in || log.time_in),
+      legacy: true,
+    });
+  }
+
+  return items;
+}
+
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
     headers: {
@@ -1028,6 +1057,7 @@ export default function Attendance() {
                 ) : (
                   sortedLogs.map(log => {
                     const logWorkSchedule = getLogShiftValue(log);
+                    const photoItems = attendancePhotoItems(log);
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
@@ -1089,13 +1119,14 @@ export default function Attendance() {
                               onClick={() => setEditingLog(log)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
-                            {log.photo_url && (
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-sky-600 hover:bg-sky-50"
-                                title="View employee photo"
-                                onClick={() => setPhotoLog(log)}>
+                            {photoItems.map(photoItem => (
+                              <Button key={`${photoItem.label}-${photoItem.photoUrl}`} size="icon" variant="ghost" className="h-7 w-7 text-sky-600 hover:bg-sky-50"
+                                title={`View ${photoItem.label} photo`}
+                                onClick={() => setPhotoLog({ log, ...photoItem })}>
                                 <Eye className="w-4 h-4" />
+                                <span className="sr-only">View {photoItem.label} photo</span>
                               </Button>
-                            )}
+                            ))}
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:bg-green-50"
                               onClick={() => approveMutation.mutate({ id: log.id, status: 'approved' })}>
                               <CheckCircle2 className="w-4 h-4" />
@@ -1147,27 +1178,27 @@ export default function Attendance() {
           {photoLog && (
             <div className="space-y-3">
               <div className="rounded-xl overflow-hidden border border-border bg-muted">
-                <img src={photoLog.photo_url} alt="Employee attendance capture" className="w-full max-h-[70vh] object-contain" />
+                <img src={photoLog.photoUrl} alt="Employee attendance capture" className="w-full max-h-[70vh] object-contain" />
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                 <div>
                   <p className="font-medium text-foreground">Employee</p>
-                  <p>{photoLog.employee_name || selectedEmployee?.first_name || '—'}</p>
+                  <p>{photoLog.log?.employee_name || selectedEmployee?.first_name || '—'}</p>
                 </div>
                 <div>
                   <p className="font-medium text-foreground">Date</p>
-                  <p>{photoLog.date || '—'}</p>
+                  <p>{photoLog.log?.date || '—'}</p>
                 </div>
                 <div>
-                  <p className="font-medium text-foreground">Time In</p>
-                  <p>{photoLog.time_in ? format(new Date(photoLog.time_in), 'hh:mm a') : '—'}</p>
+                  <p className="font-medium text-foreground">Transaction</p>
+                  <p>{photoLog.label || 'Attendance'}</p>
                 </div>
                 <div>
-                  <p className="font-medium text-foreground">Time Out</p>
-                  <p>{photoLog.time_out ? format(new Date(photoLog.time_out), 'hh:mm a') : '—'}</p>
+                  <p className="font-medium text-foreground">Time</p>
+                  <p>{photoLog.timeValue ? format(new Date(photoLog.timeValue), 'hh:mm a') : '—'}</p>
                 </div>
               </div>
-              <Button variant="outline" className="w-full" onClick={() => window.open(photoLog.photo_url, '_blank', 'noopener,noreferrer')}>
+              <Button variant="outline" className="w-full" onClick={() => window.open(photoLog.photoUrl, '_blank', 'noopener,noreferrer')}>
                 Open Full Size
               </Button>
             </div>

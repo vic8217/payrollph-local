@@ -80,6 +80,27 @@ function isAutoScheduledBreakIn(employee, date, value) {
   return !!value && !!autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime();
 }
 
+const attendancePhotoFields = {
+  time_in: 'time_in_photo_url',
+  break_time_out: 'break_time_out_photo_url',
+  break_time_in: 'break_time_in_photo_url',
+  time_out: 'time_out_photo_url',
+};
+
+async function uploadAttendancePhoto(photoDataUrl, action) {
+  if (!photoDataUrl || !attendancePhotoFields[action]) return {};
+
+  const blob = await fetch(photoDataUrl).then(r => r.blob());
+  const file = new File([blob], `${action}_photo.jpg`, { type: 'image/jpeg' });
+  const { file_url } = await appApi.integrations.Core.UploadFile({ file });
+
+  return {
+    [attendancePhotoFields[action]]: file_url,
+    photo_url: file_url,
+    photo_action: action,
+  };
+}
+
 // Face capture component
 function FaceCapture({ onCapture, captured }) {
   const videoRef = useRef(null);
@@ -222,6 +243,12 @@ export default function ScanConfirm() {
     setConfirming(true);
     const today = format(new Date(), 'yyyy-MM-dd');
     const now = new Date().toISOString();
+    let photoUpdates = {};
+    try {
+      photoUpdates = await uploadAttendancePhoto(capturedPhoto, action);
+    } catch {
+      photoUpdates = {};
+    }
 
     if (action === 'time_in') {
       // Lunch window rule: snap time_in to 1:00pm, no overtime
@@ -240,6 +267,7 @@ export default function ScanConfirm() {
         ...(scheduledBreak(employee, today) || {}),
         day_type: 'regular',
         status: 'pending',
+        ...photoUpdates,
         notes: isLunchWindow ? 'Time-in snapped to 1:00 PM (lunch window rule). No overtime credited.' : (capturedPhoto ? 'Photo captured on time-in' : ''),
       });
       setDone({ action: 'time_in', employee, lunchSnapped: isLunchWindow });
@@ -248,6 +276,7 @@ export default function ScanConfirm() {
       await appApi.entities.AttendanceLog.update(todayLog.id, {
         ...(!todayLog.break_time_out && autoBreak ? { break_time_out: autoBreak.break_time_out } : {}),
         break_time_in: now,
+        ...photoUpdates,
         notes: capturedPhoto ? 'Photo captured on time-in after break' : '',
       });
       setDone({ action: 'break_time_in', employee });
@@ -291,6 +320,7 @@ export default function ScanConfirm() {
         hours_worked: parseFloat(hoursWorked.toFixed(2)),
         overtime_hours: parseFloat(overtimeHours.toFixed(2)),
         late_minutes: lateMinutes,
+        ...photoUpdates,
         notes: capturedPhoto ? 'Photo captured on time-out' : '',
       });
       setDone({ action: 'time_out', employee, hoursWorked });

@@ -20,13 +20,20 @@ const tabs = [
 
 const protectedTabs = new Set(['cash-advance', 'personal-leave', 'profile', 'trip-report']);
 
+const attendancePhotoFields = {
+  time_in: 'time_in_photo_url',
+  break_time_out: 'break_time_out_photo_url',
+  break_time_in: 'break_time_in_photo_url',
+  time_out: 'time_out_photo_url',
+};
+
 export default function EmployeePortal() {
   const [activeTab, setActiveTab] = useState('scan');
   const [user, setUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
   const [scannedEmployee, setScannedEmployee] = useState(null);
   const [authorizedTab, setAuthorizedTab] = useState(null);
-  const [scanConfirm, setScanConfirm] = useState(null); // { name, action, time, logId }
+  const [scanConfirm, setScanConfirm] = useState(null); // { name, action, attendanceAction, time, logId }
   const [scanKey, setScanKey] = useState(0); // increment to reset EmployeeQRGate back to camera
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
@@ -279,9 +286,14 @@ export default function EmployeePortal() {
                 if (photoDataUrl && scanConfirm.logId) {
                   try {
                     const blob = await fetch(photoDataUrl).then(r => r.blob());
-                    const file = new File([blob], 'confirm_photo.jpg', { type: 'image/jpeg' });
+                    const action = scanConfirm.attendanceAction;
+                    const photoField = attendancePhotoFields[action];
+                    const file = new File([blob], `${action || 'attendance'}_photo.jpg`, { type: 'image/jpeg' });
                     const { file_url } = await appApi.integrations.Core.UploadFile({ file });
-                    await appApi.entities.AttendanceLog.update(scanConfirm.logId, { photo_url: file_url });
+                    await appApi.entities.AttendanceLog.update(scanConfirm.logId, {
+                      ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
+                      photo_url: file_url,
+                    });
                   } catch { /* non-blocking */ }
                 }
                 setScanConfirm(null);
