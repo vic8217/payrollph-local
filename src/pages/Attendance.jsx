@@ -25,6 +25,48 @@ const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 const BREAK_DURATION_MINUTES = 60;
 
+const legacyShiftOptions = [
+  { value: 'day_shift', label: 'Day Shift', shortLabel: 'Day' },
+  { value: 'night_shift', label: 'Night Shift', shortLabel: 'Night' },
+];
+
+function buildShiftOptions(shiftSettings = [], employees = [], logs = []) {
+  const configuredOptions = [...shiftSettings]
+    .sort((a, b) => {
+      const startCompare = String(a.shift_start_time || '').localeCompare(String(b.shift_start_time || ''));
+      return startCompare || String(a.setting_name || '').localeCompare(String(b.setting_name || ''));
+    })
+    .map(shift => ({
+      ...shift,
+      value: shift.id,
+      label: shift.setting_name || 'Unnamed Shift',
+      shortLabel: shift.setting_name || 'Unnamed',
+    }));
+
+  const configuredValues = new Set(configuredOptions.map(option => option.value));
+  const usedValues = new Set([
+    ...employees.map(emp => emp.work_schedule),
+    ...logs.map(log => log.work_schedule),
+  ].filter(Boolean));
+
+  const legacyOptions = legacyShiftOptions.filter(option =>
+    configuredOptions.length === 0 || usedValues.has(option.value)
+  );
+  const knownValues = new Set([...configuredValues, ...legacyOptions.map(option => option.value)]);
+  const unknownUsedOptions = [...usedValues]
+    .filter(value => !knownValues.has(value))
+    .map(value => ({ value, label: 'Unknown Shift', shortLabel: 'Unknown' }));
+
+  return [...configuredOptions, ...legacyOptions, ...unknownUsedOptions];
+}
+
+function getShiftOption(shiftOptions, value, fallbackValue = 'day_shift') {
+  const resolvedValue = value || fallbackValue;
+  return shiftOptions.find(option => option.value === resolvedValue)
+    || legacyShiftOptions.find(option => option.value === resolvedValue)
+    || { value: resolvedValue, label: 'Unknown Shift', shortLabel: 'Unknown' };
+}
+
 function addBreakDuration(time) {
   const [hours, minutes] = String(time || '00:00').split(':').map(Number);
   const total = hours * 60 + minutes + BREAK_DURATION_MINUTES;
@@ -131,7 +173,7 @@ async function uploadFile(file) {
 }
 
 // ── Edit Attendance Modal ──
-function EditAttendanceModal({ log, defaultWorkSchedule, onClose, onSave, currentUser, activeCompanyId }) {
+function EditAttendanceModal({ log, defaultWorkSchedule, shiftOptions, onClose, onSave, currentUser, activeCompanyId }) {
   const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
 
   // Step 1: passcode gate. Step 2: actual edit form.
@@ -350,8 +392,9 @@ function EditAttendanceModal({ log, defaultWorkSchedule, onClose, onSave, curren
                   <SelectValue placeholder="Select shift" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="day_shift">Day Shift</SelectItem>
-                  <SelectItem value="night_shift">Night Shift</SelectItem>
+                  {shiftOptions.map(shift => (
+                    <SelectItem key={shift.value} value={shift.value}>{shift.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -422,11 +465,85 @@ function EditAttendanceModal({ log, defaultWorkSchedule, onClose, onSave, curren
   );
 }
 
+function ShiftPasscodeModal({ log, shift, currentUser, activeCompanyId, onClose, onConfirm }) {
+  const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [passcodeError, setPasscodeError] = useState('');
+  const [verifying, setVerifying] = useState(false);
+
+  const verifyPasscode = async () => {
+    if (!passcodeInput.trim()) {
+      setPasscodeError('Please enter the daily passcode.');
+      return;
+    }
+
+    setVerifying(true);
+    setPasscodeError('');
+    try {
+      const records = await entities.filter('DailyPasscode', { date: TODAY_STR, company_profile_id: activeCompanyId });
+      const match = records.find(r => r.passcode === passcodeInput.trim() || r.manager_passcode === passcodeInput.trim());
+      if (!match) {
+        setPasscodeError('Incorrect passcode. Please check with your administrator.');
+        return;
+      }
+
+      await onConfirm({
+        notes: `Shift changed to ${shift.label} by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
+      });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Enter Daily Passcode</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <KeyRound className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-amber-800">
+              Changing the shift for {log.date} requires the administrator's daily passcode.
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground">Daily Passcode</label>
+            <Input
+              type="password"
+              placeholder="Enter 6-digit passcode"
+              value={passcodeInput}
+              onChange={e => setPasscodeInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && verifyPasscode()}
+              className="mt-1 font-mono text-center tracking-widest text-lg"
+              maxLength={6}
+            />
+            {passcodeError && <p className="text-xs text-destructive mt-1">{passcodeError}</p>}
+          </div>
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
+            <p className="text-muted-foreground">New shift</p>
+            <p className="font-medium text-foreground">{shift.label}</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={verifyPasscode} disabled={verifying} className="gap-1.5">
+              <KeyRound className="w-3.5 h-3.5" />
+              {verifying ? 'Verifying...' : 'Save Shift'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Attendance() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [filterDept, setFilterDept] = useState('all');
   const [editingLog, setEditingLog] = useState(null);
+  const [pendingShiftEdit, setPendingShiftEdit] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('all');
@@ -488,6 +605,28 @@ export default function Attendance() {
   const updateLog = async (id, updates) => {
     await entities.update('AttendanceLog', id, updates);
     qc.invalidateQueries({ queryKey: ['attendance'] });
+  };
+
+  const shiftOptions = buildShiftOptions(shiftSettings, employees, logs);
+  const defaultShiftValue = shiftSettings.find(s => s.is_default)?.id || shiftSettings[0]?.id || selectedEmployee?.work_schedule || 'day_shift';
+  const getLogShiftValue = (log) => log.work_schedule || selectedEmployee?.work_schedule || defaultShiftValue;
+
+  const handleShiftSelect = (log, value) => {
+    if (value === getLogShiftValue(log)) return;
+    setPendingShiftEdit({
+      log,
+      shift: getShiftOption(shiftOptions, value, defaultShiftValue),
+    });
+  };
+
+  const savePendingShiftEdit = async ({ notes }) => {
+    if (!pendingShiftEdit) return;
+    const previousNotes = pendingShiftEdit.log.notes ? `${pendingShiftEdit.log.notes}\n` : '';
+    await updateLog(pendingShiftEdit.log.id, {
+      work_schedule: pendingShiftEdit.shift.value,
+      notes: `${previousNotes}${notes}`,
+    });
+    setPendingShiftEdit(null);
   };
 
   useEffect(() => {
@@ -888,14 +1027,21 @@ export default function Attendance() {
                   </td></tr>
                 ) : (
                   sortedLogs.map(log => {
-                    const logWorkSchedule = log.work_schedule || selectedEmployee.work_schedule || 'day_shift';
+                    const logWorkSchedule = getLogShiftValue(log);
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
                         <td className="px-3 py-3 hidden md:table-cell">
-                          {logWorkSchedule === 'night_shift'
-                            ? <span className="text-xs text-indigo-600 font-medium">Night</span>
-                            : <span className="text-xs text-amber-600 font-medium">Day</span>}
+                          <Select value={logWorkSchedule} onValueChange={value => handleShiftSelect(log, value)}>
+                            <SelectTrigger className="h-7 text-xs w-36">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {shiftOptions.map(option => (
+                                <SelectItem key={option.value} value={option.value}>{option.shortLabel || option.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </td>
                         <td className="px-3 py-3">
                           {log.time_in
@@ -973,11 +1119,23 @@ export default function Attendance() {
       {editingLog && (
         <EditAttendanceModal
           log={editingLog}
-          defaultWorkSchedule={selectedEmployee.work_schedule || 'day_shift'}
+          defaultWorkSchedule={getLogShiftValue(editingLog)}
+          shiftOptions={shiftOptions}
           currentUser={currentUser}
           activeCompanyId={activeCompanyId}
           onClose={() => setEditingLog(null)}
           onSave={updateLog}
+        />
+      )}
+
+      {pendingShiftEdit && (
+        <ShiftPasscodeModal
+          log={pendingShiftEdit.log}
+          shift={pendingShiftEdit.shift}
+          currentUser={currentUser}
+          activeCompanyId={activeCompanyId}
+          onClose={() => setPendingShiftEdit(null)}
+          onConfirm={savePendingShiftEdit}
         />
       )}
 
