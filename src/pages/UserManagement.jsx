@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Users, Save, X, CheckCircle2, Clock3, XCircle, Ban, Trash2, KeyRound } from 'lucide-react';
+import { Users, Save, X, CheckCircle2, Clock3, XCircle, Ban, Trash2, KeyRound, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { ACCESS_SCHEDULE_DAYS, DEFAULT_ACCESS_SCHEDULE, describeAccessSchedule } from '@/lib/accessSchedule';
 import { useAuth } from '@/lib/AuthContext';
@@ -182,6 +182,15 @@ export default function UserManagement() {
     removeMutation.mutate(user.id);
   };
 
+  const formatDateTime = (value) => {
+    if (!value) return '—';
+    return new Intl.DateTimeFormat('en-PH', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'Asia/Manila',
+    }).format(new Date(value));
+  };
+
   const roleColors = {
     super_admin: 'bg-purple-100 text-purple-700 border-purple-200',
     admin: 'bg-red-100 text-red-700 border-red-200',
@@ -262,6 +271,15 @@ export default function UserManagement() {
                         <p className="text-xs text-muted-foreground mt-1">
                           System access: {describeAccessSchedule(user.access_schedule)}
                         </p>
+                      )}
+                      {!isEditing && (
+                        <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>
+                            Login errors: <span className="font-semibold">{user.failed_login_attempts || 0}</span>
+                            {user.last_failed_login_at ? ` · Last: ${formatDateTime(user.last_failed_login_at)}` : ''}
+                          </span>
+                        </div>
                       )}
                     </div>
 

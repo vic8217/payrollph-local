@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Clock3, LogIn, LogOut, Users } from 'lucide-react';
+import { Activity, AlertTriangle, Clock3, LogIn, LogOut, Users } from 'lucide-react';
 import { requestJson } from '@/lib/appApi';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -14,12 +14,20 @@ const roleLabels = {
 
 const eventLabels = {
   login: 'Login',
+  login_failed: 'Login Failed',
   logout: 'Logout',
 };
 
 const eventStyles = {
   login: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  login_failed: 'bg-amber-100 text-amber-700 border-amber-200',
   logout: 'bg-slate-100 text-slate-700 border-slate-200',
+};
+
+const eventIcons = {
+  login: LogIn,
+  login_failed: AlertTriangle,
+  logout: LogOut,
 };
 
 function formatDateTime(value) {
@@ -160,7 +168,7 @@ export default function UsersLog() {
               </TableHeader>
               <TableBody>
                 {logs.map((log) => {
-                  const Icon = log.event_type === 'login' ? LogIn : LogOut;
+                  const Icon = eventIcons[log.event_type] || LogOut;
                   return (
                     <TableRow key={log.id}>
                       <TableCell className="text-muted-foreground whitespace-nowrap">{formatDateTime(log.occurred_at)}</TableCell>

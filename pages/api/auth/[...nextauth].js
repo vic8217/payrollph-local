@@ -27,6 +27,28 @@ function parseCompanyProfileIds(value) {
     .filter(Boolean);
 }
 
+async function createAccessLog(user, eventType, req, sessionId = null) {
+  try {
+    await prisma.userAccessLog.create({
+      data: {
+        userId: user.id,
+        email: user.email,
+        name: user.name || null,
+        role: user.role,
+        eventType,
+        sessionId,
+        ipAddress:
+          req?.headers?.["x-forwarded-for"]?.split(",")?.[0]?.trim() ||
+          req?.socket?.remoteAddress ||
+          null,
+        userAgent: req?.headers?.["user-agent"] || null,
+      },
+    });
+  } catch {
+    // Access logging should not block authentication.
+  }
+}
+
 export const authOptions = {
   session: {
     strategy: "jwt",
@@ -57,6 +79,7 @@ export const authOptions = {
 
         const isValid = await bcrypt.compare(password, user.passwordHash);
         if (!isValid) {
+          await createAccessLog(user, "login_failed", req);
           return null;
         }
         if (user.role !== "super_admin" && !isWithinAccessSchedule(user.accessSchedule)) {
@@ -93,25 +116,7 @@ export const authOptions = {
           throw new Error("ACCOUNT_ALREADY_ACTIVE");
         }
 
-        try {
-          await prisma.userAccessLog.create({
-            data: {
-              userId: user.id,
-              email: user.email,
-              name: user.name || null,
-              role: user.role,
-              eventType: "login",
-              sessionId,
-              ipAddress:
-                req?.headers?.["x-forwarded-for"]?.split(",")?.[0]?.trim() ||
-                req?.socket?.remoteAddress ||
-                null,
-              userAgent: req?.headers?.["user-agent"] || null,
-            },
-          });
-        } catch {
-          // Access logging should not block a valid sign in.
-        }
+        await createAccessLog(user, "login", req, sessionId);
 
         return {
           id: user.id,

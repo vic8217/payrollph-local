@@ -84,8 +84,9 @@ async function assertAdminCanAssignCompanies(session, companyProfileIds) {
   }
 }
 
-function toPublicUser(user) {
+function toPublicUser(user, failedLoginStats = {}) {
   const companyProfileIds = parseCompanyProfileIds(user.companyProfileId);
+  const failedStats = failedLoginStats[user.id] || {};
   return {
     id: user.id,
     email: user.email,
@@ -96,9 +97,26 @@ function toPublicUser(user) {
     company_profile_id: companyProfileIds.length === 1 ? companyProfileIds[0] : null,
     company_profile_ids: companyProfileIds,
     access_schedule: user.accessSchedule,
+    failed_login_attempts: failedStats.count || 0,
+    last_failed_login_at: failedStats.last_failed_login_at || null,
     created_date: user.createdAt.toISOString(),
     updated_date: user.updatedAt.toISOString(),
   };
+}
+
+function summarizeFailedLogins(logs) {
+  return logs.reduce((summary, log) => {
+    const current = summary[log.userId] || { count: 0, last_failed_login_at: null };
+    const occurredAt = log.occurredAt?.toISOString?.() || null;
+    summary[log.userId] = {
+      count: current.count + 1,
+      last_failed_login_at:
+        !current.last_failed_login_at || (occurredAt && occurredAt > current.last_failed_login_at)
+          ? occurredAt
+          : current.last_failed_login_at,
+    };
+    return summary;
+  }, {});
 }
 
 export default async function handler(req, res) {
@@ -126,7 +144,18 @@ export default async function handler(req, res) {
         );
       }
 
-      return res.status(200).json(users.map(toPublicUser));
+      const failedLoginLogs = users.length
+        ? await prisma.userAccessLog.findMany({
+            where: {
+              userId: { in: users.map((user) => user.id) },
+              eventType: "login_failed",
+            },
+            select: { userId: true, occurredAt: true },
+          })
+        : [];
+
+      const failedLoginStats = summarizeFailedLogins(failedLoginLogs);
+      return res.status(200).json(users.map((user) => toPublicUser(user, failedLoginStats)));
     }
 
     if (req.method === "PATCH") {
