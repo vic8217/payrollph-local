@@ -131,7 +131,7 @@ async function uploadFile(file) {
 }
 
 // ── Edit Attendance Modal ──
-function EditAttendanceModal({ log, onClose, onSave, currentUser, activeCompanyId }) {
+function EditAttendanceModal({ log, defaultWorkSchedule, onClose, onSave, currentUser, activeCompanyId }) {
   const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
 
   // Step 1: passcode gate. Step 2: actual edit form.
@@ -145,6 +145,7 @@ function EditAttendanceModal({ log, onClose, onSave, currentUser, activeCompanyI
   const [breakOut, setBreakOut] = useState(log.break_time_out ? format(new Date(log.break_time_out), "HH:mm") : '');
   const [breakIn, setBreakIn] = useState(log.break_time_in ? format(new Date(log.break_time_in), "HH:mm") : '');
   const [timeOut, setTimeOut] = useState(log.time_out ? format(new Date(log.time_out), "HH:mm") : '');
+  const [workSchedule, setWorkSchedule] = useState(log.work_schedule || defaultWorkSchedule || 'day_shift');
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
   const [saving, setSaving] = useState(false);
@@ -238,6 +239,9 @@ function EditAttendanceModal({ log, onClose, onSave, currentUser, activeCompanyI
     if (canEditBreakOut && breakOut) updates.break_time_out = toISO(breakOut);
     if (canEditBreakIn && breakIn) updates.break_time_in = toISO(breakIn);
     if (canEditTimeOut && timeOut) updates.time_out = toISO(timeOut);
+    if (workSchedule !== (log.work_schedule || defaultWorkSchedule || 'day_shift')) {
+      updates.work_schedule = workSchedule;
+    }
 
     const effTimeIn = updates.time_in || log.time_in;
     const effBreakOut = updates.break_time_out || log.break_time_out;
@@ -337,7 +341,20 @@ function EditAttendanceModal({ log, onClose, onSave, currentUser, activeCompanyI
               />
             </div>
 
-            <p className="text-xs text-muted-foreground">Only missing time fields can be filled in.</p>
+            <p className="text-xs text-muted-foreground">Only missing time fields can be filled in. Shift can be corrected for this attendance record.</p>
+
+            <div>
+              <label className="text-sm font-medium text-foreground">Shift</label>
+              <Select value={workSchedule} onValueChange={setWorkSchedule}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select shift" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day_shift">Day Shift</SelectItem>
+                  <SelectItem value="night_shift">Night Shift</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -535,23 +552,37 @@ export default function Attendance() {
 
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
-  const derivedPayrollPeriods = [...new Set(allAttendanceLogs.map(log => log.date).filter(Boolean))]
-    .map(date => {
-      const period = getPayrollPeriodForDate(new Date(`${date}T00:00:00`), activeCompany);
-      return {
-        id: `derived-${period.start_date}`,
-        period_name: `Payroll Period: ${period.label}`,
-        start_date: period.start_date,
-        end_date: period.end_date,
-      };
-    })
-    .filter((period, index, periods) => periods.findIndex(p => p.id === period.id) === index)
-    .sort((a, b) => b.start_date.localeCompare(a.start_date));
-  const displayedPayrollPeriods = payrollPeriods.length > 0 ? payrollPeriods : derivedPayrollPeriods;
+  const savedPeriodsByRange = new Map(payrollPeriods.map(period => [`${period.start_date}:${period.end_date}`, period]));
+  const attendanceDates = allAttendanceLogs.map(log => log.date).filter(Boolean).sort();
+  const earliestAttendanceDate = attendanceDates[0];
+  const earliestSavedPeriodDate = payrollPeriods
+    .map(period => period.start_date)
+    .filter(Boolean)
+    .sort()[0];
+  const earliestPeriodDate = earliestAttendanceDate && earliestSavedPeriodDate
+    ? (earliestAttendanceDate < earliestSavedPeriodDate ? earliestAttendanceDate : earliestSavedPeriodDate)
+    : earliestAttendanceDate || earliestSavedPeriodDate || startStr;
+  const earliestPeriod = getPayrollPeriodForDate(new Date(`${earliestPeriodDate}T00:00:00`), activeCompany);
+  const displayedPayrollPeriods = [];
+
+  for (let offset = 0; offset > -104; offset -= 1) {
+    const period = getPayrollPeriodForDate(baseWeek, activeCompany, offset);
+    const savedPeriod = savedPeriodsByRange.get(`${period.start_date}:${period.end_date}`);
+    displayedPayrollPeriods.push({
+      id: `period-${period.start_date}`,
+      period_name: savedPeriod?.period_name || `Payroll Period: ${period.label}`,
+      start_date: period.start_date,
+      end_date: period.end_date,
+      payroll_period_id: savedPeriod?.id,
+    });
+
+    if (period.start_date <= earliestPeriod.start_date) break;
+  }
+
   const activePeriod = selectedPeriod === 'all' ? null : displayedPayrollPeriods.find(p => p.id === selectedPeriod);
   const quickViewPeriods = activePeriod
     ? [activePeriod]
-    : [...payrollPeriods].sort((a, b) => String(b.start_date || '').localeCompare(String(a.start_date || '')));
+    : displayedPayrollPeriods;
 
   const quickViewRows = quickViewPeriods.flatMap(period =>
     filteredEmployees.map(emp => {
@@ -857,14 +888,12 @@ export default function Attendance() {
                   </td></tr>
                 ) : (
                   sortedLogs.map(log => {
-                    const missingTimeIn = !log.time_in;
-                    const missingTimeOut = !log.time_out;
-                    const canEdit = missingTimeIn || missingTimeOut;
+                    const logWorkSchedule = log.work_schedule || selectedEmployee.work_schedule || 'day_shift';
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
                         <td className="px-3 py-3 hidden md:table-cell">
-                          {selectedEmployee.work_schedule === 'night_shift'
+                          {logWorkSchedule === 'night_shift'
                             ? <span className="text-xs text-indigo-600 font-medium">Night</span>
                             : <span className="text-xs text-amber-600 font-medium">Day</span>}
                         </td>
@@ -909,13 +938,11 @@ export default function Attendance() {
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex gap-1">
-                            {canEdit && (
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-primary hover:bg-primary/10"
-                                title="Fill in missing time"
-                                onClick={() => setEditingLog(log)}>
-                                <Pencil className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-primary hover:bg-primary/10"
+                              title="Edit shift or missing time"
+                              onClick={() => setEditingLog(log)}>
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
                             {log.photo_url && (
                               <Button size="icon" variant="ghost" className="h-7 w-7 text-sky-600 hover:bg-sky-50"
                                 title="View employee photo"
@@ -946,6 +973,7 @@ export default function Attendance() {
       {editingLog && (
         <EditAttendanceModal
           log={editingLog}
+          defaultWorkSchedule={selectedEmployee.work_schedule || 'day_shift'}
           currentUser={currentUser}
           activeCompanyId={activeCompanyId}
           onClose={() => setEditingLog(null)}

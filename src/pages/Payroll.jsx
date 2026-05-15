@@ -20,6 +20,12 @@ const statusColors = {
   released: 'bg-emerald-100 text-emerald-700',
 };
 
+const generationStatusColors = {
+  complete: 'bg-emerald-100 text-emerald-700',
+  incomplete: 'bg-amber-100 text-amber-700',
+  missing: 'bg-gray-100 text-gray-600',
+};
+
 export default function Payroll() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState(null);
@@ -274,6 +280,27 @@ export default function Payroll() {
   // Previous periods (excluding the current configured payroll period)
   const previousPeriods = periods.filter(p => !(p.start_date === startStr && p.end_date === endStr))
     .sort((a, b) => b.start_date.localeCompare(a.start_date));
+  const savedPeriodsByRange = new Map(periods.map(period => [`${period.start_date}:${period.end_date}`, period]));
+  const summaryPeriods = Array.from({ length: 8 }, (_, index) => {
+    const configuredPeriod = getPayrollPeriodForDate(baseWeek, activeCompany, -index);
+    const savedPeriod = savedPeriodsByRange.get(`${configuredPeriod.start_date}:${configuredPeriod.end_date}`);
+    const generatedEmployeeCount = Number(savedPeriod?.employee_count) || 0;
+    const hasTotals = Number(savedPeriod?.total_gross) > 0 || Number(savedPeriod?.total_net) > 0 || Number(savedPeriod?.total_deductions) > 0;
+    const isComplete = !!savedPeriod && (generatedEmployeeCount > 0 || hasTotals);
+
+    return {
+      id: savedPeriod?.id || `missing-${configuredPeriod.start_date}`,
+      savedPeriod,
+      period_name: savedPeriod?.period_name || getPayrollPeriodName(configuredPeriod),
+      start_date: configuredPeriod.start_date,
+      end_date: configuredPeriod.end_date,
+      employee_count: generatedEmployeeCount,
+      total_net: savedPeriod?.total_net || 0,
+      workflow_status: savedPeriod?.status || 'not generated',
+      generation_status: savedPeriod ? (isComplete ? 'complete' : 'incomplete') : 'missing',
+      generation_label: savedPeriod ? (isComplete ? 'Complete' : 'Incomplete') : 'Not generated',
+    };
+  });
 
   return (
     <div className="p-6 space-y-5 max-w-7xl mx-auto">
@@ -326,6 +353,67 @@ export default function Payroll() {
           </ul>
         </div>
       )}
+
+      <Card className="border border-border shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
+          <div>
+            <p className="font-semibold text-foreground">Payroll Period Summary</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Recent periods based on the company payroll schedule</p>
+          </div>
+          <Badge variant="outline" className="text-xs">
+            {summaryPeriods.filter(period => period.savedPeriod).length} generated
+          </Badge>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/50 border-b border-border">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Period Covered</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Payroll Generation</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Employees</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Net Pay</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summaryPeriods.map(period => {
+                const isSelected = selectedPeriod?.id === period.savedPeriod?.id;
+                const isCurrent = period.start_date === startStr && period.end_date === endStr;
+
+                return (
+                  <tr
+                    key={period.id}
+                    className={`border-b border-border last:border-0 transition-colors ${period.savedPeriod ? 'cursor-pointer hover:bg-muted/30' : 'bg-muted/10'} ${isSelected ? 'bg-primary/5' : ''}`}
+                    onClick={() => period.savedPeriod && setSelectedPeriod(period.savedPeriod)}
+                  >
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-foreground">{period.period_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {period.start_date} to {period.end_date}
+                        {isCurrent ? ' · Current' : ''}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className={`text-xs ${generationStatusColors[period.generation_status]}`}>
+                        {period.generation_label}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline" className={`text-xs capitalize ${statusColors[period.workflow_status] || 'bg-gray-100 text-gray-600'}`}>
+                        {period.workflow_status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-right text-foreground">{period.employee_count || '—'}</td>
+                    <td className="px-4 py-3 text-right font-medium text-foreground">
+                      {period.savedPeriod ? `₱${Number(period.total_net || 0).toLocaleString()}` : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       {/* Current week period card */}
       {currentWeekPeriod && (
