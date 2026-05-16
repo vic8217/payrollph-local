@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useCompany } from '@/lib/CompanyContext';
 import { Button } from '@/components/ui/button';
@@ -48,6 +48,26 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!employee?.id) return;
+    setForm(prev => {
+      if (prev?.id !== employee.id) return employee;
+
+      const updates = {};
+      if (!(parseFloat(prev.cash_advance_beginning_balance) > 0) && parseFloat(employee.cash_advance_beginning_balance) > 0) {
+        updates.cash_advance_beginning_balance = employee.cash_advance_beginning_balance;
+      }
+      if (
+        (prev.cash_advance_weekly_deduction == null || prev.cash_advance_weekly_deduction === '') &&
+        employee.cash_advance_weekly_deduction != null
+      ) {
+        updates.cash_advance_weekly_deduction = employee.cash_advance_weekly_deduction;
+      }
+
+      return Object.keys(updates).length > 0 ? { ...prev, ...updates } : prev;
+    });
+  }, [employee?.id, employee?.cash_advance_beginning_balance, employee?.cash_advance_weekly_deduction]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -145,9 +165,9 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
   const syncBeginningCashAdvance = async (employeeData) => {
     const beginningBalance = parseFloat(employeeData.cash_advance_beginning_balance) || 0;
     const weeklyDeduction = parseFloat(employeeData.cash_advance_weekly_deduction) || 0;
-    if (beginningBalance <= 0 || weeklyDeduction <= 0 || !employeeData.employee_id) return;
+    if (beginningBalance <= 0 || !employeeData.employee_id) return;
 
-    const payrollWeeks = Math.ceil(beginningBalance / weeklyDeduction);
+    const payrollWeeks = weeklyDeduction > 0 ? Math.ceil(beginningBalance / weeklyDeduction) : 0;
     const payload = {
       employee_id: employeeData.employee_id,
       employee_name: [employeeData.first_name, employeeData.middle_name, employeeData.last_name].filter(Boolean).join(' '),

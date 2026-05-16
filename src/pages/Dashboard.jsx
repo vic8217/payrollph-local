@@ -104,6 +104,27 @@ export default function Dashboard() {
           if (ca.advance_type === 'emergency') byEmployee[ca.employee_id].emergency += amt;
           else byEmployee[ca.employee_id].regular += amt;
         });
+        employees.forEach(employee => {
+          const beginningBalance = parseFloat(employee.cash_advance_beginning_balance) || 0;
+          if (beginningBalance <= 0) return;
+
+          const hasBeginningCashAdvanceRecord = cashAdvances.some(ca =>
+            ca.employee_id === employee.employee_id &&
+            ca.advance_type === 'beginning_balance' &&
+            activeStatuses.includes(ca.status)
+          );
+          if (hasBeginningCashAdvanceRecord) return;
+
+          if (!byEmployee[employee.employee_id]) {
+            byEmployee[employee.employee_id] = {
+              name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),
+              department: employee.department,
+              regular: 0,
+              emergency: 0,
+            };
+          }
+          byEmployee[employee.employee_id].regular += beginningBalance;
+        });
         const leaderboard = Object.values(byEmployee)
           .map(e => ({ ...e, total: e.regular + e.emergency }))
           .sort((a, b) => b.total - a.total)

@@ -122,7 +122,8 @@ export default function Employees() {
         for (const { emp, beginningBalance, weeklyDeduction } of rowsToImport) {
             await appApi.entities.Employee.create(emp);
 
-            if (beginningBalance > 0 && weeklyDeduction > 0) {
+            if (beginningBalance > 0) {
+              const payrollWeeks = weeklyDeduction > 0 ? Math.ceil(beginningBalance / weeklyDeduction) : 0;
               await appApi.entities.CashAdvance.create({
                 employee_id: emp.employee_id,
                 employee_name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
@@ -131,9 +132,9 @@ export default function Employees() {
                 amount_approved: beginningBalance,
                 beginning_balance: beginningBalance,
                 remaining_balance: beginningBalance,
-                deduction_payroll_periods: Math.ceil(beginningBalance / weeklyDeduction),
+                deduction_payroll_periods: payrollWeeks,
                 deduction_amount_per_payroll: weeklyDeduction,
-                deduction_periods_remaining: Math.ceil(beginningBalance / weeklyDeduction),
+                deduction_periods_remaining: payrollWeeks,
                 reason: 'Beginning balance from previous cash advance',
                 advance_type: 'beginning_balance',
                 request_date: emp.date_hired || new Date().toISOString().slice(0, 10),
@@ -160,6 +161,12 @@ export default function Employees() {
     enabled: !!activeCompanyId,
   });
 
+  const { data: cashAdvances = [] } = useQuery({
+    queryKey: ['cashAdvances', activeCompanyId],
+    queryFn: () => appApi.entities.CashAdvance.filter({ company_profile_id: activeCompanyId }, '-created_date', 500),
+    enabled: !!activeCompanyId,
+  });
+
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }) => appApi.entities.Employee.update(id, {
       status,
@@ -183,10 +190,41 @@ export default function Employees() {
   );
 
   /** Keep 201 File in sync after employee record updates (e.g. cash advance agreement) while dialog stays open. */
+  const employeesWithCashAdvanceBalances = useMemo(() => {
+    return employees.map(employee => {
+      if (parseFloat(employee.cash_advance_beginning_balance) > 0) return employee;
+
+      const beginningAdvance = cashAdvances.find(ca =>
+        ca.employee_id === employee.employee_id &&
+        ca.advance_type === 'beginning_balance'
+      );
+      if (!beginningAdvance) return employee;
+
+      const beginningBalance = beginningAdvance.beginning_balance
+        ?? beginningAdvance.amount_approved
+        ?? beginningAdvance.amount_requested
+        ?? beginningAdvance.remaining_balance;
+      if (!(parseFloat(beginningBalance) > 0)) return employee;
+
+      return {
+        ...employee,
+        cash_advance_beginning_balance: beginningBalance,
+        cash_advance_weekly_deduction: employee.cash_advance_weekly_deduction
+          ?? beginningAdvance.deduction_amount_per_payroll
+          ?? '',
+      };
+    });
+  }, [employees, cashAdvances]);
+
+  const editEmployeeLive = useMemo(() => {
+    if (!editEmployee) return null;
+    return employeesWithCashAdvanceBalances.find(e => e.id === editEmployee.id) ?? editEmployee;
+  }, [employeesWithCashAdvanceBalances, editEmployee]);
+
   const file201EmployeeLive = useMemo(() => {
     if (!file201Employee) return null;
-    return employees.find(e => e.id === file201Employee.id) ?? file201Employee;
-  }, [employees, file201Employee]);
+    return employeesWithCashAdvanceBalances.find(e => e.id === file201Employee.id) ?? file201Employee;
+  }, [employeesWithCashAdvanceBalances, file201Employee]);
 
   const statusColor = {
     active: 'bg-green-100 text-green-700',
@@ -355,13 +393,17 @@ export default function Employees() {
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editEmployee ? 'Edit Employee' : 'Add Employee'}</DialogTitle>
+            <DialogTitle>{editEmployeeLive ? 'Edit Employee' : 'Add Employee'}</DialogTitle>
           </DialogHeader>
           <EmployeeForm
-            key={editEmployee?.id || 'new'}
-            employee={editEmployee}
+            key={editEmployeeLive?.id || 'new'}
+            employee={editEmployeeLive}
             onUpdated={() => qc.invalidateQueries({ queryKey: ['employees'] })}
-            onSaved={() => { setShowForm(false); qc.invalidateQueries({ queryKey: ['employees'] }); }}
+            onSaved={() => {
+              setShowForm(false);
+              qc.invalidateQueries({ queryKey: ['employees'] });
+              qc.invalidateQueries({ queryKey: ['cashAdvances'] });
+            }}
             onCancel={() => setShowForm(false)}
           />
         </DialogContent>

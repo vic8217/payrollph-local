@@ -181,6 +181,29 @@ export default function Employee201File({ employee }) {
         ? new Date(agreementAcceptancePhotoAt).toLocaleString()
         : agreementAcceptancePhotoAt)
     : null;
+  const beginningCashAdvanceBalance = parseFloat(employee.cash_advance_beginning_balance) || 0;
+  const beginningCashAdvanceDeduction = parseFloat(employee.cash_advance_weekly_deduction) || 0;
+  const hasBeginningCashAdvanceRecord = cashAdvances.some(advance => advance.advance_type === 'beginning_balance');
+  const displayedCashAdvances = beginningCashAdvanceBalance > 0 && !hasBeginningCashAdvanceRecord
+    ? [
+        {
+          id: 'employee-beginning-cash-advance',
+          amount_requested: beginningCashAdvanceBalance,
+          amount_approved: beginningCashAdvanceBalance,
+          beginning_balance: beginningCashAdvanceBalance,
+          remaining_balance: beginningCashAdvanceBalance,
+          deduction_amount_per_payroll: beginningCashAdvanceDeduction,
+          deduction_payroll_periods: beginningCashAdvanceDeduction > 0
+            ? Math.ceil(beginningCashAdvanceBalance / beginningCashAdvanceDeduction)
+            : 0,
+          reason: 'Beginning balance from employee profile',
+          request_date: employee.date_hired || employee.created_date,
+          status: 'approved',
+          advance_type: 'beginning_balance',
+        },
+        ...cashAdvances,
+      ]
+    : cashAdvances;
 
   const printAgreement = () => {
     const win = window.open('', '_blank', 'width=800,height=900');
@@ -795,10 +818,10 @@ export default function Employee201File({ employee }) {
 
         {activeTab === 'cash-advances' && (
           <div className="space-y-3">
-            {cashAdvances.length === 0 ? (
+            {displayedCashAdvances.length === 0 ? (
               <p className="text-muted-foreground text-sm py-8">No cash advances recorded.</p>
             ) : (
-              cashAdvances.map(advance => (
+              displayedCashAdvances.map(advance => (
                 <Card key={advance.id} className="p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
