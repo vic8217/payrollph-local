@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
-import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock } from 'lucide-react';
+import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
+import { employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
 
 const shiftConfig = {
   day_shift:   { label: 'Day Shift',   icon: Sun,  className: 'bg-amber-100 text-amber-700 border-amber-200' },
@@ -112,8 +113,9 @@ export default function WorkSchedule() {
   };
 
   const handleBreakTimeChange = (emp, value) => {
+    if (value === 'none') return;
     setSavingId(emp.id);
-    updateMutation.mutate({ id: emp.id, data: { break_time: value === 'none' ? '' : value } });
+    updateMutation.mutate({ id: emp.id, data: { break_time: value } });
   };
 
   const sortedShiftSettings = [...shiftSettings].sort((a, b) => {
@@ -158,14 +160,27 @@ export default function WorkSchedule() {
     count: employees.filter(e => getCurrentShiftValue(e) === shift.value).length,
   }));
   const unassignedCount = employees.filter(e => e.work_schedule && !shiftOptions.some(option => option.value === e.work_schedule)).length;
+  const missingBreakTimeCount = employeesMissingBreakTime(employees).length;
   const loading = isLoading || isLoadingShifts;
 
   return (
     <div className="p-6 space-y-5 max-w-5xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Work Schedule</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">Assign a configured shift to each employee</p>
+        <p className="text-muted-foreground text-sm mt-0.5">Assign a configured shift and required lunch break to each employee</p>
       </div>
+
+      {missingBreakTimeCount > 0 && (
+        <div className="border border-destructive/30 bg-destructive/5 rounded-lg px-4 py-3 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-destructive">Break time setup required</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {missingBreakTimeCount} active employee{missingBreakTimeCount === 1 ? ' has' : 's have'} no lunch break schedule. Set a break time before payroll and attendance review.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -229,7 +244,7 @@ export default function WorkSchedule() {
                 <tr><td colSpan={5} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
               ) : (
                 filtered.map(emp => (
-                  <tr key={emp.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
+	                  <tr key={emp.id} className={`border-b border-border last:border-0 hover:bg-muted/20 transition-colors ${!emp.break_time ? 'bg-destructive/5' : ''}`}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -247,8 +262,14 @@ export default function WorkSchedule() {
                     <td className="px-4 py-3">
                       <ShiftBadge shift={getShiftOption(emp.work_schedule)} />
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {emp.break_time ? `${formatTime(emp.break_time)} - ${formatTime(addBreakDuration(emp.break_time))}` : '—'}
+	                    <td className="px-4 py-3 text-xs text-muted-foreground">
+	                      {emp.break_time ? (
+                          `${formatTime(emp.break_time)} - ${formatTime(addBreakDuration(emp.break_time))}`
+                        ) : (
+                          <Badge variant="destructive" className="gap-1 text-[10px]">
+                            <AlertTriangle className="w-3 h-3" /> Required
+                          </Badge>
+                        )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -283,11 +304,11 @@ export default function WorkSchedule() {
                           onValueChange={v => handleBreakTimeChange(emp, v)}
                         >
                           <SelectTrigger className="h-8 text-xs w-40">
-                            <SelectValue placeholder="Break time..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">No auto break</SelectItem>
-                            {breakTimeOptions.map(time => (
+	                            <SelectValue placeholder="Set break time..." />
+	                          </SelectTrigger>
+	                          <SelectContent>
+	                            <SelectItem value="none" disabled>Break time required</SelectItem>
+	                            {breakTimeOptions.map(time => (
                               <SelectItem key={time} value={time}>
                                 {formatTime(time)}
                               </SelectItem>

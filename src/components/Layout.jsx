@@ -1,15 +1,26 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import { appApi } from '@/lib/appApi';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
-	  LayoutDashboard, Users, Clock, CreditCard,
-	  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-	  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive
-	} from 'lucide-react';
+		  LayoutDashboard, Users, Clock, CreditCard,
+		  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
+		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle
+		} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { canReceiveBreakTimeAlerts, employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
 
 // super_admin = all access
 // admin = all except daily passcode & user management
@@ -41,6 +52,8 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
+  const [breakAlertOpen, setBreakAlertOpen] = useState(false);
+  const [dismissedBreakAlertKey, setDismissedBreakAlertKey] = useState('');
   const { companies, activeCompany, setCompany, isCompanyRestricted } = useCompany();
   const { user } = useAuth();
 
@@ -48,6 +61,30 @@ export default function Layout() {
 
   const userRole = ['super_admin', 'admin', 'user'].includes(user?.role) ? user.role : 'user';
   const visibleNavItems = navItems.filter(item => item.roles.includes(userRole));
+  const canSeeBreakAlerts = canReceiveBreakTimeAlerts(user);
+  const activeCompanyId = activeCompany?.id;
+
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employees', activeCompanyId, 'break-time-alerts'],
+    queryFn: () => appApi.entities.Employee.filter({ status: 'active', company_profile_id: activeCompanyId }),
+    enabled: !!activeCompanyId && canSeeBreakAlerts,
+  });
+
+  const employeesNeedingBreakTime = useMemo(() => employeesMissingBreakTime(employees), [employees]);
+  const missingBreakTimeCount = employeesNeedingBreakTime.length;
+  const breakAlertKey = activeCompanyId && missingBreakTimeCount > 0
+    ? `break-time-alert:${activeCompanyId}:${missingBreakTimeCount}`
+    : '';
+
+  useEffect(() => {
+    if (!breakAlertKey || !canSeeBreakAlerts || dismissedBreakAlertKey === breakAlertKey) return;
+    setBreakAlertOpen(true);
+  }, [breakAlertKey, canSeeBreakAlerts, dismissedBreakAlertKey]);
+
+  const dismissBreakAlert = () => {
+    setDismissedBreakAlertKey(breakAlertKey);
+    setBreakAlertOpen(false);
+  };
 
   const SidebarContent = ({ mobile = false } = {}) => {
     const effectiveCollapsed = mobile ? false : collapsed;
@@ -109,25 +146,29 @@ export default function Layout() {
       </div>
 
       <nav className="flex-1 py-4 space-y-0.5 px-2 overflow-y-auto">
-        {visibleNavItems.map((item) => (
-          item.external ? (
-            <a
-              key={item.path}
+	        {visibleNavItems.map((item) => {
+            const showBreakBadge = item.path === '/work-schedule' && missingBreakTimeCount > 0;
+            const badgeLabel = missingBreakTimeCount > 99 ? '99+' : String(missingBreakTimeCount);
+
+            return (
+	          item.external ? (
+	            <a
+	              key={item.path}
               href={item.path}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setMobileOpen(false)}
               className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
+	                "relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
                 "text-muted-foreground hover:text-foreground hover:bg-muted border border-dashed border-border mt-2",
                 effectiveCollapsed && "justify-center px-2"
               )}
             >
-              <item.icon className="w-4 h-4 flex-shrink-0" />
-              {!effectiveCollapsed && <span>{item.label} ↗</span>}
-            </a>
-          ) : (
-            <NavLink
+	              <item.icon className="w-4 h-4 flex-shrink-0" />
+	              {!effectiveCollapsed && <span>{item.label} ↗</span>}
+	            </a>
+	          ) : (
+	            <NavLink
               key={item.path}
               to={item.path}
               end={item.path === '/'}
@@ -140,12 +181,23 @@ export default function Layout() {
                 effectiveCollapsed && "justify-center px-2"
               )}
             >
-              <item.icon className="w-4 h-4 flex-shrink-0" />
-              {!effectiveCollapsed && <span>{item.label}</span>}
-            </NavLink>
-          )
-        ))}
-      </nav>
+	              <item.icon className="w-4 h-4 flex-shrink-0" />
+	              {!effectiveCollapsed && <span className="flex-1">{item.label}</span>}
+                {showBreakBadge && (
+                  <Badge
+                    variant="destructive"
+                    className={cn(
+                      "h-5 min-w-5 px-1.5 justify-center rounded-full text-[10px] leading-none",
+                      effectiveCollapsed && "absolute -right-1 -top-1"
+                    )}
+                  >
+                    {badgeLabel}
+                  </Badge>
+                )}
+	            </NavLink>
+	          )
+          )})}
+	      </nav>
 
       <div className={cn("p-3 border-t border-border", effectiveCollapsed && "px-1")}>
         {user && !effectiveCollapsed && (
@@ -169,8 +221,48 @@ export default function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      {/* Desktop Sidebar */}
+	    <div className="flex h-screen bg-background overflow-hidden">
+        <Dialog open={breakAlertOpen} onOpenChange={setBreakAlertOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center">
+                  <AlertTriangle className="h-5 w-5 text-destructive" />
+                </div>
+                <div>
+                  <DialogTitle>Break time required</DialogTitle>
+                  <DialogDescription>
+                    {missingBreakTimeCount} active employee{missingBreakTimeCount === 1 ? ' needs' : 's need'} a lunch break schedule.
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="rounded-lg border border-border bg-muted/30 max-h-52 overflow-auto">
+              {employeesNeedingBreakTime.slice(0, 8).map(employee => (
+                <div key={employee.id} className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border last:border-0">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{employee.first_name} {employee.last_name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{employee.employee_id || 'No employee ID'}{employee.department ? ` · ${employee.department}` : ''}</p>
+                  </div>
+                  <Badge variant="destructive" className="text-[10px]">Missing</Badge>
+                </div>
+              ))}
+              {employeesNeedingBreakTime.length > 8 && (
+                <div className="px-3 py-2 text-xs text-muted-foreground">
+                  +{employeesNeedingBreakTime.length - 8} more employee{employeesNeedingBreakTime.length - 8 === 1 ? '' : 's'}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={dismissBreakAlert}>Dismiss</Button>
+              <Button asChild onClick={dismissBreakAlert}>
+                <NavLink to="/work-schedule">Set break times</NavLink>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+	      {/* Desktop Sidebar */}
       <aside className={cn(
         "hidden md:flex flex-col border-r border-border bg-card transition-all duration-300 flex-shrink-0",
         collapsed ? "w-14" : "w-56"

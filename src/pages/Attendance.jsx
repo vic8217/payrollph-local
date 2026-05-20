@@ -24,6 +24,7 @@ const statusColors = {
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 const BREAK_DURATION_MINUTES = 60;
+const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 
 const legacyShiftOptions = [
   { value: 'day_shift', label: 'Day Shift', shortLabel: 'Day' },
@@ -102,6 +103,18 @@ function scheduledBreakIn(employee, date) {
     : breakDate;
 
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
+}
+
+function isBreakTimeInMissing(log, employee, now = new Date()) {
+  if (!log?.time_in || log.break_time_in || !employee?.break_time) return false;
+
+  const autoBreak = scheduledBreak(employee, log.date);
+  if (!autoBreak?.break_time_out) return false;
+
+  const missingAfter = new Date(autoBreak.break_time_out);
+  missingAfter.setMinutes(missingAfter.getMinutes() + BREAK_TIME_IN_MISSING_AFTER_MINUTES);
+
+  return now.getTime() >= missingAfter.getTime();
 }
 
 const punchPhotoFields = [
@@ -570,6 +583,7 @@ function ShiftPasscodeModal({ log, shift, currentUser, activeCompanyId, onClose,
 export default function Attendance() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [filterDept, setFilterDept] = useState('all');
   const [editingLog, setEditingLog] = useState(null);
   const [pendingShiftEdit, setPendingShiftEdit] = useState(null);
@@ -580,6 +594,11 @@ export default function Attendance() {
   const { user: currentUser } = useAuth();
   const { activeCompanyId, activeCompany } = useCompany();
   const qc = useQueryClient();
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const baseWeek = new Date();
   const activePeriodConfig = getPayrollPeriodForDate(baseWeek, activeCompany, weekOffset);
@@ -1057,6 +1076,8 @@ export default function Attendance() {
                 ) : (
                   sortedLogs.map(log => {
                     const logWorkSchedule = getLogShiftValue(log);
+                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
+                    const breakTimeInMissing = isBreakTimeInMissing(log, logEmployee, currentTime);
                     const photoItems = attendancePhotoItems(log);
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
@@ -1086,6 +1107,8 @@ export default function Attendance() {
                         <td className="px-3 py-3 hidden lg:table-cell">
                           {log.break_time_in
                             ? <span className="text-teal-600 text-xs">{format(new Date(log.break_time_in), 'hh:mm a')}</span>
+                            : breakTimeInMissing
+                              ? <span className="text-amber-500 font-medium text-xs">Missing</span>
                             : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
                         <td className="px-3 py-3">
