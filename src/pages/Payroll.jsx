@@ -27,6 +27,12 @@ const generationStatusColors = {
   missing: 'bg-gray-100 text-gray-600',
 };
 
+function isCashAdvanceDeductibleForPeriod(ca, periodStartDate) {
+  const approvalDate = ca.approved_date || (ca.advance_type === 'beginning_balance' ? ca.request_date : null);
+  if (!approvalDate) return true;
+  return String(approvalDate).slice(0, 10) < periodStartDate;
+}
+
 export default function Payroll() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState(null);
@@ -150,7 +156,9 @@ export default function Payroll() {
     // Approved CAs that still have remaining deduction periods
     const postedCashAdvanceIds = new Set(existingLedger.map(row => row.cash_advance_id));
     const approvedCA = cashAdvances.filter(ca =>
-      (ca.status === 'approved' && (ca.deduction_periods_remaining == null || ca.deduction_periods_remaining > 0)) ||
+      (ca.status === 'approved' &&
+        (ca.deduction_periods_remaining == null || ca.deduction_periods_remaining > 0) &&
+        isCashAdvanceDeductibleForPeriod(ca, startStr)) ||
       postedCashAdvanceIds.has(ca.id)
     );
 
