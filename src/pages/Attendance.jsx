@@ -25,6 +25,7 @@ const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 const BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
+const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
 
 const legacyShiftOptions = [
   { value: 'day_shift', label: 'Day Shift', shortLabel: 'Day' },
@@ -114,6 +115,38 @@ function isBreakTimeInMissing(log, employee, now = new Date()) {
   const missingAfter = new Date(autoBreak.break_time_out);
   missingAfter.setMinutes(missingAfter.getMinutes() + BREAK_TIME_IN_MISSING_AFTER_MINUTES);
 
+  return now.getTime() >= missingAfter.getTime();
+}
+
+function legacyShiftTimes(value) {
+  if (value === 'night_shift') return { shift_start_time: '20:00', shift_end_time: '05:00' };
+  return { shift_start_time: '08:00', shift_end_time: '17:00' };
+}
+
+function scheduledShiftEnd(log, shift) {
+  if (!log?.date) return null;
+
+  const fallback = legacyShiftTimes(shift?.value);
+  const shiftStart = shift?.shift_start_time || fallback.shift_start_time;
+  const shiftEnd = shift?.shift_end_time || fallback.shift_end_time;
+  const [startHour, startMinute] = String(shiftStart).split(':').map(Number);
+  const [endHour, endMinute] = String(shiftEnd).split(':').map(Number);
+  if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return null;
+
+  const start = new Date(`${log.date}T${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}:00+08:00`);
+  const end = new Date(`${log.date}T${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}:00+08:00`);
+  if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
+  return end;
+}
+
+function isFinalTimeOutMissing(log, employee, shift, now = new Date()) {
+  if (!log?.time_in || log.time_out) return false;
+  if (employee?.break_time && !log.break_time_in) return false;
+
+  const shiftEnd = scheduledShiftEnd(log, shift);
+  if (!shiftEnd) return false;
+  const missingAfter = new Date(shiftEnd);
+  missingAfter.setMinutes(missingAfter.getMinutes() + FINAL_TIME_OUT_MISSING_AFTER_MINUTES);
   return now.getTime() >= missingAfter.getTime();
 }
 
@@ -1074,11 +1107,13 @@ export default function Attendance() {
                     No attendance records for this week.
                   </td></tr>
                 ) : (
-                  sortedLogs.map(log => {
-                    const logWorkSchedule = getLogShiftValue(log);
-                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
-                    const breakTimeInMissing = isBreakTimeInMissing(log, logEmployee, currentTime);
-                    const photoItems = attendancePhotoItems(log);
+	                  sortedLogs.map(log => {
+	                    const logWorkSchedule = getLogShiftValue(log);
+	                    const logShift = getShiftOption(shiftOptions, logWorkSchedule, defaultShiftValue);
+	                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
+	                    const breakTimeInMissing = isBreakTimeInMissing(log, logEmployee, currentTime);
+	                    const finalTimeOutMissing = isFinalTimeOutMissing(log, logEmployee, logShift, currentTime);
+	                    const photoItems = attendancePhotoItems(log);
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
@@ -1111,11 +1146,13 @@ export default function Attendance() {
                               ? <span className="text-amber-500 font-medium text-xs">Missing</span>
                             : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
-                        <td className="px-3 py-3">
-                          {log.time_out
-                            ? <span className="text-blue-600 text-xs">{format(new Date(log.time_out), 'hh:mm a')}</span>
-                            : <span className="text-amber-500 font-medium text-xs">Missing</span>}
-                        </td>
+	                        <td className="px-3 py-3">
+	                          {log.time_out
+	                            ? <span className="text-blue-600 text-xs">{format(new Date(log.time_out), 'hh:mm a')}</span>
+	                            : finalTimeOutMissing
+	                              ? <span className="text-amber-500 font-medium text-xs">Missing</span>
+	                              : <span className="text-muted-foreground text-xs">—</span>}
+	                        </td>
                         <td className="px-3 py-3 text-xs">{log.hours_worked || '—'}</td>
                         <td className="px-3 py-3 text-xs hidden md:table-cell">{log.overtime_hours > 0 ? `${log.overtime_hours}h` : '—'}</td>
                         <td className="px-3 py-3 text-xs hidden md:table-cell">{log.night_diff_hours > 0 ? `${log.night_diff_hours}h` : '—'}</td>
