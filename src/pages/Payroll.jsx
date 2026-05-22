@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useCompany } from '@/lib/CompanyContext';
 import { computeWeeklyPayroll } from '@/lib/payrollUtils';
 import { getPayrollPeriodForDate, getPayrollPeriodName } from '@/lib/payrollPeriod';
+import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
 import PayslipView from '@/components/payroll/PayslipView';
 import GrossBreakdownDialog from '@/components/payroll/GrossBreakdownDialog';
 
@@ -141,9 +142,16 @@ export default function Payroll() {
 
     const activeEmployees = employees.filter(e => e.status === 'active');
     const allLogs = await appApi.entities.AttendanceLog.list('-date', 1000);
+    const existingLedger = await appApi.entities.CashAdvanceLedger.filter({
+      company_profile_id: activeCompanyId,
+      payroll_period_id: period.id,
+      transaction_type: 'deduction',
+    });
     // Approved CAs that still have remaining deduction periods
+    const postedCashAdvanceIds = new Set(existingLedger.map(row => row.cash_advance_id));
     const approvedCA = cashAdvances.filter(ca =>
-      ca.status === 'approved' && (ca.deduction_periods_remaining == null || ca.deduction_periods_remaining > 0)
+      (ca.status === 'approved' && (ca.deduction_periods_remaining == null || ca.deduction_periods_remaining > 0)) ||
+      postedCashAdvanceIds.has(ca.id)
     );
 
     // Block payroll if any approved CA is missing deduction setup
@@ -198,14 +206,20 @@ export default function Payroll() {
       const empCAs = approvedCA.filter(ca => ca.employee_id === emp.employee_id);
       // Sum up the per-payroll deduction amounts for this period, capped by remaining balance when available.
       const caDeductions = empCAs.map(ca => {
+        const posted = existingLedger.find(row => row.cash_advance_id === ca.id);
         const scheduledDeduction = ca.deduction_amount_per_payroll || 0;
         const remainingBalance = ca.remaining_balance != null
           ? ca.remaining_balance
           : scheduledDeduction * (ca.deduction_periods_remaining || ca.deduction_payroll_periods || 0);
+        const totalPeriods = Number(ca.deduction_payroll_periods) || Number(ca.deduction_periods_remaining) || 1;
+        const currentRemaining = ca.deduction_periods_remaining != null ? ca.deduction_periods_remaining : totalPeriods;
+        const deductionNumber = posted?.deduction_number || Math.min(totalPeriods, Math.max(1, totalPeriods - currentRemaining + 1));
         return {
           ca,
-          amount: Math.min(scheduledDeduction, Math.max(remainingBalance, 0)),
+          amount: posted ? posted.amount : Math.min(scheduledDeduction, Math.max(remainingBalance, 0)),
           remainingBalance,
+          posted,
+          deductionNumber,
         };
       });
       const caDeductionThisPeriod = caDeductions.reduce((sum, item) => sum + item.amount, 0);
@@ -237,19 +251,27 @@ export default function Payroll() {
         ...computed,
       };
 
-      if (existing.length > 0) {
-        await appApi.entities.PayrollRecord.update(existing[0].id, recordData);
-      } else {
-        await appApi.entities.PayrollRecord.create(recordData);
-      }
+      const payrollRecord = existing.length > 0
+        ? await appApi.entities.PayrollRecord.update(existing[0].id, recordData)
+        : await appApi.entities.PayrollRecord.create(recordData);
 
       // Decrement remaining periods for each CA; mark as 'deducted' when exhausted
-      for (const { ca, amount, remainingBalance } of caDeductions) {
+      for (const { ca, amount, remainingBalance, posted, deductionNumber } of caDeductions) {
+        if (posted || !(amount > 0)) continue;
         const nextBalance = parseFloat(Math.max(remainingBalance - amount, 0).toFixed(2));
         const remaining = nextBalance <= 0
           ? 0
           : Math.max((ca.deduction_periods_remaining != null ? ca.deduction_periods_remaining : ca.deduction_payroll_periods) - 1, 1);
         const newStatus = nextBalance <= 0 ? 'deducted' : 'approved';
+        await createCashAdvanceDeductionLedger({
+          advance: ca,
+          amount,
+          balanceBefore: remainingBalance,
+          balanceAfter: nextBalance,
+          payrollPeriod: period,
+          payrollRecordId: payrollRecord.id,
+          deductionNumber,
+        });
         await appApi.entities.CashAdvance.update(ca.id, {
           remaining_balance: nextBalance,
           deduction_periods_remaining: remaining,
@@ -271,6 +293,7 @@ export default function Payroll() {
     });
 
     qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+    qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
     setSelectedPeriod({ ...period });
     setGenerating(false);
   };

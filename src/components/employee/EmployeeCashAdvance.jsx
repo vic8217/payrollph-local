@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useCompany } from '@/lib/CompanyContext';
 import { buildCashAdvanceAgreementTagalogText, buildCashAdvanceAgreementText, CASH_ADVANCE_PAYMENT_DAYS, MASTER_CASH_ADVANCE_AGREEMENT_VERSION } from '@/lib/cashAdvanceAgreement';
+import { ensureCashAdvanceAdditionLedger, ensureCashAdvanceBeginningLedger } from '@/lib/cashAdvanceLedger';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CreditCard, Plus, AlertTriangle, Paperclip, ChevronDown, ChevronUp, HeartPulse, Camera, FileImage, Sparkles, X, HandCoins, CheckCircle2, Briefcase, Loader2, CalendarDays, Languages } from 'lucide-react';
 import DeductionScheduleView from '@/components/cashadvance/DeductionScheduleView';
@@ -49,6 +50,12 @@ const STATUS_RANK = {
   deducted: 4,
 };
 
+const ledgerTypeLabels = {
+  beginning: 'Beginning Advance',
+  addition: 'Advance Availed',
+  deduction: 'Payroll Deduction',
+};
+
 export default function EmployeeCashAdvance({ employee }) {
   const [showForm, setShowForm] = useState(false);
   const [showEmergencyMenu, setShowEmergencyMenu] = useState(false);
@@ -94,6 +101,15 @@ export default function EmployeeCashAdvance({ employee }) {
     staleTime: 0,
   });
 
+  const { data: ledgerRows = [] } = useQuery({
+    queryKey: ['cashAdvanceLedger', employee?.employee_id],
+    queryFn: () => appApi.entities.CashAdvanceLedger.filter({ employee_id: employee.employee_id }, 'transaction_date', 1000),
+    enabled: !!employee,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+
   const advances = Object.values(rawAdvances.reduce((byRequest, ca) => {
     const key = [
       ca.employee_id,
@@ -110,6 +126,21 @@ export default function EmployeeCashAdvance({ employee }) {
     }
     return byRequest;
   }, {}));
+
+  useEffect(() => {
+    if (!rawAdvances.length) return;
+    const approved = rawAdvances.filter(ca => ['approved', 'deducted'].includes(ca.status));
+    if (!approved.length) return;
+
+    Promise.all(
+      approved.map(ca => ca.advance_type === 'beginning_balance'
+        ? ensureCashAdvanceBeginningLedger(ca)
+        : ensureCashAdvanceAdditionLedger(ca)
+      )
+    ).then(() => {
+      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger', employee?.employee_id] });
+    }).catch(() => {});
+  }, [rawAdvances, employee?.employee_id, qc]);
 
   // Current payroll period follows the employee's active company settings.
   const today = new Date();
@@ -623,7 +654,66 @@ export default function EmployeeCashAdvance({ employee }) {
 
       {/* Deduction Schedule */}
       {activeTab === 'deductions' && (
-        <DeductionScheduleView cashAdvances={advances} employeeMode={true} />
+        <div className="space-y-4">
+          <DeductionScheduleView cashAdvances={advances} employeeMode={true} />
+
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Transaction Ledger</p>
+            {ledgerRows.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground text-sm border border-border rounded-lg">
+                No cash advance ledger entries yet.
+              </div>
+            ) : (
+              <Card className="border border-border shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-muted/40 border-b border-border">
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Date</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Transaction</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Particulars</th>
+                        <th className="text-center px-3 py-2 font-medium text-muted-foreground">Deduction</th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground">Addition</th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground">Deduction</th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...ledgerRows]
+                        .sort((a, b) => `${a.transaction_date || ''}${a.created_date || ''}`.localeCompare(`${b.transaction_date || ''}${b.created_date || ''}`))
+                        .map(row => {
+                          const isDeduction = row.transaction_type === 'deduction';
+                          return (
+                            <tr key={row.id} className="border-b border-border last:border-0">
+                              <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{row.transaction_date || '—'}</td>
+                              <td className="px-3 py-2 font-medium text-foreground">{ledgerTypeLabels[row.transaction_type] || row.transaction_type}</td>
+                              <td className="px-3 py-2 text-muted-foreground min-w-48">
+                                {row.period_name ? `${row.period_name} — ` : ''}{row.description || '—'}
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                {isDeduction && row.deduction_number && row.deduction_total
+                                  ? `${row.deduction_number} of ${row.deduction_total}`
+                                  : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium text-green-700">
+                                {!isDeduction ? `₱${(row.amount || 0).toLocaleString()}` : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium text-destructive">
+                                {isDeduction ? `₱${(row.amount || 0).toLocaleString()}` : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-right font-semibold text-foreground">
+                                ₱{(row.balance_after || 0).toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </div>
+        </div>
       )}
 
       {/* History */}

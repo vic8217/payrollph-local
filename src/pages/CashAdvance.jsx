@@ -1,9 +1,10 @@
 // @ts-nocheck
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays } from 'lucide-react';
+import { Plus, CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
+import { ensureCashAdvanceAdditionLedger, ensureCashAdvanceBeginningLedger, ensureCashAdvanceDeductionBackfill } from '@/lib/cashAdvanceLedger';
 import DeductionScheduleView from '@/components/cashadvance/DeductionScheduleView';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,8 +29,33 @@ const getCashAdvanceBalance = (ca) => ca.remaining_balance != null
   : (ca.amount_approved || ca.amount_requested || 0);
 
 const isActiveCashAdvance = (ca) => ['pending', 'approved_by_hr', 'approved'].includes(ca.status);
+const isOutstandingCashAdvance = (ca) => ca.status === 'approved';
 const countsAgainstRegularLimit = (ca) =>
   isActiveCashAdvance(ca) && ca.advance_type !== 'emergency' && ca.advance_type !== 'beginning_balance';
+
+const ledgerTypeLabels = {
+  beginning: 'Beginning Advance',
+  addition: 'Advance Availed',
+  deduction: 'Payroll Deduction',
+};
+
+const ledgerSortKey = (row) => `${row.transaction_date || ''}${row.created_date || ''}${row.id || ''}`;
+
+function withEmployeeRunningBalances(rows) {
+  let runningBalance = 0;
+  const chronologicalRows = [...rows].sort((a, b) => ledgerSortKey(a).localeCompare(ledgerSortKey(b)));
+
+  return chronologicalRows
+    .map(row => {
+      const amount = Number(row.amount) || 0;
+      runningBalance += row.transaction_type === 'deduction' ? -amount : amount;
+      return {
+        ...row,
+        employee_running_balance: parseFloat(Math.max(runningBalance, 0).toFixed(2)),
+      };
+    })
+    .reverse();
+}
 
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
@@ -85,7 +111,7 @@ export default function CashAdvance() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ amount_requested: '', reason: '', needed_date: '' });
   const [filterStatus, setFilterStatus] = useState('all');
-  const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'schedule'
+  const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'schedule' | 'ledger'
   const [notesDialog, setNotesDialog] = useState(null); // { id, type, amount_approved }
   const [notesText, setNotesText] = useState('');
   const [deductionPeriods, setDeductionPeriods] = useState('1');
@@ -93,6 +119,9 @@ export default function CashAdvance() {
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState('');
   const [expandedEmployee, setExpandedEmployee] = useState(null);
+  const [employeeSearchInput, setEmployeeSearchInput] = useState('');
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [selectedLedgerEmployeeId, setSelectedLedgerEmployeeId] = useState(null);
   const { user } = useAuth();
   const qc = useQueryClient();
 
@@ -125,6 +154,40 @@ export default function CashAdvance() {
     staleTime: 0,
   });
 
+  const { data: cashAdvanceLedger = [] } = useQuery({
+    queryKey: ['cashAdvanceLedger', activeCompanyId, employees.map(e => e.employee_id).join('|')],
+    queryFn: async () => {
+      const all = await entities.filter('CashAdvanceLedger', {}, '-transaction_date', 2000);
+      const employeeIds = new Set(employees.map(e => e.employee_id));
+      return all.filter(row =>
+        row.company_profile_id === activeCompanyId ||
+        (!row.company_profile_id && employeeIds.has(row.employee_id))
+      );
+    },
+    enabled: !!activeCompanyId && employees.length > 0,
+    refetchOnMount: 'always',
+    staleTime: 0,
+  });
+
+  useEffect(() => {
+    if (!cashAdvances.length) return;
+    const approved = cashAdvances.filter(ca => ['approved', 'deducted'].includes(ca.status));
+    if (!approved.length) return;
+
+    Promise.all(
+      approved.map(async (ca) => {
+        if (ca.advance_type === 'beginning_balance') {
+          await ensureCashAdvanceBeginningLedger(ca);
+        } else {
+          await ensureCashAdvanceAdditionLedger(ca);
+        }
+        await ensureCashAdvanceDeductionBackfill(ca);
+      })
+    ).then(() => {
+      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
+    }).catch(() => {});
+  }, [cashAdvances, qc]);
+
   const { data: dailyPasscodes = [] } = useQuery({
     queryKey: ['dailyPasscodes', activeCompanyId],
     queryFn: () => entities.filter('DailyPasscode', { company_profile_id: activeCompanyId }, '-date', 1),
@@ -141,8 +204,16 @@ export default function CashAdvance() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => entities.update('CashAdvance', id, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cashAdvances'] }); setNotesDialog(null); },
+    mutationFn: async ({ id, data, createAdditionLedger = false }) => {
+      const updated = await entities.update('CashAdvance', id, data);
+      if (createAdditionLedger) await ensureCashAdvanceAdditionLedger(updated);
+      return updated;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cashAdvances'] });
+      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
+      setNotesDialog(null);
+    },
   });
 
   const handleSubmit = (e) => {
@@ -197,9 +268,11 @@ export default function CashAdvance() {
       const perPayroll = parseFloat((approved / periods).toFixed(2));
       updateMutation.mutate({
         id,
+        createAdditionLedger: true,
         data: {
           status: 'approved',
           amount_approved: approved,
+          approved_date: todayStr,
           remaining_balance: approved,
           deduction_payroll_periods: periods,
           deduction_amount_per_payroll: perPayroll,
@@ -222,19 +295,55 @@ export default function CashAdvance() {
   const employeeSummary = employees
     .filter(e => e.status === 'active')
     .map(e => {
-      const empAdvances = cashAdvances.filter(ca => ca.employee_id === e.employee_id);
-      const activeBalance = empAdvances
-        .filter(isActiveCashAdvance)
-        .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+	      const empAdvances = cashAdvances.filter(ca => ca.employee_id === e.employee_id);
+	      const activeBalance = empAdvances
+	        .filter(isOutstandingCashAdvance)
+	        .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
       const regularLimitBalance = empAdvances
         .filter(countsAgainstRegularLimit)
         .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
       return { ...e, empAdvances, activeBalance, regularLimitBalance };
     })
     .filter(e => e.empAdvances.length > 0 || e.max_cash_advance > 0);
+  const normalizedEmployeeSearch = employeeSearch.trim().toLowerCase();
+  const visibleEmployeeSummary = normalizedEmployeeSearch
+    ? employeeSummary.filter(e => [
+        e.employee_id,
+        e.first_name,
+        e.middle_name,
+        e.last_name,
+        `${e.first_name || ''} ${e.middle_name || ''} ${e.last_name || ''}`,
+        e.department,
+      ].filter(Boolean).join(' ').toLowerCase().includes(normalizedEmployeeSearch))
+    : employeeSummary;
+
+  const sortedLedger = [...cashAdvanceLedger]
+    .sort((a, b) => ledgerSortKey(b).localeCompare(ledgerSortKey(a)));
+  const selectedLedgerEmployee = employees.find(e => e.employee_id === selectedLedgerEmployeeId);
+  const visibleLedgerRows = selectedLedgerEmployeeId
+    ? sortedLedger.filter(row => row.employee_id === selectedLedgerEmployeeId)
+    : sortedLedger;
+  const ledgerByEmployee = visibleLedgerRows.reduce((groups, row) => {
+    const key = row.employee_id || row.employee_name || 'unknown';
+    if (!groups[key]) {
+      groups[key] = {
+        employeeName: row.employee_name || row.employee_id || 'Unknown Employee',
+        employeeId: row.employee_id,
+        rows: [],
+      };
+    }
+    groups[key].rows.push(row);
+    return groups;
+  }, {});
+  const employeeLedgerGroups = Object.values(ledgerByEmployee)
+    .map(group => ({
+      ...group,
+      rows: withEmployeeRunningBalances(group.rows),
+    }))
+    .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
 
   return (
-    <div className="p-6 space-y-5 max-w-5xl mx-auto">
+    <div className="p-6 space-y-5 max-w-7xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Cash Advance (Vale)</h1>
@@ -250,6 +359,10 @@ export default function CashAdvance() {
               onClick={() => setActiveTab('schedule')}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'schedule' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             ><CalendarDays className="w-3.5 h-3.5" />Deduction Schedule</button>
+            <button
+              onClick={() => { setSelectedLedgerEmployeeId(null); setActiveTab('ledger'); }}
+              className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'ledger' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            ><CreditCard className="w-3.5 h-3.5" />Ledger</button>
           </div>
           <Select value={filterStatus} onValueChange={setFilterStatus}>
             <SelectTrigger className="w-40 h-8 text-sm"><SelectValue /></SelectTrigger>
@@ -284,7 +397,26 @@ export default function CashAdvance() {
       {/* Employee Summary Table */}
       {employeeSummary.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Employee Summary</p>
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Employee Summary</p>
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setEmployeeSearch(employeeSearchInput);
+              }}
+            >
+              <Input
+                value={employeeSearchInput}
+                onChange={(e) => setEmployeeSearchInput(e.target.value)}
+                placeholder="Search employee"
+                className="h-8 w-56 text-sm"
+              />
+              <Button type="submit" size="sm" variant="outline" className="h-8 gap-1.5">
+                <Search className="w-3.5 h-3.5" /> Search
+              </Button>
+            </form>
+          </div>
           <Card className="border border-border shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -295,14 +427,21 @@ export default function CashAdvance() {
                     <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Limit</th>
                     <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Active Balance</th>
                     <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Remaining</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Ledger</th>
                     <th className="px-4 py-2.5"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {employeeSummary.map(e => {
+                  {visibleEmployeeSummary.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">No employees match your search.</td>
+                    </tr>
+                  )}
+                  {visibleEmployeeSummary.map(e => {
                     const limit = e.max_cash_advance || 0;
                     const remaining = Math.max(0, limit - e.regularLimitBalance);
                     const isExpanded = expandedEmployee === e.employee_id;
+                    const hasLedger = cashAdvanceLedger.some(row => row.employee_id === e.employee_id);
                     return (
                       <>
                         <tr key={e.employee_id} className="border-b border-border last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedEmployee(isExpanded ? null : e.employee_id)}>
@@ -312,6 +451,21 @@ export default function CashAdvance() {
                           <td className="px-4 py-3 text-right font-medium text-amber-600">₱{e.activeBalance.toLocaleString()}</td>
                           <td className="px-4 py-3 text-right font-medium text-green-600">₱{remaining.toLocaleString()}</td>
                           <td className="px-4 py-3 text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1.5"
+                              disabled={!hasLedger}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedLedgerEmployeeId(e.employee_id);
+                                setActiveTab('ledger');
+                              }}
+                            >
+                              <CreditCard className="w-3.5 h-3.5" /> View Ledger
+                            </Button>
+                          </td>
+                          <td className="px-4 py-3 text-right">
                             {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground inline" /> : <ChevronDown className="w-4 h-4 text-muted-foreground inline" />}
                           </td>
                         </tr>
@@ -319,7 +473,7 @@ export default function CashAdvance() {
                           <tr key={ca.id} className="bg-muted/30 border-b border-border last:border-0">
                             <td className="px-6 py-2 text-xs text-muted-foreground" colSpan={2}>{ca.reason}</td>
                             <td className="px-4 py-2 text-xs text-right text-foreground">₱{(ca.amount_requested || 0).toLocaleString()}</td>
-                            <td className="px-4 py-2 text-xs text-right" colSpan={2}>
+                            <td className="px-4 py-2 text-xs text-right" colSpan={3}>
                               <Badge variant="outline" className={`text-xs ${statusColors[ca.status]}`}>{ca.status?.replace(/_/g, ' ')}</Badge>
                             </td>
                             <td className="px-4 py-2 text-xs text-right text-muted-foreground">{ca.request_date}</td>
@@ -327,7 +481,7 @@ export default function CashAdvance() {
                         ))}
                         {isExpanded && e.empAdvances.length === 0 && (
                           <tr className="bg-muted/30">
-                            <td colSpan={6} className="px-6 py-2 text-xs text-muted-foreground">No requests yet.</td>
+                            <td colSpan={7} className="px-6 py-2 text-xs text-muted-foreground">No requests yet.</td>
                           </tr>
                         )}
                       </>
@@ -342,6 +496,97 @@ export default function CashAdvance() {
 
       {/* Deduction Schedule Tab */}
       {activeTab === 'schedule' && <DeductionScheduleView cashAdvances={cashAdvances} />}
+
+      {/* Ledger Tab */}
+      {activeTab === 'ledger' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Cash Advance Transaction Ledger</p>
+              {selectedLedgerEmployeeId && (
+                <p className="text-sm font-medium text-foreground mt-1">
+                  {selectedLedgerEmployee
+                    ? `${selectedLedgerEmployee.first_name} ${selectedLedgerEmployee.last_name}`
+                    : selectedLedgerEmployeeId}
+                </p>
+              )}
+            </div>
+            {selectedLedgerEmployeeId && (
+              <Button size="sm" variant="outline" onClick={() => setSelectedLedgerEmployeeId(null)}>
+                View All Employees
+              </Button>
+            )}
+          </div>
+          {employeeLedgerGroups.length === 0 ? (
+            <div className="text-center py-16 text-muted-foreground text-sm border border-border rounded-lg">
+              No cash advance ledger entries yet.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {employeeLedgerGroups.map(group => {
+                const latestBalance = group.rows[0]?.employee_running_balance || 0;
+                return (
+                  <Card key={group.employeeId || group.employeeName} className="border border-border shadow-sm overflow-hidden">
+                    <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-foreground text-sm">{group.employeeName}</p>
+                        {group.employeeId && <p className="text-xs text-muted-foreground">{group.employeeId}</p>}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">Current balance</p>
+                        <p className="font-bold text-amber-600 text-sm">₱{latestBalance.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-muted/50 border-b border-border">
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Date</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Transaction</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Particulars</th>
+                            <th className="text-center px-3 py-2 font-medium text-muted-foreground">Deduction</th>
+                            <th className="text-right px-3 py-2 font-medium text-muted-foreground">Addition</th>
+                            <th className="text-right px-3 py-2 font-medium text-muted-foreground">Deduction</th>
+                            <th className="text-right px-3 py-2 font-medium text-muted-foreground">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.rows.map(row => {
+                            const isDeduction = row.transaction_type === 'deduction';
+                            return (
+                              <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                                <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{row.transaction_date || '—'}</td>
+                                <td className="px-3 py-2 text-foreground whitespace-nowrap">{ledgerTypeLabels[row.transaction_type] || row.transaction_type}</td>
+                                <td className="px-3 py-2 text-muted-foreground min-w-56">
+                                  {row.period_name ? `${row.period_name} — ` : ''}{row.description || '—'}
+                                </td>
+                                <td className="px-3 py-2 text-center whitespace-nowrap">
+                                  {isDeduction && row.deduction_number && row.deduction_total
+                                    ? `${row.deduction_number} of ${row.deduction_total}`
+                                    : '—'}
+                                </td>
+                                <td className="px-3 py-2 text-right font-medium text-green-700 whitespace-nowrap">
+                                  {!isDeduction ? `₱${(row.amount || 0).toLocaleString()}` : '—'}
+                                </td>
+                                <td className="px-3 py-2 text-right font-medium text-destructive whitespace-nowrap">
+                                  {isDeduction ? `₱${(row.amount || 0).toLocaleString()}` : '—'}
+                                </td>
+                                <td className="px-3 py-2 text-right font-semibold text-foreground whitespace-nowrap">
+                                  ₱{(row.employee_running_balance || 0).toLocaleString()}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {activeTab === 'requests' && isLoading ? (
         <div className="flex justify-center py-16">

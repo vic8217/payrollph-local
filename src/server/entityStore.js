@@ -4,6 +4,7 @@ import { prisma } from "./prisma";
 const ENTITY_NAMES = new Set([
   "AttendanceLog",
   "CashAdvance",
+  "CashAdvanceLedger",
   "CompanyPolicy",
   "CompanyProfile",
   "DailyPasscode",

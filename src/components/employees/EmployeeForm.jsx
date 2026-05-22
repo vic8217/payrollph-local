@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { appApi } from '@/lib/appApi';
+import { ensureCashAdvanceBeginningLedger } from '@/lib/cashAdvanceLedger';
 import { useCompany } from '@/lib/CompanyContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -192,11 +193,13 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
     });
     const beginningAdvance = existing.find(ca => ca.advance_type === 'beginning_balance');
 
+    let syncedAdvance;
     if (beginningAdvance?.id) {
-      await appApi.entities.CashAdvance.update(beginningAdvance.id, payload);
+      syncedAdvance = await appApi.entities.CashAdvance.update(beginningAdvance.id, payload);
     } else {
-      await appApi.entities.CashAdvance.create(payload);
+      syncedAdvance = await appApi.entities.CashAdvance.create(payload);
     }
+    await ensureCashAdvanceBeginningLedger(syncedAdvance);
   };
 
   const handleSubmit = async (e) => {

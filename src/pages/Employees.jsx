@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { appApi } from '@/lib/appApi';
+import { ensureCashAdvanceBeginningLedger } from '@/lib/cashAdvanceLedger';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
 import { Plus, Search, Edit2, Archive, CreditCard, FileText, Upload, Download, UserMinus, RotateCcw } from 'lucide-react';
@@ -124,7 +125,7 @@ export default function Employees() {
 
             if (beginningBalance > 0) {
               const payrollWeeks = weeklyDeduction > 0 ? Math.ceil(beginningBalance / weeklyDeduction) : 0;
-              await appApi.entities.CashAdvance.create({
+              const beginningAdvance = await appApi.entities.CashAdvance.create({
                 employee_id: emp.employee_id,
                 employee_name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
                 department: emp.department,
@@ -141,6 +142,7 @@ export default function Employees() {
                 status: 'approved',
                 company_profile_id: activeCompanyId,
               });
+              await ensureCashAdvanceBeginningLedger(beginningAdvance);
             }
         }
 
