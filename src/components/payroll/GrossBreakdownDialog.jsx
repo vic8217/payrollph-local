@@ -12,12 +12,26 @@ function Row({ label, value, bold, negative, highlight }) {
   );
 }
 
+function formatDate(value) {
+  if (!value) return 'No date';
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00+08:00`);
+  if (!Number.isFinite(date.getTime())) return String(value).slice(0, 10);
+  return date.toLocaleDateString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 export default function GrossBreakdownDialog({ record, open, onClose }) {
   if (!record) return null;
 
-  const dailyRate = record.basic_pay && record.regular_days > 0
+  const dailyRate = record.daily_rate || (record.basic_pay && record.regular_days > 0
     ? (record.basic_pay / record.regular_days)
-    : null;
+    : null);
+  const cashAdvanceDetails = Array.isArray(record.cash_advance_deduction_details)
+    ? record.cash_advance_deduction_details
+    : [];
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -71,6 +85,7 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
           )}
           {record.overtime_pay > 0 && <Row label="Overtime Pay" value={record.overtime_pay} />}
           {record.holiday_pay > 0 && <Row label="Holiday Pay" value={record.holiday_pay} />}
+          {record.incentive_pay > 0 && <Row label="Incentives" value={record.incentive_pay} />}
           <Separator className="my-1" />
           <Row label="Gross Pay" value={record.gross_pay} bold highlight />
         </div>
@@ -87,7 +102,35 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
           {record.late_deduction > 0 && <Row label="Late Deduction" value={record.late_deduction} negative />}
           {record.undertime_deduction > 0 && <Row label="Undertime Deduction" value={record.undertime_deduction} negative />}
           {record.absent_deduction > 0 && <Row label="Absent Deduction" value={record.absent_deduction} negative />}
-          {record.cash_advance_deduction > 0 && <Row label="Cash Advance (Vale)" value={record.cash_advance_deduction} negative />}
+          {record.cash_advance_deduction > 0 && (
+            <>
+              <Row label="Cash Advance (Vale)" value={record.cash_advance_deduction} negative />
+              {cashAdvanceDetails.length > 0 && (
+                <div className="mt-1 space-y-2">
+                  {cashAdvanceDetails.map((detail, index) => (
+                    <div key={`${detail.cash_advance_id || 'ca'}-${index}`} className="rounded-md border border-border bg-muted/30 px-3 py-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-medium text-foreground">
+                            {detail.description || 'Cash advance'}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Advance: {formatDate(detail.request_date)} · Deducted: {formatDate(detail.deduction_date)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Deduction {detail.deduction_number || '?'} of {detail.deduction_total || '?'} · {detail.deductions_remaining || 0} left · Balance ₱{(detail.balance_after || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <span className="text-xs font-mono text-destructive whitespace-nowrap">
+                          -₱{(detail.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
           <Separator className="my-1" />
           <Row label="Total Deductions" value={record.total_deductions} bold negative />
         </div>

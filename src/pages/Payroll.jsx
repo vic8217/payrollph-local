@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Play, CheckCircle2, FileText, Printer, History, X, Search } from 'lucide-react';
+import { Play, CheckCircle2, FileText, Printer, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { useCompany } from '@/lib/CompanyContext';
 import { computeWeeklyPayroll } from '@/lib/payrollUtils';
 import { getPayrollPeriodForDate, getPayrollPeriodName } from '@/lib/payrollPeriod';
@@ -33,13 +34,92 @@ function isCashAdvanceDeductibleForPeriod(ca, periodStartDate) {
   return String(approvalDate).slice(0, 10) < periodStartDate;
 }
 
+function money(value) {
+  return parseFloat((Number(value) || 0).toFixed(2));
+}
+
+function dateRange(startDate, endDate) {
+  const dates = [];
+  const current = new Date(`${startDate}T00:00:00+08:00`);
+  const end = new Date(`${endDate}T00:00:00+08:00`);
+  while (current <= end) {
+    dates.push(format(current, 'yyyy-MM-dd'));
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
+
+function expectedRegularWorkDates(startDate, endDate, noWorkDays, holidays) {
+  const noWorkDaySet = new Set(noWorkDays.map(day => day.date));
+  const holidaySet = new Set(holidays.map(holiday => holiday.date));
+  return dateRange(startDate, endDate).filter(date => {
+    const day = new Date(`${date}T00:00:00+08:00`).getDay();
+    return day !== 0 && !noWorkDaySet.has(date) && !holidaySet.has(date);
+  });
+}
+
+function isCompleteRegularDay(log) {
+  return log?.status === 'approved' &&
+    !log.is_absent &&
+    (log.day_type || 'regular') === 'regular' &&
+    log.time_in &&
+    log.time_out &&
+    (Number(log.late_minutes) || 0) <= 0 &&
+    (Number(log.hours_worked) || 0) >= 8;
+}
+
+function getIncentiveSettings(employee) {
+  const settings = employee?.incentive_settings || {};
+  return {
+    attendance: {
+      enabled: Boolean(settings.attendance?.enabled),
+      amount: settings.attendance?.amount ?? '',
+    },
+    special_programs: Array.isArray(settings.special_programs) ? settings.special_programs : [],
+  };
+}
+
+function automaticIncentivesForEmployee(employee, logs, periodStartDate, periodEndDate, noWorkDays, holidays) {
+  const settings = getIncentiveSettings(employee);
+  const details = [];
+  const logsByDate = new Map(logs.map(log => [log.date, log]));
+  const expectedWorkDates = expectedRegularWorkDates(periodStartDate, periodEndDate, noWorkDays, holidays);
+  const attendanceEligible = expectedWorkDates.length > 0 &&
+    expectedWorkDates.every(date => isCompleteRegularDay(logsByDate.get(date)));
+
+  if (settings.attendance.enabled && Number(settings.attendance.amount) > 0 && attendanceEligible) {
+    details.push({
+      type: 'attendance',
+      program_name: 'No Absence / No Late',
+      reason: 'Automatic attendance incentive',
+      amount: money(settings.attendance.amount),
+      source: 'employee_setup',
+    });
+  }
+
+  settings.special_programs
+    .filter(program => Number(program.amount) > 0)
+    .forEach(program => {
+      details.push({
+        id: program.id,
+        type: 'special',
+        program_name: program.program_name,
+        reason: program.reason || 'Automatic special incentive',
+        amount: money(program.amount),
+        source: 'employee_setup',
+      });
+    });
+
+  return details;
+}
+
 export default function Payroll() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState(null);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [reviewRecord, setReviewRecord] = useState(null);
+  const [employeeSearch, setEmployeeSearch] = useState('');
   const [generating, setGenerating] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
   const [incompleteLogsError, setIncompleteLogsError] = useState(null); // { employeeName, date }[]
   const [pendingAttendanceError, setPendingAttendanceError] = useState(null); // { employeeName, count }[]
   const qc = useQueryClient();
@@ -82,12 +162,25 @@ export default function Payroll() {
   });
 
   const approvePeriod = useMutation({
-    mutationFn: ({ id, status }) => appApi.entities.PayrollPeriod.update(id, { status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['payrollPeriods'] }),
+    mutationFn: async ({ id, status }) => {
+      const updatedPeriod = await appApi.entities.PayrollPeriod.update(id, { status });
+      const periodRecords = await appApi.entities.PayrollRecord.filter({ payroll_period_id: id, company_profile_id: activeCompanyId });
+      await Promise.all(periodRecords.map(record =>
+        appApi.entities.PayrollRecord.update(record.id, { status })
+      ));
+      return updatedPeriod;
+    },
+    onSuccess: (updatedPeriod) => {
+      qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+      qc.invalidateQueries({ queryKey: ['payrollRecords'] });
+      setSelectedPeriod(previous => previous?.id === updatedPeriod.id ? { ...previous, ...updatedPeriod } : updatedPeriod);
+    },
   });
 
   const generatePayroll = async () => {
     if (weekStart > new Date()) return;
+    const existingTargetPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
+    if (existingTargetPeriod?.status === 'released') return;
     setGenerating(true);
     setIncompleteLogsError(null);
     setPendingAttendanceError(null);
@@ -231,6 +324,27 @@ export default function Payroll() {
         };
       });
       const caDeductionThisPeriod = caDeductions.reduce((sum, item) => sum + item.amount, 0);
+      const cashAdvanceDeductionDetails = caDeductions
+        .filter(({ amount }) => Number(amount) > 0)
+        .map(({ ca, amount, remainingBalance, posted, deductionNumber }) => {
+          const nextBalance = posted?.balance_after != null
+            ? Number(posted.balance_after)
+            : parseFloat(Math.max(remainingBalance - amount, 0).toFixed(2));
+          const deductionTotal = Number(posted?.deduction_total) || Number(ca.deduction_payroll_periods) || Number(ca.deduction_periods_remaining) || deductionNumber || 1;
+          const deductionNo = Number(posted?.deduction_number) || deductionNumber;
+          return {
+            cash_advance_id: ca.id,
+            request_date: ca.request_date || ca.approved_date || ca.created_date?.slice(0, 10),
+            deduction_date: posted?.transaction_date || endStr,
+            description: posted?.description || ca.reason || ca.advance_type || 'Cash advance',
+            amount: Number(posted?.amount) || Number(amount) || 0,
+            balance_before: posted?.balance_before != null ? Number(posted.balance_before) : Number(remainingBalance) || 0,
+            balance_after: nextBalance,
+            deduction_number: deductionNo,
+            deduction_total: deductionTotal,
+            deductions_remaining: Math.max(deductionTotal - deductionNo, 0),
+          };
+        });
 
       const computed = computeWeeklyPayroll(
         emp,
@@ -245,6 +359,22 @@ export default function Payroll() {
           timeInAllowanceMinutes,
         }
       );
+      const incentiveDetails = automaticIncentivesForEmployee(
+        emp,
+        payrollLogs,
+        startStr,
+        endStr,
+        periodNoWorkDays,
+        periodHolidays
+      );
+      const incentivePay = money(incentiveDetails.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
+      const computedWithIncentives = {
+        ...computed,
+        incentive_pay: incentivePay,
+        incentive_details: incentiveDetails,
+        gross_pay: money(computed.gross_pay + incentivePay),
+        net_pay: money(computed.net_pay + incentivePay),
+      };
 
       // Upsert payroll record
       const existing = await appApi.entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });
@@ -256,7 +386,9 @@ export default function Payroll() {
         department: emp.department,
         status: 'draft',
         company_profile_id: activeCompanyId,
-        ...computed,
+        incentive_settings: emp.incentive_settings || {},
+        cash_advance_deduction_details: cashAdvanceDeductionDetails,
+        ...computedWithIncentives,
       };
 
       const payrollRecord = existing.length > 0
@@ -288,9 +420,9 @@ export default function Payroll() {
         });
       }
 
-      totalGross += computed.gross_pay;
-      totalDed += computed.total_deductions;
-      totalNet += computed.net_pay;
+      totalGross += computedWithIncentives.gross_pay;
+      totalDed += computedWithIncentives.total_deductions;
+      totalNet += computedWithIncentives.net_pay;
     }
 
     await appApi.entities.PayrollPeriod.update(period.id, {
@@ -307,9 +439,7 @@ export default function Payroll() {
   };
 
   const targetPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
-  // Previous periods (excluding the selected configured payroll period)
-  const previousPeriods = periods.filter(p => !(p.start_date === startStr && p.end_date === endStr))
-    .sort((a, b) => b.start_date.localeCompare(a.start_date));
+  const currentPeriodConfig = getPayrollPeriodForDate(baseWeek, activeCompany, 0);
   const savedPeriodsByRange = new Map(periods.map(period => [`${period.start_date}:${period.end_date}`, period]));
   const summaryPeriods = Array.from({ length: 8 }, (_, index) => {
     const configuredPeriod = getPayrollPeriodForDate(baseWeek, activeCompany, -index);
@@ -334,10 +464,22 @@ export default function Payroll() {
   });
   const selectedSummaryPeriod = summaryPeriods.find(period => period.start_date === startStr && period.end_date === endStr);
   const targetPeriodLabel = selectedSummaryPeriod?.period_name?.replace(/^Payroll Period:\s*/, '') || activePeriodConfig.label;
-  const generateDisabled = generating || (!!targetPeriod && targetPeriod.status !== 'approved' && targetPeriod.status !== 'released');
-  const generateTitle = targetPeriod && targetPeriod.status === 'processing'
-    ? 'Approve this payroll period before regenerating'
-    : undefined;
+  const generateDisabled = generating || (!!targetPeriod && targetPeriod.status !== 'approved');
+  const generateTitle = targetPeriod?.status === 'released'
+    ? 'Released payroll periods cannot be regenerated'
+    : targetPeriod?.status === 'processing'
+      ? 'Approve this payroll period before regenerating'
+      : undefined;
+  const normalizedEmployeeSearch = employeeSearch.trim().toLowerCase();
+  const filteredRecords = normalizedEmployeeSearch
+    ? records.filter(record =>
+      [
+        record.employee_name,
+        record.employee_id,
+        record.department,
+      ].some(value => String(value || '').toLowerCase().includes(normalizedEmployeeSearch))
+    )
+    : records;
 
   return (
     <div className="p-6 space-y-5 max-w-7xl mx-auto">
@@ -347,9 +489,6 @@ export default function Payroll() {
           <p className="text-muted-foreground text-sm mt-0.5">{format(weekStart, 'MMM d')} – {format(weekEnd, 'MMM d, yyyy')}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => { setIncompleteLogsError(null); setShowHistory(true); }}>
-            <History className="w-4 h-4" /> Previous Periods
-          </Button>
           <Button
             onClick={generatePayroll}
             disabled={generateDisabled}
@@ -415,15 +554,17 @@ export default function Payroll() {
             <tbody>
               {summaryPeriods.map(period => {
                 const isSelected = selectedPeriod?.id === period.savedPeriod?.id;
-                const isCurrent = period.start_date === startStr && period.end_date === endStr;
+                const isTarget = period.start_date === startStr && period.end_date === endStr;
+                const isCurrent = period.start_date === currentPeriodConfig.start_date && period.end_date === currentPeriodConfig.end_date;
 
                 return (
                   <tr
                     key={period.id}
-                    className={`border-b border-border last:border-0 cursor-pointer transition-colors hover:bg-muted/30 ${!period.savedPeriod ? 'bg-muted/10' : ''} ${isCurrent || isSelected ? 'bg-primary/5' : ''}`}
+                    className={`border-b border-border last:border-0 cursor-pointer transition-colors hover:bg-muted/30 ${!period.savedPeriod ? 'bg-muted/10' : ''} ${isCurrent ? 'bg-emerald-50/80 hover:bg-emerald-50' : ''} ${!isCurrent && (isTarget || isSelected) ? 'bg-primary/5' : ''}`}
                     onClick={() => {
                       setWeekOffset(period.offset);
                       setSelectedPeriod(period.savedPeriod || null);
+                      setEmployeeSearch('');
                       setIncompleteLogsError(null);
                       setPendingAttendanceError(null);
                     }}
@@ -432,7 +573,8 @@ export default function Payroll() {
                       <p className="font-medium text-foreground">{period.period_name}</p>
                       <p className="text-xs text-muted-foreground">
                         {period.start_date} to {period.end_date}
-                        {isCurrent ? ' · Current' : ''}
+                        {isCurrent ? <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Current</span> : ''}
+                        {!isCurrent && isTarget ? <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Selected</span> : ''}
                       </p>
                     </td>
                     <td className="px-4 py-3">
@@ -461,7 +603,10 @@ export default function Payroll() {
       {targetPeriod && (
         <div
           className={`p-4 rounded-xl border cursor-pointer transition-all ${selectedPeriod?.id === targetPeriod.id ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-muted/40'}`}
-          onClick={() => setSelectedPeriod(targetPeriod)}
+          onClick={() => {
+            setSelectedPeriod(targetPeriod);
+            setEmployeeSearch('');
+          }}
         >
           <div className="flex items-center justify-between">
             <div>
@@ -475,40 +620,18 @@ export default function Payroll() {
         </div>
       )}
 
-      {/* History Drawer */}
-      {showHistory && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowHistory(false)} />
-          <div className="relative ml-auto w-80 h-full bg-card shadow-2xl flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <p className="font-semibold text-foreground">Previous Periods</p>
-              <button onClick={() => setShowHistory(false)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {previousPeriods.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">No previous periods</p>}
-              {previousPeriods.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => { setSelectedPeriod(p); setShowHistory(false); }}
-                  className={`w-full text-left p-3 rounded-xl border transition-all ${selectedPeriod?.id === p.id ? 'border-primary bg-primary/5' : 'border-border bg-background hover:bg-muted/40'}`}
-                >
-                  <p className="text-sm font-medium text-foreground">{p.period_name}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Net ₱{(p.total_net || 0).toLocaleString()}</p>
-                  <Badge variant="outline" className={`text-xs mt-1 capitalize ${statusColors[p.status]}`}>{p.status}</Badge>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Payroll Records */}
       <div>
           {selectedPeriod ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
-                  <p className="font-semibold text-foreground">{selectedPeriod.period_name}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-foreground">{selectedPeriod.period_name}</p>
+                    <Badge variant="outline" className={`text-xs capitalize ${statusColors[selectedPeriod.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {selectedPeriod.status === 'released' ? 'Released to employees' : `${selectedPeriod.status || 'draft'} - not released`}
+                    </Badge>
+                  </div>
                   <p className="text-sm text-muted-foreground">
                     {records.length} employees · Gross ₱{(selectedPeriod.total_gross || 0).toLocaleString()} · Net ₱{(selectedPeriod.total_net || 0).toLocaleString()}
                   </p>
@@ -538,6 +661,23 @@ export default function Payroll() {
               </div>
 
               <Card className="border border-border shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card flex-wrap">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Employee Payroll Records</p>
+                    <p className="text-xs text-muted-foreground">
+                      Showing {filteredRecords.length} of {records.length} employee{records.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={employeeSearch}
+                      onChange={(event) => setEmployeeSearch(event.target.value)}
+                      placeholder="Search employee"
+                      className="h-9 pl-9"
+                    />
+                  </div>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -554,13 +694,20 @@ export default function Payroll() {
                     <tbody>
                       {records.length === 0 ? (
                        <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No payroll records. Click "Generate Payroll" to compute.</td></tr>
-                      ) : records.map(rec => {
+                      ) : filteredRecords.length === 0 ? (
+                       <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No employees match your search.</td></tr>
+                      ) : filteredRecords.map(rec => {
                        const hasPending = periodAttendanceLogs.some(l => l.employee_id === rec.employee_id && l.status === 'pending');
                        return (
                        <tr key={rec.id} className={`border-b border-border last:border-0 hover:bg-muted/20 ${hasPending ? 'bg-amber-50/50' : ''}`}>
                          <td className="px-4 py-3">
                            <p className="font-medium text-foreground">{rec.employee_name}</p>
                            <p className="text-xs text-muted-foreground">{rec.department}</p>
+                           {(Number(rec.incentive_pay) || 0) > 0 && (
+                             <p className="text-xs text-emerald-700 mt-1">
+                               Auto incentives: ₱{Number(rec.incentive_pay || 0).toLocaleString()}
+                             </p>
+                           )}
                            {hasPending && (
                              <span className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 mt-1">
                                ⚠️ Attendance needs approval

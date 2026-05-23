@@ -6,6 +6,15 @@ function csvEscape(value) {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+function formatLocation(location) {
+  if (!location || typeof location !== "object") return "";
+  if (Number.isFinite(Number(location.latitude)) && Number.isFinite(Number(location.longitude))) {
+    const accuracy = location.accuracy ? ` +/- ${location.accuracy}m` : "";
+    return `${location.latitude},${location.longitude}${accuracy}`;
+  }
+  return location.status || "";
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -30,9 +39,13 @@ export default async function handler(req, res) {
     "Employee ID",
     "Employee Name",
     "Time In",
+    "Time In GPS",
     "Break Out",
+    "Break Out GPS",
     "Break In",
+    "Break In GPS",
     "Time Out",
+    "Time Out GPS",
     "Hours Worked",
     "Status",
   ];
@@ -41,9 +54,13 @@ export default async function handler(req, res) {
     log.employee_id,
     log.employee_name,
     log.time_in,
+    formatLocation(log.time_in_location),
     log.break_time_out,
+    formatLocation(log.break_time_out_location),
     log.break_time_in,
+    formatLocation(log.break_time_in_location),
     log.time_out,
+    formatLocation(log.time_out_location),
     log.hours_worked,
     log.status,
   ]);

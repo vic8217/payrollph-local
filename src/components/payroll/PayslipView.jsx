@@ -59,6 +59,7 @@ export default function PayslipView({ record }) {
         <Row label="Basic Pay" value={record.basic_pay} />
         {record.overtime_pay > 0 && <Row label="Overtime Pay" value={record.overtime_pay} />}
         {record.holiday_pay > 0 && <Row label="Holiday Pay" value={record.holiday_pay} />}
+        {record.incentive_pay > 0 && <Row label="Incentives" value={record.incentive_pay} />}
         <Separator className="my-1" />
         <Row label="Gross Pay" value={record.gross_pay} bold />
       </div>

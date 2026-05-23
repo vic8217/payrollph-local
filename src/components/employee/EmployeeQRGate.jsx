@@ -5,6 +5,62 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
 
+function captureAttendanceLocation() {
+  const capturedAt = new Date().toISOString();
+
+  if (!window.isSecureContext) {
+    return Promise.resolve({
+      status: 'unavailable',
+      error: 'Location requires HTTPS',
+      captured_at: capturedAt,
+    });
+  }
+
+  if (!navigator.geolocation) {
+    return Promise.resolve({
+      status: 'unavailable',
+      error: 'Geolocation is not supported by this browser',
+      captured_at: capturedAt,
+    });
+  }
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { coords } = position;
+        resolve({
+          status: 'captured',
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          accuracy: coords.accuracy,
+          altitude: coords.altitude,
+          altitude_accuracy: coords.altitudeAccuracy,
+          heading: coords.heading,
+          speed: coords.speed,
+          captured_at: new Date(position.timestamp || Date.now()).toISOString(),
+        });
+      },
+      (error) => {
+        const statuses = {
+          1: 'denied',
+          2: 'unavailable',
+          3: 'timeout',
+        };
+        resolve({
+          status: statuses[error.code] || 'error',
+          error: error.message || 'Location could not be captured',
+          captured_at: new Date().toISOString(),
+        });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 0,
+      }
+    );
+  });
+}
+
 /**
  * @typedef {object} Employee
  * @property {string} employee_id
@@ -207,7 +263,8 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
 
     // Full attendance logging — use backend function (service role, works on public portal)
     const empName = `${emp.first_name} ${emp.last_name}`;
-    const logRes = await appApi.functions.invoke('logAttendance', { employee_id: emp.employee_id, today });
+    const location = await captureAttendanceLocation();
+    const logRes = await appApi.functions.invoke('logAttendance', { employee_id: emp.employee_id, today, location });
     const { action, log } = logRes;
     const now = new Date();
     if (logRes.duplicate) {

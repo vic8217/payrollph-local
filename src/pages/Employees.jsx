@@ -3,13 +3,15 @@ import { appApi } from '@/lib/appApi';
 import { ensureCashAdvanceBeginningLedger } from '@/lib/cashAdvanceLedger';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
-import { Plus, Search, Edit2, Archive, CreditCard, FileText, Upload, Download, UserMinus, RotateCcw } from 'lucide-react';
+import { Plus, Search, Edit2, Archive, CreditCard, FileText, Upload, Download, UserMinus, RotateCcw, Gift, Trash2 } from 'lucide-react';
 import EmployeeIdCard from '@/components/employees/EmployeeIdCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import EmployeeForm from '@/components/employees/EmployeeForm';
 
 import Employee201File from '@/components/employees/Employee201File';
@@ -30,12 +32,50 @@ const employeePhotoUrl = (employee) =>
 
 const normalizeEmployeeId = (value) => String(value || '').trim().toLowerCase();
 
+const defaultIncentiveSettings = {
+  attendance: {
+    enabled: false,
+    amount: '',
+  },
+  special_programs: [],
+};
+
+function todayManilaDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function normalizeIncentiveSettings(employee) {
+  const settings = employee?.incentive_settings || {};
+  return {
+    attendance: {
+      enabled: Boolean(settings.attendance?.enabled),
+      amount: settings.attendance?.amount ?? '',
+    },
+    special_programs: Array.isArray(settings.special_programs)
+      ? settings.special_programs
+      : [],
+  };
+}
+
 export default function Employees() {
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editEmployee, setEditEmployee] = useState(null);
   const [idEmployee, setIdEmployee] = useState(null);
   const [file201Employee, setFile201Employee] = useState(null);
+  const [incentiveEmployee, setIncentiveEmployee] = useState(null);
+  const [incentiveSettings, setIncentiveSettings] = useState(defaultIncentiveSettings);
+  const [specialDraft, setSpecialDraft] = useState({ program_name: '', amount: '', reason: '' });
+  const [editingSpecialId, setEditingSpecialId] = useState(null);
+  const [incentivePasscodes, setIncentivePasscodes] = useState({ hr: '', manager: '' });
+  const [incentiveError, setIncentiveError] = useState('');
   const [statusFilter, setStatusFilter] = useState('current');
   const qc = useQueryClient();
   const { activeCompanyId } = useCompany();
@@ -169,6 +209,12 @@ export default function Employees() {
     enabled: !!activeCompanyId,
   });
 
+  const { data: dailyPasscodes = [] } = useQuery({
+    queryKey: ['dailyPasscodes', activeCompanyId],
+    queryFn: () => appApi.entities.DailyPasscode.filter({ company_profile_id: activeCompanyId }, '-date', 7),
+    enabled: !!activeCompanyId,
+  });
+
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }) => appApi.entities.Employee.update(id, {
       status,
@@ -176,6 +222,14 @@ export default function Employees() {
       ...(status === 'archived' ? { archived_date: new Date().toISOString().slice(0, 10) } : {}),
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
+  });
+
+  const saveIncentivesMutation = useMutation({
+    mutationFn: ({ id, settings }) => appApi.entities.Employee.update(id, { incentive_settings: settings }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['employees'] });
+      setIncentiveEmployee(null);
+    },
   });
 
   const statusCounts = employees.reduce((counts, employee) => {
@@ -227,6 +281,84 @@ export default function Employees() {
     if (!file201Employee) return null;
     return employeesWithCashAdvanceBalances.find(e => e.id === file201Employee.id) ?? file201Employee;
   }, [employeesWithCashAdvanceBalances, file201Employee]);
+
+  const openIncentiveDialog = (employee) => {
+    setIncentiveEmployee(employee);
+    setIncentiveSettings(normalizeIncentiveSettings(employee));
+    setSpecialDraft({ program_name: '', amount: '', reason: '' });
+    setEditingSpecialId(null);
+    setIncentivePasscodes({ hr: '', manager: '' });
+    setIncentiveError('');
+  };
+
+  const addSpecialProgram = () => {
+    const amount = parseFloat(specialDraft.amount);
+    if (!specialDraft.program_name.trim() || !(amount > 0)) return;
+    setIncentiveSettings(prev => ({
+      ...prev,
+      special_programs: editingSpecialId
+        ? prev.special_programs.map(program => program.id === editingSpecialId
+          ? {
+              ...program,
+              program_name: specialDraft.program_name.trim(),
+              amount,
+              reason: specialDraft.reason.trim(),
+            }
+          : program)
+        : [
+            ...prev.special_programs,
+            {
+              id: globalThis.crypto?.randomUUID?.() || `${Date.now()}`,
+              program_name: specialDraft.program_name.trim(),
+              amount,
+              reason: specialDraft.reason.trim(),
+            },
+          ],
+    }));
+    setSpecialDraft({ program_name: '', amount: '', reason: '' });
+    setEditingSpecialId(null);
+  };
+
+  const editSpecialProgram = (program) => {
+    setEditingSpecialId(program.id);
+    setSpecialDraft({
+      program_name: program.program_name || '',
+      amount: String(program.amount || ''),
+      reason: program.reason || '',
+    });
+  };
+
+  const verifyIncentivePasscodes = () => {
+    const todayPasscode = dailyPasscodes.find(passcode => passcode.date === todayManilaDate());
+    if (!todayPasscode) {
+      setIncentiveError('No Daily Passcode found for today. Generate one first.');
+      return false;
+    }
+    if (incentivePasscodes.hr.trim() !== String(todayPasscode.passcode || '')) {
+      setIncentiveError('Incorrect HR officer passcode.');
+      return false;
+    }
+    if (incentivePasscodes.manager.trim() !== String(todayPasscode.manager_passcode || '')) {
+      setIncentiveError('Incorrect manager passcode.');
+      return false;
+    }
+    setIncentiveError('');
+    return true;
+  };
+
+  const saveIncentives = () => {
+    if (!incentiveEmployee || !verifyIncentivePasscodes()) return;
+    saveIncentivesMutation.mutate({
+      id: incentiveEmployee.id,
+      settings: {
+        attendance: {
+          enabled: incentiveSettings.attendance.enabled,
+          amount: parseFloat(incentiveSettings.attendance.amount) || 0,
+        },
+        special_programs: incentiveSettings.special_programs,
+      },
+    });
+  };
 
   const statusColor = {
     active: 'bg-green-100 text-green-700',
@@ -369,6 +501,11 @@ export default function Employees() {
                    <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => { setEditEmployee(emp); setShowForm(true); }}>
                      <Edit2 className="w-3.5 h-3.5" /> Edit
                    </Button>
+                   {emp.status !== 'archived' && (
+                     <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => openIncentiveDialog(emp)}>
+                       <Gift className="w-3.5 h-3.5" /> Incentives
+                     </Button>
+                   )}
                    {emp.status !== 'archived' && emp.status !== 'resigned' && (
                      <Button
                        size="sm"
@@ -418,6 +555,190 @@ export default function Employees() {
             <DialogTitle>Employee ID Card</DialogTitle>
           </DialogHeader>
           {idEmployee && <EmployeeIdCard employee={idEmployee} />}
+        </DialogContent>
+      </Dialog>
+
+      {/* Incentives Dialog */}
+      <Dialog open={!!incentiveEmployee} onOpenChange={(open) => !open && setIncentiveEmployee(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Employee Incentives — {incentiveEmployee ? employeeFullName(incentiveEmployee) : ''}</DialogTitle>
+          </DialogHeader>
+          {incentiveEmployee && (
+            <div className="space-y-5">
+              <div className="rounded-lg border border-border p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">No absence / no late incentive</p>
+                    <p className="text-xs text-muted-foreground">
+                      Used when the employee completes regular work days with no absence, no late, and at least 8 hours per day.
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={incentiveSettings.attendance.enabled}
+                      onChange={(event) => setIncentiveSettings(prev => ({
+                        ...prev,
+                        attendance: { ...prev.attendance, enabled: event.target.checked },
+                      }))}
+                    />
+                    Enabled
+                  </label>
+                </div>
+                <div>
+                  <Label className="text-xs">Default amount</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={incentiveSettings.attendance.amount}
+                    onChange={(event) => setIncentiveSettings(prev => ({
+                      ...prev,
+                      attendance: { ...prev.attendance, amount: event.target.value },
+                    }))}
+                    placeholder="0.00"
+                    className="h-9"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Special incentive programs</p>
+                  <p className="text-xs text-muted-foreground">
+                    Automatic special incentives added to this employee whenever payroll is generated.
+                  </p>
+                </div>
+
+                {incentiveSettings.special_programs.length > 0 && (
+                  <div className="space-y-2">
+                    {incentiveSettings.special_programs.map(program => (
+                      <div key={program.id} className="flex items-start justify-between gap-3 rounded-md bg-muted/40 px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{program.program_name}</p>
+                          <p className="text-xs text-muted-foreground">{program.reason || 'No reason set'}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-emerald-700">₱{Number(program.amount || 0).toLocaleString()}</span>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:bg-muted"
+                            onClick={() => editSpecialProgram(program)}
+                            title="Edit special incentive"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                            onClick={() => setIncentiveSettings(prev => ({
+                              ...prev,
+                              special_programs: prev.special_programs.filter(item => item.id !== program.id),
+                            }))}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Program name</Label>
+                    <Input
+                      value={specialDraft.program_name}
+                      onChange={(event) => setSpecialDraft(prev => ({ ...prev, program_name: event.target.value }))}
+                      placeholder="e.g. Sales target bonus"
+                      className="h-9"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Default amount</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={specialDraft.amount}
+                      onChange={(event) => setSpecialDraft(prev => ({ ...prev, amount: event.target.value }))}
+                      placeholder="0.00"
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Default reason</Label>
+                  <Textarea
+                    value={specialDraft.reason}
+                    onChange={(event) => setSpecialDraft(prev => ({ ...prev, reason: event.target.value }))}
+                    placeholder="Reason or criteria for this incentive"
+                  />
+                </div>
+                <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addSpecialProgram}>
+                  <Plus className="w-3.5 h-3.5" /> {editingSpecialId ? 'Update Special Program' : 'Add Special Program'}
+                </Button>
+                {editingSpecialId && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setEditingSpecialId(null);
+                      setSpecialDraft({ program_name: '', amount: '', reason: '' });
+                    }}
+                  >
+                    Cancel edit
+                  </Button>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-border p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Approval passcodes</p>
+                  <p className="text-xs text-muted-foreground">
+                    Saving, changing, or removing incentive setup requires today&apos;s HR and manager passcodes.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">HR officer passcode</Label>
+                    <Input
+                      type="password"
+                      value={incentivePasscodes.hr}
+                      onChange={(event) => setIncentivePasscodes(prev => ({ ...prev, hr: event.target.value }))}
+                      placeholder="Enter HR passcode"
+                      className="h-9"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Manager passcode</Label>
+                    <Input
+                      type="password"
+                      value={incentivePasscodes.manager}
+                      onChange={(event) => setIncentivePasscodes(prev => ({ ...prev, manager: event.target.value }))}
+                      placeholder="Enter manager passcode"
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                {incentiveError && <p className="text-xs text-destructive">{incentiveError}</p>}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setIncentiveEmployee(null)}>Cancel</Button>
+                <Button
+                  onClick={saveIncentives}
+                  disabled={saveIncentivesMutation.isPending}
+                >
+                  {saveIncentivesMutation.isPending ? 'Saving...' : 'Save Approved Incentives'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

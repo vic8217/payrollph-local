@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, format } from 'date-fns';
 import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 import { computeCreditedHoursWorked, computeOvertimeHours } from '@/lib/payrollUtils';
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -150,10 +150,10 @@ function isFinalTimeOutMissing(log, employee, shift, now = new Date()) {
 }
 
 const punchPhotoFields = [
-  { action: 'time_in', label: 'Time In(1)', timeField: 'time_in', photoField: 'time_in_photo_url' },
-  { action: 'break_time_out', label: 'Time Out(1)', timeField: 'break_time_out', photoField: 'break_time_out_photo_url' },
-  { action: 'break_time_in', label: 'Time In(2)', timeField: 'break_time_in', photoField: 'break_time_in_photo_url' },
-  { action: 'time_out', label: 'Time Out(2)', timeField: 'time_out', photoField: 'time_out_photo_url' },
+  { action: 'time_in', label: 'Time In(1)', timeField: 'time_in', photoField: 'time_in_photo_url', locationField: 'time_in_location' },
+  { action: 'break_time_out', label: 'Time Out(1)', timeField: 'break_time_out', photoField: 'break_time_out_photo_url', locationField: 'break_time_out_location' },
+  { action: 'break_time_in', label: 'Time In(2)', timeField: 'break_time_in', photoField: 'break_time_in_photo_url', locationField: 'break_time_in_location' },
+  { action: 'time_out', label: 'Time Out(2)', timeField: 'time_out', photoField: 'time_out_photo_url', locationField: 'time_out_location' },
 ];
 
 function latestPunchAction(log) {
@@ -189,6 +189,27 @@ function attendancePhotoItem(log, action) {
   }
 
   return null;
+}
+
+function attendanceLocationItem(log, action) {
+  const punch = punchPhotoFields.find(item => item.action === action);
+  const location = punch?.locationField ? log[punch.locationField] : null;
+  if (!punch || !location) return null;
+
+  return {
+    ...punch,
+    location,
+    timeValue: log[punch.timeField],
+  };
+}
+
+function hasCoordinates(location) {
+  return Number.isFinite(Number(location?.latitude)) && Number.isFinite(Number(location?.longitude));
+}
+
+function locationMapsUrl(location) {
+  if (!hasCoordinates(location)) return '';
+  return `https://www.google.com/maps?q=${encodeURIComponent(`${location.latitude},${location.longitude}`)}`;
 }
 
 async function requestJson(path, options = {}) {
@@ -582,6 +603,38 @@ function InlinePhotoButton({ photoItem, log, onView }) {
   );
 }
 
+function InlineLocationButton({ locationItem, log, onView }) {
+  if (!locationItem?.location) {
+    return (
+      <span
+        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/40"
+        title="No location captured for this punch"
+      >
+        <MapPin className="w-3.5 h-3.5" />
+      </span>
+    );
+  }
+
+  const captured = hasCoordinates(locationItem.location);
+
+  return (
+    <Button
+      type="button"
+      size="icon"
+      variant="ghost"
+      className={`h-6 w-6 ${captured ? 'text-emerald-600 hover:bg-emerald-50' : 'text-amber-600 hover:bg-amber-50'}`}
+      title={captured ? `View ${locationItem.label} GPS location` : `${locationItem.label} GPS not captured`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onView({ log, ...locationItem });
+      }}
+    >
+      <MapPin className="w-3.5 h-3.5" />
+      <span className="sr-only">View {locationItem.label} GPS location</span>
+    </Button>
+  );
+}
+
 function ShiftPasscodeModal({ log, shift, currentUser, activeCompanyId, onClose, onConfirm }) {
   const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
   const [passcodeInput, setPasscodeInput] = useState('');
@@ -663,6 +716,7 @@ export default function Attendance() {
   const [editingLog, setEditingLog] = useState(null);
   const [pendingShiftEdit, setPendingShiftEdit] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
+  const [locationLog, setLocationLog] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('all');
   const [showQuickView, setShowQuickView] = useState(false);
@@ -1159,6 +1213,10 @@ export default function Attendance() {
 	                    const breakOutPhoto = attendancePhotoItem(log, 'break_time_out');
 	                    const breakInPhoto = attendancePhotoItem(log, 'break_time_in');
 	                    const timeOutPhoto = attendancePhotoItem(log, 'time_out');
+	                    const timeInLocation = attendanceLocationItem(log, 'time_in');
+	                    const breakOutLocation = attendanceLocationItem(log, 'break_time_out');
+	                    const breakInLocation = attendanceLocationItem(log, 'break_time_in');
+	                    const timeOutLocation = attendanceLocationItem(log, 'time_out');
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
@@ -1180,6 +1238,7 @@ export default function Attendance() {
                               ? <span className="text-green-600 text-xs">{format(new Date(log.time_in), 'hh:mm a')}</span>
                               : <span className="text-amber-500 font-medium text-xs">Missing</span>}
                             <InlinePhotoButton photoItem={timeInPhoto} log={log} onView={setPhotoLog} />
+                            <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
                         <td className="px-3 py-3 hidden lg:table-cell">
@@ -1188,6 +1247,7 @@ export default function Attendance() {
                               ? <span className="text-orange-500 text-xs">{format(new Date(log.break_time_out), 'hh:mm a')}</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
                             <InlinePhotoButton photoItem={breakOutPhoto} log={log} onView={setPhotoLog} />
+                            <InlineLocationButton locationItem={breakOutLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
                         <td className="px-3 py-3 hidden lg:table-cell">
@@ -1198,6 +1258,7 @@ export default function Attendance() {
                                 ? <span className="text-amber-500 font-medium text-xs">Missing</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
                             <InlinePhotoButton photoItem={breakInPhoto} log={log} onView={setPhotoLog} />
+                            <InlineLocationButton locationItem={breakInLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
 	                        <td className="px-3 py-3">
@@ -1208,6 +1269,7 @@ export default function Attendance() {
 	                                ? <span className="text-amber-500 font-medium text-xs">Missing</span>
 	                                : <span className="text-muted-foreground text-xs">—</span>}
                               <InlinePhotoButton photoItem={timeOutPhoto} log={log} onView={setPhotoLog} />
+                              <InlineLocationButton locationItem={timeOutLocation} log={log} onView={setLocationLog} />
                             </div>
 	                        </td>
                         <td className="px-3 py-3 text-xs">{log.hours_worked || '—'}</td>
@@ -1314,6 +1376,76 @@ export default function Attendance() {
               <Button variant="outline" className="w-full" onClick={() => window.open(photoLog.photoUrl, '_blank', 'noopener,noreferrer')}>
                 Open Full Size
               </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!locationLog} onOpenChange={(open) => !open && setLocationLog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Attendance GPS Location</DialogTitle>
+          </DialogHeader>
+          {locationLog && (
+            <div className="space-y-3">
+              <div className={`rounded-xl border p-4 ${hasCoordinates(locationLog.location) ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+                <div className="flex items-center gap-2">
+                  <MapPin className={`w-5 h-5 ${hasCoordinates(locationLog.location) ? 'text-emerald-700' : 'text-amber-700'}`} />
+                  <p className={`text-sm font-semibold ${hasCoordinates(locationLog.location) ? 'text-emerald-900' : 'text-amber-900'}`}>
+                    {hasCoordinates(locationLog.location) ? 'GPS captured' : 'GPS not captured'}
+                  </p>
+                </div>
+                {!hasCoordinates(locationLog.location) && (
+                  <p className="mt-2 text-xs text-amber-800">
+                    {locationLog.location?.error || locationLog.location?.status || 'Location was unavailable for this punch.'}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                <div>
+                  <p className="font-medium text-foreground">Employee</p>
+                  <p>{locationLog.log?.employee_name || selectedEmployee?.first_name || '—'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Date</p>
+                  <p>{locationLog.log?.date || '—'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Transaction</p>
+                  <p>{locationLog.label || 'Attendance'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Time</p>
+                  <p>{locationLog.timeValue ? format(new Date(locationLog.timeValue), 'hh:mm a') : '—'}</p>
+                </div>
+                {hasCoordinates(locationLog.location) && (
+                  <>
+                    <div>
+                      <p className="font-medium text-foreground">Latitude</p>
+                      <p>{locationLog.location.latitude}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-foreground">Longitude</p>
+                      <p>{locationLog.location.longitude}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-foreground">Accuracy</p>
+                      <p>{locationLog.location.accuracy ? `${locationLog.location.accuracy} m` : '—'}</p>
+                    </div>
+                  </>
+                )}
+                <div>
+                  <p className="font-medium text-foreground">Captured</p>
+                  <p>{locationLog.location?.captured_at ? format(new Date(locationLog.location.captured_at), 'MMM d, yyyy h:mm a') : '—'}</p>
+                </div>
+              </div>
+
+              {hasCoordinates(locationLog.location) && (
+                <Button variant="outline" className="w-full" onClick={() => window.open(locationMapsUrl(locationLog.location), '_blank', 'noopener,noreferrer')}>
+                  Open in Google Maps
+                </Button>
+              )}
             </div>
           )}
         </DialogContent>

@@ -22,7 +22,7 @@ export default function MyPayslip() {
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['myPayrollRecords', currentEmployee?.employee_id],
-    queryFn: () => appApi.entities.PayrollRecord.filter({ employee_id: currentEmployee.employee_id }),
+    queryFn: () => appApi.entities.PayrollRecord.filter({ employee_id: currentEmployee.employee_id, status: 'released' }),
     enabled: !!currentEmployee,
   });
 

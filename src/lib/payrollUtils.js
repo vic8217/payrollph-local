@@ -457,11 +457,9 @@ export function computeWeeklyPayroll(
 		const multiplier = getHolidayMultiplier(dayType, worked);
 		if (worked) workedDays++;
 
-		// Prorate pay based on actual hours worked (max 8h = full day)
 		const hoursWorked = computeCreditedHoursWorked(log, options);
 		totalHoursWorked += hoursWorked;
-		const dayFraction = hoursWorked >= 8 ? 1 : hoursWorked / 8;
-		const effectivePay = dailyRate * multiplier * dayFraction;
+		const effectivePay = dailyRate * multiplier;
 
 		// Auto-compute undertime from hours_worked if not manually set
 		const undertimeFromHours =
@@ -557,6 +555,8 @@ export function computeWeeklyPayroll(
 	const netPay = grossPay - totalDeductions;
 
 	return {
+		daily_rate: parseFloat(dailyRate.toFixed(2)),
+		monthly_rate: parseFloat(monthlyRate.toFixed(2)),
 		basic_pay: parseFloat(basicPay.toFixed(2)),
 		overtime_pay: parseFloat(overtimePay.toFixed(2)),
 		holiday_pay: parseFloat(holidayPay.toFixed(2)),
