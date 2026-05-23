@@ -141,7 +141,6 @@ function scheduledShiftEnd(log, shift) {
 
 function isFinalTimeOutMissing(log, employee, shift, now = new Date()) {
   if (!log?.time_in || log.time_out) return false;
-  if (employee?.break_time && !log.break_time_in) return false;
 
   const shiftEnd = scheduledShiftEnd(log, shift);
   if (!shiftEnd) return false;
@@ -157,26 +156,39 @@ const punchPhotoFields = [
   { action: 'time_out', label: 'Time Out(2)', timeField: 'time_out', photoField: 'time_out_photo_url' },
 ];
 
-function attendancePhotoItems(log) {
-  const items = punchPhotoFields
-    .filter(item => log[item.photoField])
+function latestPunchAction(log) {
+  return punchPhotoFields
+    .filter(item => log[item.timeField])
     .map(item => ({
-      ...item,
-      photoUrl: log[item.photoField],
-      timeValue: log[item.timeField],
-    }));
+      action: item.action,
+      time: new Date(log[item.timeField]).getTime(),
+    }))
+    .filter(item => Number.isFinite(item.time))
+    .sort((a, b) => b.time - a.time)[0]?.action || null;
+}
 
-  if (log.photo_url && !items.some(item => item.photoUrl === log.photo_url)) {
-    const matchingPunch = punchPhotoFields.find(item => log[item.timeField] && log.photo_action === item.action);
-    items.push({
-      ...(matchingPunch || { label: 'Attendance', timeField: 'time_in' }),
-      photoUrl: log.photo_url,
-      timeValue: matchingPunch ? log[matchingPunch.timeField] : (log.time_out || log.break_time_in || log.time_in),
-      legacy: true,
-    });
+function attendancePhotoItem(log, action) {
+  const punch = punchPhotoFields.find(item => item.action === action);
+  if (!punch) return null;
+
+  if (log[punch.photoField]) {
+    return {
+      ...punch,
+      photoUrl: log[punch.photoField],
+      timeValue: log[punch.timeField],
+    };
   }
 
-  return items;
+  if (log.photo_url && (log.photo_action === action || (!log.photo_action && latestPunchAction(log) === action))) {
+    return {
+      ...punch,
+      photoUrl: log.photo_url,
+      timeValue: log[punch.timeField],
+      legacy: true,
+    };
+  }
+
+  return null;
 }
 
 async function requestJson(path, options = {}) {
@@ -537,6 +549,27 @@ function EditAttendanceModal({ log, defaultWorkSchedule, shiftOptions, onClose, 
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function InlinePhotoButton({ photoItem, log, onView }) {
+  if (!photoItem?.photoUrl) return null;
+
+  return (
+    <Button
+      type="button"
+      size="icon"
+      variant="ghost"
+      className="h-6 w-6 text-sky-600 hover:bg-sky-50"
+      title={`View ${photoItem.label} photo`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onView({ log, ...photoItem });
+      }}
+    >
+      <Eye className="w-3.5 h-3.5" />
+      <span className="sr-only">View {photoItem.label} photo</span>
+    </Button>
   );
 }
 
@@ -1113,7 +1146,10 @@ export default function Attendance() {
 	                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
 	                    const breakTimeInMissing = isBreakTimeInMissing(log, logEmployee, currentTime);
 	                    const finalTimeOutMissing = isFinalTimeOutMissing(log, logEmployee, logShift, currentTime);
-	                    const photoItems = attendancePhotoItems(log);
+	                    const timeInPhoto = attendancePhotoItem(log, 'time_in');
+	                    const breakOutPhoto = attendancePhotoItem(log, 'break_time_out');
+	                    const breakInPhoto = attendancePhotoItem(log, 'break_time_in');
+	                    const timeOutPhoto = attendancePhotoItem(log, 'time_out');
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
@@ -1130,28 +1166,40 @@ export default function Attendance() {
                           </Select>
                         </td>
                         <td className="px-3 py-3">
-                          {log.time_in
-                            ? <span className="text-green-600 text-xs">{format(new Date(log.time_in), 'hh:mm a')}</span>
-                            : <span className="text-amber-500 font-medium text-xs">Missing</span>}
+                          <div className="inline-flex items-center gap-1.5">
+                            {log.time_in
+                              ? <span className="text-green-600 text-xs">{format(new Date(log.time_in), 'hh:mm a')}</span>
+                              : <span className="text-amber-500 font-medium text-xs">Missing</span>}
+                            <InlinePhotoButton photoItem={timeInPhoto} log={log} onView={setPhotoLog} />
+                          </div>
                         </td>
                         <td className="px-3 py-3 hidden lg:table-cell">
-                          {log.break_time_out
-                            ? <span className="text-orange-500 text-xs">{format(new Date(log.break_time_out), 'hh:mm a')}</span>
-                            : <span className="text-muted-foreground text-xs">—</span>}
+                          <div className="inline-flex items-center gap-1.5">
+                            {log.break_time_out
+                              ? <span className="text-orange-500 text-xs">{format(new Date(log.break_time_out), 'hh:mm a')}</span>
+                              : <span className="text-muted-foreground text-xs">—</span>}
+                            <InlinePhotoButton photoItem={breakOutPhoto} log={log} onView={setPhotoLog} />
+                          </div>
                         </td>
                         <td className="px-3 py-3 hidden lg:table-cell">
-                          {log.break_time_in
-                            ? <span className="text-teal-600 text-xs">{format(new Date(log.break_time_in), 'hh:mm a')}</span>
-                            : breakTimeInMissing
-                              ? <span className="text-amber-500 font-medium text-xs">Missing</span>
-                            : <span className="text-muted-foreground text-xs">—</span>}
+                          <div className="inline-flex items-center gap-1.5">
+                            {log.break_time_in
+                              ? <span className="text-teal-600 text-xs">{format(new Date(log.break_time_in), 'hh:mm a')}</span>
+                              : breakTimeInMissing
+                                ? <span className="text-amber-500 font-medium text-xs">Missing</span>
+                              : <span className="text-muted-foreground text-xs">—</span>}
+                            <InlinePhotoButton photoItem={breakInPhoto} log={log} onView={setPhotoLog} />
+                          </div>
                         </td>
 	                        <td className="px-3 py-3">
-	                          {log.time_out
-	                            ? <span className="text-blue-600 text-xs">{format(new Date(log.time_out), 'hh:mm a')}</span>
-	                            : finalTimeOutMissing
-	                              ? <span className="text-amber-500 font-medium text-xs">Missing</span>
-	                              : <span className="text-muted-foreground text-xs">—</span>}
+	                          <div className="inline-flex items-center gap-1.5">
+	                            {log.time_out
+	                              ? <span className="text-blue-600 text-xs">{format(new Date(log.time_out), 'hh:mm a')}</span>
+	                              : finalTimeOutMissing
+	                                ? <span className="text-amber-500 font-medium text-xs">Missing</span>
+	                                : <span className="text-muted-foreground text-xs">—</span>}
+                              <InlinePhotoButton photoItem={timeOutPhoto} log={log} onView={setPhotoLog} />
+                            </div>
 	                        </td>
                         <td className="px-3 py-3 text-xs">{log.hours_worked || '—'}</td>
                         <td className="px-3 py-3 text-xs hidden md:table-cell">{log.overtime_hours > 0 ? `${log.overtime_hours}h` : '—'}</td>
@@ -1179,21 +1227,17 @@ export default function Attendance() {
                               onClick={() => setEditingLog(log)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
-                            {photoItems.map(photoItem => (
-                              <Button key={`${photoItem.label}-${photoItem.photoUrl}`} size="icon" variant="ghost" className="h-7 w-7 text-sky-600 hover:bg-sky-50"
-                                title={`View ${photoItem.label} photo`}
-                                onClick={() => setPhotoLog({ log, ...photoItem })}>
-                                <Eye className="w-4 h-4" />
-                                <span className="sr-only">View {photoItem.label} photo</span>
-                              </Button>
-                            ))}
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:bg-green-50"
+                              title="Approve attendance"
                               onClick={() => approveMutation.mutate({ id: log.id, status: 'approved' })}>
                               <CheckCircle2 className="w-4 h-4" />
+                              <span className="sr-only">Approve attendance</span>
                             </Button>
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                              title="Reject attendance"
                               onClick={() => approveMutation.mutate({ id: log.id, status: 'rejected' })}>
                               <XCircle className="w-4 h-4" />
+                              <span className="sr-only">Reject attendance</span>
                             </Button>
                           </div>
                         </td>

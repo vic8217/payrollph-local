@@ -306,9 +306,8 @@ export default function Payroll() {
     setGenerating(false);
   };
 
-  // Current week period
-  const currentWeekPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
-  // Previous periods (excluding the current configured payroll period)
+  const targetPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
+  // Previous periods (excluding the selected configured payroll period)
   const previousPeriods = periods.filter(p => !(p.start_date === startStr && p.end_date === endStr))
     .sort((a, b) => b.start_date.localeCompare(a.start_date));
   const savedPeriodsByRange = new Map(periods.map(period => [`${period.start_date}:${period.end_date}`, period]));
@@ -321,6 +320,7 @@ export default function Payroll() {
 
     return {
       id: savedPeriod?.id || `missing-${configuredPeriod.start_date}`,
+      offset: -index,
       savedPeriod,
       period_name: savedPeriod?.period_name || getPayrollPeriodName(configuredPeriod),
       start_date: configuredPeriod.start_date,
@@ -332,6 +332,12 @@ export default function Payroll() {
       generation_label: savedPeriod ? (isComplete ? 'Complete' : 'Incomplete') : 'Not generated',
     };
   });
+  const selectedSummaryPeriod = summaryPeriods.find(period => period.start_date === startStr && period.end_date === endStr);
+  const targetPeriodLabel = selectedSummaryPeriod?.period_name?.replace(/^Payroll Period:\s*/, '') || activePeriodConfig.label;
+  const generateDisabled = generating || (!!targetPeriod && targetPeriod.status !== 'approved' && targetPeriod.status !== 'released');
+  const generateTitle = targetPeriod && targetPeriod.status === 'processing'
+    ? 'Approve this payroll period before regenerating'
+    : undefined;
 
   return (
     <div className="p-6 space-y-5 max-w-7xl mx-auto">
@@ -346,11 +352,11 @@ export default function Payroll() {
           </Button>
           <Button
             onClick={generatePayroll}
-            disabled={generating || (!!currentWeekPeriod && currentWeekPeriod.status !== 'approved' && currentWeekPeriod.status !== 'released')}
+            disabled={generateDisabled}
             className="gap-2"
-            title={currentWeekPeriod && currentWeekPeriod.status === 'processing' ? 'Approve the current payroll period before regenerating' : undefined}
+            title={generateTitle}
           >
-            <Play className="w-4 h-4" /> {generating ? 'Processing...' : 'Generate Payroll'}
+            <Play className="w-4 h-4" /> {generating ? 'Processing...' : `Generate ${targetPeriodLabel}`}
           </Button>
         </div>
       </div>
@@ -414,8 +420,13 @@ export default function Payroll() {
                 return (
                   <tr
                     key={period.id}
-                    className={`border-b border-border last:border-0 transition-colors ${period.savedPeriod ? 'cursor-pointer hover:bg-muted/30' : 'bg-muted/10'} ${isSelected ? 'bg-primary/5' : ''}`}
-                    onClick={() => period.savedPeriod && setSelectedPeriod(period.savedPeriod)}
+                    className={`border-b border-border last:border-0 cursor-pointer transition-colors hover:bg-muted/30 ${!period.savedPeriod ? 'bg-muted/10' : ''} ${isCurrent || isSelected ? 'bg-primary/5' : ''}`}
+                    onClick={() => {
+                      setWeekOffset(period.offset);
+                      setSelectedPeriod(period.savedPeriod || null);
+                      setIncompleteLogsError(null);
+                      setPendingAttendanceError(null);
+                    }}
                   >
                     <td className="px-4 py-3">
                       <p className="font-medium text-foreground">{period.period_name}</p>
@@ -446,20 +457,20 @@ export default function Payroll() {
         </div>
       </Card>
 
-      {/* Current week period card */}
-      {currentWeekPeriod && (
+      {/* Selected period card */}
+      {targetPeriod && (
         <div
-          className={`p-4 rounded-xl border cursor-pointer transition-all ${selectedPeriod?.id === currentWeekPeriod.id ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-muted/40'}`}
-          onClick={() => setSelectedPeriod(currentWeekPeriod)}
+          className={`p-4 rounded-xl border cursor-pointer transition-all ${selectedPeriod?.id === targetPeriod.id ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-muted/40'}`}
+          onClick={() => setSelectedPeriod(targetPeriod)}
         >
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-semibold text-foreground">{currentWeekPeriod.period_name}</p>
+              <p className="font-semibold text-foreground">{targetPeriod.period_name}</p>
               <p className="text-sm text-muted-foreground mt-0.5">
-                {currentWeekPeriod.employee_count || 0} employees · Net ₱{(currentWeekPeriod.total_net || 0).toLocaleString()}
+                {targetPeriod.employee_count || 0} employees · Net ₱{(targetPeriod.total_net || 0).toLocaleString()}
               </p>
             </div>
-            <Badge variant="outline" className={`text-xs capitalize ${statusColors[currentWeekPeriod.status]}`}>{currentWeekPeriod.status}</Badge>
+            <Badge variant="outline" className={`text-xs capitalize ${statusColors[targetPeriod.status]}`}>{targetPeriod.status}</Badge>
           </div>
         </div>
       )}
