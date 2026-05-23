@@ -36,7 +36,8 @@ export default function EmployeePortal() {
   const [scanConfirm, setScanConfirm] = useState(null); // { name, action, attendanceAction, time, logId }
   const [scanKey, setScanKey] = useState(0); // increment to reset EmployeeQRGate back to camera
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
-  const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
+  const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error | uploading
+  const [photoSubmitError, setPhotoSubmitError] = useState('');
   const [photoCaptureKey, setPhotoCaptureKey] = useState(0);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -50,6 +51,7 @@ export default function EmployeePortal() {
     if (!scanConfirm) return;
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     setPhotoDataUrl(null);
+    setPhotoSubmitError('');
     setPhotoStatus('capturing');
 
     let stream = null;
@@ -271,36 +273,55 @@ export default function EmployeePortal() {
                   variant="outline"
                   size="sm"
                   className="w-full gap-2"
-                  onClick={() => setPhotoCaptureKey(k => k + 1)}
+                  onClick={() => {
+                    setPhotoSubmitError('');
+                    setPhotoCaptureKey(k => k + 1);
+                  }}
                 >
                   <Camera className="w-3.5 h-3.5" /> Retake Photo
                 </Button>
+              )}
+              {photoSubmitError && (
+                <p className="text-xs font-medium text-destructive text-center">{photoSubmitError}</p>
               )}
             </div>
 
             <Button
               className="w-full"
-              disabled={photoStatus === 'capturing'}
+              disabled={photoStatus === 'capturing' || photoStatus === 'uploading'}
               onClick={async () => {
-                // Upload photo and attach to attendance log if available
-                if (photoDataUrl && scanConfirm.logId) {
-                  try {
-                    const blob = await fetch(photoDataUrl).then(r => r.blob());
-                    const action = scanConfirm.attendanceAction;
-                    const photoField = attendancePhotoFields[action];
-                    const file = new File([blob], `${action || 'attendance'}_photo.jpg`, { type: 'image/jpeg' });
-                    const { file_url } = await appApi.integrations.Core.UploadFile({ file });
-                    await appApi.entities.AttendanceLog.update(scanConfirm.logId, {
-                      ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
-                      photo_url: file_url,
-                    });
-                  } catch { /* non-blocking */ }
+                if (!photoDataUrl || photoStatus !== 'done') {
+                  setPhotoSubmitError('Photo is required. Please retake the photo to complete this attendance record.');
+                  return;
+                }
+
+                if (!scanConfirm.logId) {
+                  setPhotoSubmitError('Attendance record was not found. Please scan again.');
+                  return;
+                }
+
+                try {
+                  setPhotoSubmitError('');
+                  setPhotoStatus('uploading');
+                  const blob = await fetch(photoDataUrl).then(r => r.blob());
+                  const action = scanConfirm.attendanceAction;
+                  const photoField = attendancePhotoFields[action];
+                  const file = new File([blob], `${action || 'attendance'}_photo.jpg`, { type: 'image/jpeg' });
+                  const { file_url } = await appApi.integrations.Core.UploadFile({ file });
+                  await appApi.entities.AttendanceLog.update(scanConfirm.logId, {
+                    ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
+                    photo_url: file_url,
+                  });
+                } catch {
+                  setPhotoStatus('done');
+                  setPhotoSubmitError('Photo upload failed. Please retake the photo and try again.');
+                  return;
                 }
                 setScanConfirm(null);
                 setScanKey(k => k + 1);
               }}
             >
-              {photoStatus === 'capturing' ? 'Capturing photo...' : 'I Understand — Done'}
+              {photoStatus === 'capturing' ? 'Capturing photo...' : photoStatus === 'uploading' ? 'Saving photo...' : 'I Understand — Done'}
             </Button>
           </div>
         </div>

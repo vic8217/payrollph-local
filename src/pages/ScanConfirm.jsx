@@ -210,6 +210,7 @@ export default function ScanConfirm() {
   const [confirming, setConfirming] = useState(false);
   const [done, setDone] = useState(null); // { action, employee, hoursWorked }
   const [loadError, setLoadError] = useState(null);
+  const [photoError, setPhotoError] = useState('');
 
   // Lunch window: if scanning Time In between 12:00pm–12:59pm, snap to 1:00pm, no OT
   const nowHour = new Date().getHours();
@@ -240,6 +241,12 @@ export default function ScanConfirm() {
 
   const handleConfirm = async () => {
     if (!employee || confirming) return;
+
+    if (!capturedPhoto) {
+      setPhotoError('Photo is required. Please take or retake the photo to complete this attendance record.');
+      return;
+    }
+
     setConfirming(true);
     const today = format(new Date(), 'yyyy-MM-dd');
     const now = new Date().toISOString();
@@ -247,7 +254,9 @@ export default function ScanConfirm() {
     try {
       photoUpdates = await uploadAttendancePhoto(capturedPhoto, action);
     } catch {
-      photoUpdates = {};
+      setPhotoError('Photo upload failed. Please retake the photo and try again.');
+      setConfirming(false);
+      return;
     }
 
     if (action === 'time_in') {
@@ -491,7 +500,16 @@ export default function ScanConfirm() {
             <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               <UserCheck className="w-3.5 h-3.5" /> Identity Confirmation Photo
             </div>
-            <FaceCapture onCapture={setCapturedPhoto} captured={capturedPhoto} />
+            <FaceCapture
+              onCapture={(value) => {
+                setPhotoError('');
+                setCapturedPhoto(value);
+              }}
+              captured={capturedPhoto}
+            />
+            {photoError && (
+              <p className="text-xs font-medium text-destructive text-center">{photoError}</p>
+            )}
           </CardContent>
         </Card>
 
