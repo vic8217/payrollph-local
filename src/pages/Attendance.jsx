@@ -553,7 +553,16 @@ function EditAttendanceModal({ log, defaultWorkSchedule, shiftOptions, onClose, 
 }
 
 function InlinePhotoButton({ photoItem, log, onView }) {
-  if (!photoItem?.photoUrl) return null;
+  if (!photoItem?.photoUrl) {
+    return (
+      <span
+        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/40"
+        title="No photo captured for this punch"
+      >
+        <Eye className="w-3.5 h-3.5" />
+      </span>
+    );
+  }
 
   return (
     <Button
