@@ -274,10 +274,12 @@ export default async function handler(req, res) {
     const hoursWorked = computeCreditedHoursWorked(completedLog, {
       shiftStartTime: defaultShift?.shift_start_time || "08:00",
       timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
+      breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
     });
     const overtimeHours = computeOvertimeHours(completedLog, hoursWorked, {
       shiftStartTime: defaultShift?.shift_start_time || "08:00",
       overtimeStartTime: defaultShift?.overtime_start_time || "17:30",
+      breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
     });
     const log = await updateRecord("AttendanceLog", currentLog.id, {
       time_out: now,

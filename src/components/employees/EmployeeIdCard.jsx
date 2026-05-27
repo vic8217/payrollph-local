@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { appApi } from '@/lib/appApi';
 import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
 
+/** @type {Record<string, any>} */
 const S = {
   card: { width: '54mm', height: '85.6mm', fontFamily: 'Inter, sans-serif', background: '#fff', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' },
   banner: { background: 'linear-gradient(135deg, #1d4ed8, #1e3a8a)', padding: '10px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
+  bannerLogo: { height: '34px', maxWidth: '132px', objectFit: 'contain', marginBottom: '2px' },
   bannerTitle: { color: '#fff', fontWeight: 800, fontSize: '13px', letterSpacing: '3px', margin: 0 },
   bannerSub: { color: '#93c5fd', fontSize: '6px', letterSpacing: '2.5px', textTransform: 'uppercase', margin: '2px 0 0' },
   photoRow: { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px 0' },
@@ -37,15 +38,10 @@ const S = {
   warningText: { fontSize: '6px', fontWeight: 600, color: '#92400e', margin: 0 },
 };
 
-export default function EmployeeIdCard({ employee }) {
+export default function EmployeeIdCard({ employee, company }) {
   const qrRef = useRef(null);
-  const [company, setCompany] = useState(null);
   const [logoFailed, setLogoFailed] = useState(false);
   const qrValue = employee?.employee_id || employee?.qr_code?.replace(/-PayrollPH$/i, '');
-
-  useEffect(() => {
-    appApi.entities.CompanyProfile.list().then(list => { if (list?.length > 0) setCompany(list[0]); });
-  }, []);
 
   useEffect(() => {
     setLogoFailed(false);
@@ -72,7 +68,7 @@ export default function EmployeeIdCard({ employee }) {
       : `<div style="width:64px;height:64px;border:2px dashed #d1d5db;border-radius:4px;display:flex;align-items:center;justify-content:center;"><span style="font-size:7px;color:#9ca3af;">No QR</span></div>`;
     const companyName = company?.trade_name || company?.company_name || 'PayrollPH';
     const logoHtml = company?.logo_url && !logoFailed
-      ? `<img src="${company.logo_url}" style="height:28px;max-width:100px;object-fit:contain;margin-bottom:2px;" />`
+      ? `<img src="${company.logo_url}" style="height:34px;max-width:132px;object-fit:contain;margin-bottom:2px;" />`
       : `<p style="color:#fff;font-weight:800;font-size:13px;letter-spacing:3px;margin:0;">${companyName}</p>`;
 
     return `
@@ -111,7 +107,7 @@ export default function EmployeeIdCard({ employee }) {
   const getBackHTML = () => {
     const companyName = company?.trade_name || company?.company_name || 'PayrollPH';
     const logoHtml = company?.logo_url && !logoFailed
-      ? `<img src="${company.logo_url}" style="height:28px;max-width:100px;object-fit:contain;margin-bottom:2px;" />`
+      ? `<img src="${company.logo_url}" style="height:34px;max-width:132px;object-fit:contain;margin-bottom:2px;" />`
       : `<p style="color:#fff;font-weight:800;font-size:13px;letter-spacing:3px;margin:0;">${companyName}</p>`;
     return `
     <div style="width:54mm;height:85.6mm;font-family:Inter,sans-serif;background:#fff;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;">
@@ -168,7 +164,7 @@ export default function EmployeeIdCard({ employee }) {
       <div id="id-card-front" style={{ ...S.card, borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', border: '1px solid #e5e7eb' }}>
         <div style={S.banner}>
           {company?.logo_url && !logoFailed
-            ? <img src={company.logo_url} alt="logo" onError={() => setLogoFailed(true)} style={{ height: '28px', maxWidth: '100px', objectFit: 'contain', marginBottom: '2px' }} />
+            ? <img src={company.logo_url} alt={`${company?.company_name || 'Company'} logo`} onError={() => setLogoFailed(true)} style={S.bannerLogo} />
             : <p style={S.bannerTitle}>{company?.trade_name || company?.company_name || 'PayrollPH'}</p>
           }
           <p style={S.bannerSub}>Employee ID Card</p>
@@ -219,7 +215,7 @@ export default function EmployeeIdCard({ employee }) {
       <div id="id-card-back" style={{ ...S.card, borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', border: '1px solid #e5e7eb' }}>
         <div style={S.banner}>
           {company?.logo_url && !logoFailed
-            ? <img src={company.logo_url} alt="logo" onError={() => setLogoFailed(true)} style={{ height: '28px', maxWidth: '100px', objectFit: 'contain', marginBottom: '2px' }} />
+            ? <img src={company.logo_url} alt={`${company?.company_name || 'Company'} logo`} onError={() => setLogoFailed(true)} style={S.bannerLogo} />
             : <p style={S.bannerTitle}>{company?.trade_name || company?.company_name || 'PayrollPH'}</p>
           }
           <p style={{ ...S.bannerSub, letterSpacing: '2px' }}>Attendance Policy</p>

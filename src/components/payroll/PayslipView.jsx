@@ -15,6 +15,7 @@ function Row({ label, value, bold, negative }) {
 
 export default function PayslipView({ record }) {
   const handlePrint = () => window.print();
+  const incentiveDetails = Array.isArray(record.incentive_details) ? record.incentive_details : [];
 
   return (
     <div className="space-y-4" id="payslip-content">
@@ -60,6 +61,18 @@ export default function PayslipView({ record }) {
         {record.overtime_pay > 0 && <Row label="Overtime Pay" value={record.overtime_pay} />}
         {record.holiday_pay > 0 && <Row label="Holiday Pay" value={record.holiday_pay} />}
         {record.incentive_pay > 0 && <Row label="Incentives" value={record.incentive_pay} />}
+        {incentiveDetails.length > 0 && (
+          <div className="mt-1 space-y-1 rounded-md bg-muted/30 px-3 py-2">
+            {incentiveDetails.map((item, index) => (
+              <div key={`${item.id || item.program_name || 'special'}-${index}`} className="flex justify-between gap-3 text-xs">
+                <span className="text-muted-foreground">{item.program_name || 'Special incentive'}</span>
+                <span className="font-mono text-foreground">
+                  ₱{Number(item.daily_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} × {item.present_days || 0} day(s)
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <Separator className="my-1" />
         <Row label="Gross Pay" value={record.gross_pay} bold />
       </div>

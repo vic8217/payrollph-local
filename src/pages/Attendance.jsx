@@ -409,6 +409,7 @@ function EditAttendanceModal({ log, defaultWorkSchedule, shiftOptions, onClose, 
       }, {
         shiftStartTime: defaultShift?.shift_start_time || '08:00',
         timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
+        breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
       });
       updates.hours_worked = parseFloat(hrs.toFixed(2));
       updates.overtime_hours = computeOvertimeHours({
@@ -420,6 +421,7 @@ function EditAttendanceModal({ log, defaultWorkSchedule, shiftOptions, onClose, 
       }, hrs, {
         shiftStartTime: defaultShift?.shift_start_time || '08:00',
         overtimeStartTime: defaultShift?.overtime_start_time || '17:30',
+        breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
       });
     }
 
@@ -841,6 +843,7 @@ export default function Attendance() {
           }, {
             shiftStartTime: defaultShift.shift_start_time || '08:00',
             timeInAllowanceMinutes: defaultShift.time_in_allowance_minutes || 0,
+            breakInGraceMinutes: defaultShift.grace_period_minutes || 0,
           });
           updates.hours_worked = Number(hoursWorked.toFixed(2));
           updates.overtime_hours = computeOvertimeHours({
@@ -851,6 +854,7 @@ export default function Attendance() {
           }, hoursWorked, {
             shiftStartTime: defaultShift.shift_start_time || '08:00',
             overtimeStartTime: defaultShift.overtime_start_time || '17:30',
+            breakInGraceMinutes: defaultShift.grace_period_minutes || 0,
           });
         }
 

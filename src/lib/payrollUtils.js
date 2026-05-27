@@ -40,6 +40,8 @@
  * @typedef {object} HoursComputationOptions
  * @property {string=} shiftStartTime
  * @property {number=} timeInAllowanceMinutes
+ * @property {number=} breakInGraceMinutes
+ * @property {number=} breakDurationMinutes
  * @property {string=} overtimeStartTime
  */
 
@@ -256,7 +258,12 @@ export function computeCreditedHoursWorked(
 	/** @type {PayrollLog} */
 	log,
 	/** @type {HoursComputationOptions} */
-	{ shiftStartTime = '08:00', timeInAllowanceMinutes = 0 } = {},
+	{
+		shiftStartTime = '08:00',
+		timeInAllowanceMinutes = 0,
+		breakInGraceMinutes = 0,
+		breakDurationMinutes = 60,
+	} = {},
 ) {
 	const timeIn = toValidDate(log.time_in);
 	const timeOut = toValidDate(log.time_out);
@@ -280,16 +287,33 @@ export function computeCreditedHoursWorked(
 
 	const breakOut = toValidDate(log.break_time_out);
 	const breakIn = toValidDate(log.break_time_in);
+	let effectiveBreakIn = breakIn;
+
+	if (breakOut && breakIn) {
+		const expectedBreakIn = new Date(breakOut);
+		expectedBreakIn.setMinutes(
+			expectedBreakIn.getMinutes() + (Number(breakDurationMinutes) || 60),
+		);
+		const breakInMinutesAfterExpected =
+			(breakIn.getTime() - expectedBreakIn.getTime()) / 60000;
+
+		if (
+			breakInMinutesAfterExpected > 0 &&
+			breakInMinutesAfterExpected <= Math.max(0, Number(breakInGraceMinutes) || 0)
+		) {
+			effectiveBreakIn = expectedBreakIn;
+		}
+	}
 
 	const firstSegmentHours = breakOut
 		? Math.max(0, (breakOut.getTime() - effectiveTimeIn.getTime()) / 36e5)
 		: 0;
-	const secondSegmentHours = breakIn
-		? Math.max(0, (timeOut.getTime() - breakIn.getTime()) / 36e5)
+	const secondSegmentHours = effectiveBreakIn
+		? Math.max(0, (timeOut.getTime() - effectiveBreakIn.getTime()) / 36e5)
 		: 0;
 
 	const hoursWorked =
-		breakOut && breakIn
+		breakOut && effectiveBreakIn
 			? firstSegmentHours + secondSegmentHours
 			: Math.max(0, (timeOut.getTime() - effectiveTimeIn.getTime()) / 36e5);
 
@@ -325,7 +349,12 @@ export function computeOvertimeHours(
 	/** @type {number} */
 	hoursWorked,
 	/** @type {HoursComputationOptions} */
-	{ shiftStartTime = '08:00', overtimeStartTime } = {},
+	{
+		shiftStartTime = '08:00',
+		overtimeStartTime,
+		breakInGraceMinutes = 0,
+		breakDurationMinutes = 60,
+	} = {},
 ) {
 	if (!overtimeStartTime) {
 		return parseFloat(Math.max(0, (Number(hoursWorked) || 0) - 8).toFixed(2));
@@ -357,11 +386,28 @@ export function computeOvertimeHours(
 
 	const breakOut = toValidDate(log.break_time_out);
 	const breakIn = toValidDate(log.break_time_in);
+	let effectiveBreakIn = breakIn;
+	if (breakOut && breakIn) {
+		const expectedBreakIn = new Date(breakOut);
+		expectedBreakIn.setMinutes(
+			expectedBreakIn.getMinutes() + (Number(breakDurationMinutes) || 60),
+		);
+		const breakInMinutesAfterExpected =
+			(breakIn.getTime() - expectedBreakIn.getTime()) / 60000;
+
+		if (
+			breakInMinutesAfterExpected > 0 &&
+			breakInMinutesAfterExpected <=
+				Math.max(0, Number(breakInGraceMinutes) || 0)
+		) {
+			effectiveBreakIn = expectedBreakIn;
+		}
+	}
 	overtimeHours -= overlapHours(
 		overtimeWindowStart,
 		timeOut,
 		breakOut,
-		breakIn,
+		effectiveBreakIn,
 	);
 
 	return parseFloat(Math.max(0, overtimeHours).toFixed(2));
@@ -530,10 +576,7 @@ export function computeWeeklyPayroll(
 	}
 
 	const grossPay = basicPay + overtimePay + holidayPay + nightDiffPay;
-	const taxableIncome = grossPay - weeklySSS - weeklyPhilHealth - weeklyPagIbig;
-	const withholdingTax = parseFloat(
-		computeWithholdingTax(Math.max(0, taxableIncome)).toFixed(2),
-	);
+	const withholdingTax = 0;
 
 	// Compute agency fee (percentage of basic pay only for agency employees)
 	const agencyFee =

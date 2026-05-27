@@ -32,6 +32,7 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
   const cashAdvanceDetails = Array.isArray(record.cash_advance_deduction_details)
     ? record.cash_advance_deduction_details
     : [];
+  const incentiveDetails = Array.isArray(record.incentive_details) ? record.incentive_details : [];
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -86,6 +87,25 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
           {record.overtime_pay > 0 && <Row label="Overtime Pay" value={record.overtime_pay} />}
           {record.holiday_pay > 0 && <Row label="Holiday Pay" value={record.holiday_pay} />}
           {record.incentive_pay > 0 && <Row label="Incentives" value={record.incentive_pay} />}
+          {incentiveDetails.length > 0 && (
+            <div className="mt-1 space-y-2">
+              {incentiveDetails.map((item, index) => (
+                <div key={`${item.id || item.program_name || 'special'}-${index}`} className="rounded-md border border-border bg-muted/30 px-3 py-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-foreground">{item.program_name || 'Incentive'}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        ₱{Number(item.daily_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}/day × {item.present_days || 0} day(s)
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono text-emerald-700 whitespace-nowrap">
+                      ₱{Number(item.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <Separator className="my-1" />
           <Row label="Gross Pay" value={record.gross_pay} bold highlight />
         </div>

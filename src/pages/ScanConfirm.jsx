@@ -307,6 +307,7 @@ export default function ScanConfirm() {
       }, {
         shiftStartTime: defaultShift?.shift_start_time || '08:00',
         timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
+        breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
       });
       const overtimeHours = computeOvertimeHours({
         ...todayLog,
@@ -317,6 +318,7 @@ export default function ScanConfirm() {
       }, hoursWorked, {
         shiftStartTime: defaultShift?.shift_start_time || '08:00',
         overtimeStartTime: defaultShift?.overtime_start_time || '17:30',
+        breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
       });
       const timeIn = new Date(todayLog.time_in);
       const workStart = new Date(timeIn);

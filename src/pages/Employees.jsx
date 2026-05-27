@@ -40,6 +40,9 @@ const defaultIncentiveSettings = {
   special_programs: [],
 };
 
+const formatPeso = (value) =>
+  `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 function todayManilaDate() {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Manila',
@@ -59,7 +62,11 @@ function normalizeIncentiveSettings(employee) {
       amount: settings.attendance?.amount ?? '',
     },
     special_programs: Array.isArray(settings.special_programs)
-      ? settings.special_programs
+      ? settings.special_programs.map(program => ({
+          ...program,
+          id: program.id || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+          amount: Number(program.amount) || 0,
+        }))
       : [],
   };
 }
@@ -74,11 +81,12 @@ export default function Employees() {
   const [incentiveSettings, setIncentiveSettings] = useState(defaultIncentiveSettings);
   const [specialDraft, setSpecialDraft] = useState({ program_name: '', amount: '', reason: '' });
   const [editingSpecialId, setEditingSpecialId] = useState(null);
+  const [editingAttendance, setEditingAttendance] = useState(false);
   const [incentivePasscodes, setIncentivePasscodes] = useState({ hr: '', manager: '' });
   const [incentiveError, setIncentiveError] = useState('');
   const [statusFilter, setStatusFilter] = useState('current');
   const qc = useQueryClient();
-  const { activeCompanyId } = useCompany();
+  const { activeCompanyId, activeCompany } = useCompany();
 
   const downloadTemplate = () => {
     const headers = [
@@ -287,6 +295,7 @@ export default function Employees() {
     setIncentiveSettings(normalizeIncentiveSettings(employee));
     setSpecialDraft({ program_name: '', amount: '', reason: '' });
     setEditingSpecialId(null);
+    setEditingAttendance(false);
     setIncentivePasscodes({ hr: '', manager: '' });
     setIncentiveError('');
   };
@@ -328,6 +337,19 @@ export default function Employees() {
     });
   };
 
+  const deleteSpecialProgram = (program) => {
+    if (!verifyIncentivePasscodes()) return;
+    if (!confirm(`Delete ${program.program_name || 'this special incentive'}?`)) return;
+    setIncentiveSettings(prev => ({
+      ...prev,
+      special_programs: prev.special_programs.filter(item => item.id !== program.id),
+    }));
+    if (editingSpecialId === program.id) {
+      setEditingSpecialId(null);
+      setSpecialDraft({ program_name: '', amount: '', reason: '' });
+    }
+  };
+
   const verifyIncentivePasscodes = () => {
     const todayPasscode = dailyPasscodes.find(passcode => passcode.date === todayManilaDate());
     if (!todayPasscode) {
@@ -359,6 +381,12 @@ export default function Employees() {
       },
     });
   };
+
+  const specialProgramsCount = incentiveSettings.special_programs.length;
+  const specialProgramsDailyTotal = incentiveSettings.special_programs.reduce(
+    (sum, program) => sum + (Number(program.amount) || 0),
+    0
+  );
 
   const statusColor = {
     active: 'bg-green-100 text-green-700',
@@ -554,7 +582,7 @@ export default function Employees() {
           <DialogHeader>
             <DialogTitle>Employee ID Card</DialogTitle>
           </DialogHeader>
-          {idEmployee && <EmployeeIdCard employee={idEmployee} />}
+          {idEmployee && <EmployeeIdCard employee={idEmployee} company={activeCompany} />}
         </DialogContent>
       </Dialog>
 
@@ -571,28 +599,42 @@ export default function Employees() {
                   <div>
                     <p className="text-sm font-semibold text-foreground">No absence / no late incentive</p>
                     <p className="text-xs text-muted-foreground">
-                      Used when the employee completes regular work days with no absence, no late, and at least 8 hours per day.
+                      Per-day amount used when the employee completes a regular work day with no absence, no late, and at least 8 hours.
                     </p>
                   </div>
-                  <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={incentiveSettings.attendance.enabled}
-                      onChange={(event) => setIncentiveSettings(prev => ({
-                        ...prev,
-                        attendance: { ...prev.attendance, enabled: event.target.checked },
-                      }))}
-                    />
-                    Enabled
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={incentiveSettings.attendance.enabled}
+                        disabled={!editingAttendance}
+                        onChange={(event) => setIncentiveSettings(prev => ({
+                          ...prev,
+                          attendance: { ...prev.attendance, enabled: event.target.checked },
+                        }))}
+                      />
+                      Enabled
+                    </label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5"
+                      onClick={() => setEditingAttendance(prev => !prev)}
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      {editingAttendance ? 'Done' : 'Edit'}
+                    </Button>
+                  </div>
                 </div>
                 <div>
-                  <Label className="text-xs">Default amount</Label>
+                  <Label className="text-xs">Default amount per qualifying day</Label>
                   <Input
                     type="number"
                     min="0"
                     step="0.01"
                     value={incentiveSettings.attendance.amount}
+                    disabled={!editingAttendance}
                     onChange={(event) => setIncentiveSettings(prev => ({
                       ...prev,
                       attendance: { ...prev.attendance, amount: event.target.value },
@@ -607,8 +649,23 @@ export default function Employees() {
                 <div>
                   <p className="text-sm font-semibold text-foreground">Special incentive programs</p>
                   <p className="text-xs text-muted-foreground">
-                    Automatic special incentives added to this employee whenever payroll is generated.
+                    Amounts are treated as per-day rates and multiplied by each approved day the employee is present.
                   </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-md border border-border bg-muted/30 p-3">
+                  <div>
+                    <p className="text-[11px] font-medium uppercase text-muted-foreground">Programs in place</p>
+                    <p className="text-sm font-semibold text-foreground">{specialProgramsCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium uppercase text-muted-foreground">Total per present day</p>
+                    <p className="text-sm font-semibold text-emerald-700">{formatPeso(specialProgramsDailyTotal)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium uppercase text-muted-foreground">Payroll calculation</p>
+                    <p className="text-sm font-semibold text-foreground">Rate × present days</p>
+                  </div>
                 </div>
 
                 {incentiveSettings.special_programs.length > 0 && (
@@ -620,24 +677,23 @@ export default function Employees() {
                           <p className="text-xs text-muted-foreground">{program.reason || 'No reason set'}</p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-emerald-700">₱{Number(program.amount || 0).toLocaleString()}</span>
+                          <span className="text-sm font-semibold text-emerald-700">{formatPeso(program.amount)}/day</span>
                           <Button
-                            size="icon"
+                            size="sm"
                             variant="ghost"
-                            className="h-7 w-7 text-muted-foreground hover:bg-muted"
+                            className="h-7 gap-1 px-2 text-muted-foreground hover:bg-muted"
                             onClick={() => editSpecialProgram(program)}
                             title="Edit special incentive"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
+                            Edit
                           </Button>
                           <Button
                             size="icon"
                             variant="ghost"
                             className="h-7 w-7 text-destructive hover:bg-destructive/10"
-                            onClick={() => setIncentiveSettings(prev => ({
-                              ...prev,
-                              special_programs: prev.special_programs.filter(item => item.id !== program.id),
-                            }))}
+                            onClick={() => deleteSpecialProgram(program)}
+                            title="Delete special incentive"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
