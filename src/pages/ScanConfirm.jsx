@@ -35,7 +35,7 @@ const LABOR_CODE_INFO = {
     ],
   },
 };
-const BREAK_DURATION_MINUTES = 60;
+const DEFAULT_BREAK_DURATION_MINUTES = 60;
 
 function addOneDay(date) {
   const d = new Date(`${date}T00:00:00+08:00`);
@@ -54,9 +54,14 @@ function scheduledBreak(employee, date) {
   };
 }
 
-function addBreakDuration(time) {
+function getBreakDurationMinutes(employee) {
+  const minutes = Number(employee?.break_duration_minutes);
+  return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
+}
+
+function addBreakDuration(time, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES) {
   const [hours, minutes] = String(time || '00:00').split(':').map(Number);
-  const total = hours * 60 + minutes + BREAK_DURATION_MINUTES;
+  const total = hours * 60 + minutes + durationMinutes;
   const normalized = total % (24 * 60);
   return {
     time: `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`,
@@ -69,7 +74,7 @@ function scheduledBreakIn(employee, date) {
 
   const [breakHour] = employee.break_time.split(':').map(Number);
   const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12 ? addOneDay(date) : date;
-  const breakIn = addBreakDuration(employee.break_time);
+  const breakIn = addBreakDuration(employee.break_time, getBreakDurationMinutes(employee));
   const breakInDate = breakIn.crossesMidnight ? addOneDay(breakDate) : breakDate;
 
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
@@ -308,6 +313,7 @@ export default function ScanConfirm() {
         shiftStartTime: defaultShift?.shift_start_time || '08:00',
         timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
         breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
+        breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       const overtimeHours = computeOvertimeHours({
         ...todayLog,
@@ -319,6 +325,7 @@ export default function ScanConfirm() {
         shiftStartTime: defaultShift?.shift_start_time || '08:00',
         overtimeStartTime: defaultShift?.overtime_start_time || '17:30',
         breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
+        breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       const timeIn = new Date(todayLog.time_in);
       const workStart = new Date(timeIn);

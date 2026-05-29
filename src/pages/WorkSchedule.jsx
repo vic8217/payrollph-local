@@ -20,7 +20,16 @@ const breakTimeOptions = Array.from({ length: 48 }, (_, index) => {
   const minutes = index % 2 === 0 ? '00' : '30';
   return `${String(hours).padStart(2, '0')}:${minutes}`;
 });
-const BREAK_DURATION_MINUTES = 60;
+const breakDurationOptions = [
+  { value: '60', label: '1 hour' },
+  { value: '30', label: '30 minutes' },
+];
+const DEFAULT_BREAK_DURATION_MINUTES = 60;
+
+function getBreakDurationMinutes(employee) {
+  const minutes = Number(employee?.break_duration_minutes);
+  return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
+}
 
 function formatTime(value) {
   if (!value) return 'No break';
@@ -30,10 +39,10 @@ function formatTime(value) {
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
-function addBreakDuration(value) {
+function addBreakDuration(value, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES) {
   if (!value) return '';
   const [hours, minutes] = value.split(':').map(Number);
-  const totalMinutes = (hours * 60 + minutes + BREAK_DURATION_MINUTES) % (24 * 60);
+  const totalMinutes = (hours * 60 + minutes + durationMinutes) % (24 * 60);
   return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
@@ -116,6 +125,11 @@ export default function WorkSchedule() {
     if (value === 'none') return;
     setSavingId(emp.id);
     updateMutation.mutate({ id: emp.id, data: { break_time: value } });
+  };
+
+  const handleBreakDurationChange = (emp, value) => {
+    setSavingId(emp.id);
+    updateMutation.mutate({ id: emp.id, data: { break_duration_minutes: Number(value) } });
   };
 
   const sortedShiftSettings = [...shiftSettings].sort((a, b) => {
@@ -264,7 +278,7 @@ export default function WorkSchedule() {
                     </td>
 	                    <td className="px-4 py-3 text-xs text-muted-foreground">
 	                      {emp.break_time ? (
-                          `${formatTime(emp.break_time)} - ${formatTime(addBreakDuration(emp.break_time))}`
+                          `${formatTime(emp.break_time)} - ${formatTime(addBreakDuration(emp.break_time, getBreakDurationMinutes(emp)))}`
                         ) : (
                           <Badge variant="destructive" className="gap-1 text-[10px]">
                             <AlertTriangle className="w-3 h-3" /> Required
@@ -311,6 +325,21 @@ export default function WorkSchedule() {
 	                            {breakTimeOptions.map(time => (
                               <SelectItem key={time} value={time}>
                                 {formatTime(time)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={String(getBreakDurationMinutes(emp))}
+                          onValueChange={v => handleBreakDurationChange(emp, v)}
+                        >
+                          <SelectTrigger className="h-8 text-xs w-32">
+                            <SelectValue placeholder="Duration" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {breakDurationOptions.map(option => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
                               </SelectItem>
                             ))}
                           </SelectContent>

@@ -298,7 +298,7 @@ export function computeCreditedHoursWorked(
 			(breakIn.getTime() - expectedBreakIn.getTime()) / 60000;
 
 		if (
-			breakInMinutesAfterExpected > 0 &&
+			breakInMinutesAfterExpected <= 0 ||
 			breakInMinutesAfterExpected <= Math.max(0, Number(breakInGraceMinutes) || 0)
 		) {
 			effectiveBreakIn = expectedBreakIn;
@@ -396,7 +396,7 @@ export function computeOvertimeHours(
 			(breakIn.getTime() - expectedBreakIn.getTime()) / 60000;
 
 		if (
-			breakInMinutesAfterExpected > 0 &&
+			breakInMinutesAfterExpected <= 0 ||
 			breakInMinutesAfterExpected <=
 				Math.max(0, Number(breakInGraceMinutes) || 0)
 		) {

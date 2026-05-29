@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
 
 const normalizeQrValue = (value) => String(value || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/-PayrollPH$/i, '');
-const BREAK_DURATION_MINUTES = 60;
+const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const DUPLICATE_SCAN_WINDOW_MS = 2 * 60 * 1000;
 const MIN_STEP_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -31,12 +31,17 @@ function scheduledBreak(employee, date) {
   };
 }
 
+function getBreakDurationMinutes(employee) {
+  const minutes = Number(employee?.break_duration_minutes);
+  return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
+}
+
 function scheduledBreakIn(employee, date) {
   if (!employee?.break_time) return null;
 
   const [hours, minutes] = String(employee.break_time).split(':').map(Number);
   const breakDate = employee.work_schedule === 'night_shift' && hours < 12 ? addOneDay(date) : date;
-  const total = hours * 60 + minutes + BREAK_DURATION_MINUTES;
+  const total = hours * 60 + minutes + getBreakDurationMinutes(employee);
   const normalized = total % (24 * 60);
   const breakInDate = total >= 24 * 60 ? addOneDay(breakDate) : breakDate;
   const breakInTime = `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
@@ -139,7 +144,8 @@ export default function QRScanner() {
       const isScheduledBreakOut = todayLog.break_time_out && scheduledBreak(employee, today)?.break_time_out &&
         new Date(todayLog.break_time_out).getTime() === new Date(scheduledBreak(employee, today).break_time_out).getTime();
       if (isScheduledBreakOut && autoBreakIn && now.getTime() < new Date(autoBreakIn).getTime()) {
-        setScanError('Break In is not available until the scheduled 1-hour break is over.');
+        const durationLabel = getBreakDurationMinutes(employee) === 30 ? '30-minute' : '1-hour';
+        setScanError(`Break In is not available until the scheduled ${durationLabel} break is over.`);
         setLoading(false);
         lockedRef.current = false;
         return;

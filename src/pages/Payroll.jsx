@@ -510,6 +510,7 @@ export default function Payroll() {
           overtimeStartTime,
           timeInAllowanceMinutes,
           breakInGraceMinutes: gracePeriodMinutes,
+          breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
         }
       );
       const incentiveDetails = automaticIncentivesForEmployee(
