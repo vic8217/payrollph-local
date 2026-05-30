@@ -286,7 +286,7 @@ async function uploadFile(file) {
 }
 
 // ── Edit Attendance Modal ──
-function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions, onClose, onSave, currentUser, activeCompanyId }) {
+function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions, onClose, onSave, currentUser, activeCompanyId, canCorrectAttendance = false }) {
   const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
 
   // Step 1: passcode gate. Step 2: actual edit form.
@@ -307,10 +307,12 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
-  const canEditTimeIn = !log.time_in;
-  const canEditBreakOut = !log.break_time_out;
-  const canEditBreakIn = !log.break_time_in;
-  const canEditTimeOut = !log.time_out;
+  // Admins can correct any recorded punch (incl. on approved logs); everyone else
+  // (with the daily passcode) may only fill in missing punches.
+  const canEditTimeIn = canCorrectAttendance || !log.time_in;
+  const canEditBreakOut = canCorrectAttendance || !log.break_time_out;
+  const canEditBreakIn = canCorrectAttendance || !log.break_time_in;
+  const canEditTimeOut = canCorrectAttendance || !log.time_out;
 
   // Start camera only after passcode is verified
   useEffect(() => {
@@ -383,25 +385,43 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     setSaving(true);
     const updates = {};
 
-    const toISO = (timeStr) => {
+    // Preserve the existing punch's calendar day (important for night shifts that
+    // cross midnight) and only override the time-of-day; fall back to the log date
+    // when filling a previously-missing punch.
+    const toISO = (timeStr, existingISO) => {
       const [h, m] = timeStr.split(':');
-      const dt = new Date(log.date);
+      const dt = existingISO ? new Date(existingISO) : new Date(log.date);
       dt.setHours(parseInt(h), parseInt(m), 0, 0);
       return dt.toISOString();
     };
 
-    if (canEditTimeIn && timeIn) updates.time_in = toISO(timeIn);
-    if (canEditBreakOut && breakOut) updates.break_time_out = toISO(breakOut);
-    if (canEditBreakIn && breakIn) updates.break_time_in = toISO(breakIn);
-    if (canEditTimeOut && timeOut) updates.time_out = toISO(timeOut);
+    // Apply a time field: admins may also change or clear already-recorded punches.
+    const applyField = (key, timeStr, canEdit) => {
+      if (!canEdit) return;
+      const existingISO = log[key] || null;
+      if (timeStr) {
+        const next = toISO(timeStr, existingISO);
+        if (next !== existingISO) updates[key] = next;
+      } else if (existingISO) {
+        updates[key] = null; // admin cleared a recorded punch
+      }
+    };
+
+    applyField('time_in', timeIn, canEditTimeIn);
+    applyField('break_time_out', breakOut, canEditBreakOut);
+    applyField('break_time_in', breakIn, canEditBreakIn);
+    applyField('time_out', timeOut, canEditTimeOut);
     if (workSchedule !== (log.work_schedule || defaultWorkSchedule || 'day_shift')) {
       updates.work_schedule = workSchedule;
     }
 
-    const effTimeIn = updates.time_in || log.time_in;
-    const effBreakOut = updates.break_time_out || log.break_time_out;
-    const effBreakIn = updates.break_time_in || log.break_time_in;
-    const effTimeOut = updates.time_out || log.time_out;
+    const pick = (key) => (key in updates ? updates[key] : log[key]);
+    const effTimeIn = pick('time_in');
+    const effBreakOut = pick('break_time_out');
+    const effBreakIn = pick('break_time_in');
+    const effTimeOut = pick('time_out');
+    const timesChanged = ['time_in', 'break_time_out', 'break_time_in', 'time_out']
+      .some((key) => key in updates);
 
     if (effTimeIn && effTimeOut) {
       const [defaultShift] = await entities.filter('Settings', { company_profile_id: activeCompanyId, is_default: true }, undefined, 1);
@@ -430,6 +450,10 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
+    } else if (timesChanged) {
+      // Can no longer compute a full day (e.g. a punch was cleared) — zero it out.
+      updates.hours_worked = 0;
+      updates.overtime_hours = 0;
     }
 
     let photoUrl = '';
@@ -442,7 +466,12 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       } catch { /* non-blocking */ }
     }
 
-    updates.notes = `Manual edit by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}${photoUrl ? ` | Audit photo: ${photoUrl}` : ''}`;
+    const editKind = canCorrectAttendance ? 'Attendance correction' : 'Manual edit';
+    const recomputeNote = 'hours_worked' in updates
+      ? ` | Recomputed: ${updates.hours_worked}h worked, ${updates.overtime_hours}h OT`
+      : '';
+    const previousNotes = log.notes ? `${log.notes}\n` : '';
+    updates.notes = `${previousNotes}${editKind} by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}${recomputeNote}${photoUrl ? ` | Audit photo: ${photoUrl}` : ''}`;
 
     await onSave(log.id, updates);
     setSaving(false);
@@ -454,7 +483,9 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {step === 'passcode' ? 'Enter Daily Passcode' : `Edit Attendance — ${log.date}`}
+            {step === 'passcode'
+              ? 'Enter Daily Passcode'
+              : `${canCorrectAttendance ? 'Correct' : 'Edit'} Attendance — ${log.date}`}
           </DialogTitle>
         </DialogHeader>
 
@@ -500,7 +531,11 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
               />
             </div>
 
-            <p className="text-xs text-muted-foreground">Only missing time fields can be filled in. Shift can be corrected for this attendance record.</p>
+            <p className="text-xs text-muted-foreground">
+              {canCorrectAttendance
+                ? 'Admins can correct any punch, including on approved records. Hours worked and overtime are recomputed automatically when saved. Clear a field to remove a punch.'
+                : 'Only missing time fields can be filled in. Shift can be corrected for this attendance record.'}
+            </p>
 
             <div>
               <label className="text-sm font-medium text-foreground">Shift</label>
@@ -521,25 +556,29 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
                 <label className="text-sm font-medium text-foreground">Time In(1)</label>
                 <Input type="time" value={timeIn} onChange={e => setTimeIn(e.target.value)}
                   disabled={!canEditTimeIn} className={`mt-1 ${!canEditTimeIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditTimeIn && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+                {!canEditTimeIn ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                  : (canCorrectAttendance && log.time_in && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time Out(1)</label>
                 <Input type="time" value={breakOut} onChange={e => setBreakOut(e.target.value)}
                   disabled={!canEditBreakOut} className={`mt-1 ${!canEditBreakOut ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditBreakOut && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+                {!canEditBreakOut ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                  : (canCorrectAttendance && log.break_time_out && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time In(2)</label>
                 <Input type="time" value={breakIn} onChange={e => setBreakIn(e.target.value)}
                   disabled={!canEditBreakIn} className={`mt-1 ${!canEditBreakIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditBreakIn && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+                {!canEditBreakIn ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                  : (canCorrectAttendance && log.break_time_in && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time Out(2)</label>
                 <Input type="time" value={timeOut} onChange={e => setTimeOut(e.target.value)}
                   disabled={!canEditTimeOut} className={`mt-1 ${!canEditTimeOut ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditTimeOut && <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>}
+                {!canEditTimeOut ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                  : (canCorrectAttendance && log.time_out && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
             </div>
 
@@ -732,6 +771,7 @@ export default function Attendance() {
   const { user: currentUser } = useAuth();
   const { activeCompanyId, activeCompany } = useCompany();
   const qc = useQueryClient();
+  const canCorrectAttendance = ['admin', 'super_admin'].includes(currentUser?.role);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60 * 1000);
@@ -1307,7 +1347,7 @@ export default function Attendance() {
                         <td className="px-3 py-3">
                           <div className="flex gap-1">
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-primary hover:bg-primary/10"
-                              title="Edit shift or missing time"
+                              title={canCorrectAttendance ? 'Correct attendance (recomputes hours & overtime)' : 'Edit shift or missing time'}
                               onClick={() => setEditingLog(log)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
@@ -1343,6 +1383,7 @@ export default function Attendance() {
           shiftOptions={shiftOptions}
           currentUser={currentUser}
           activeCompanyId={activeCompanyId}
+          canCorrectAttendance={canCorrectAttendance}
           onClose={() => setEditingLog(null)}
           onSave={updateLog}
         />
