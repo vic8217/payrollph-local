@@ -95,7 +95,7 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
                     <div>
                       <p className="text-xs font-medium text-foreground">{item.program_name || 'Incentive'}</p>
                       <p className="text-[11px] text-muted-foreground">
-                        ₱{Number(item.daily_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}/day × {item.present_days || 0} day(s)
+                        ₱{Number(item.unit_amount ?? item.daily_amount ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}/{item.unit || 'day'} × {item.unit_count ?? item.present_days ?? 0} {item.unit || 'day'}(s)
                       </p>
                     </div>
                     <span className="text-xs font-mono text-emerald-700 whitespace-nowrap">

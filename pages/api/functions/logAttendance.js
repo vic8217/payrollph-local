@@ -14,6 +14,10 @@ function todayInManila() {
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const DUPLICATE_SCAN_WINDOW_MS = 2 * 60 * 1000;
 const MIN_STEP_INTERVAL_MS = 5 * 60 * 1000;
+// Mirrors the Attendance UI's "Time In(2) missing" rule: once this much time has
+// passed since the scheduled break-out without a break-in, the break-in window
+// is considered lapsed and the next scan is treated as the final Time Out.
+const BREAK_TIME_IN_MISSING_AFTER_MS = 120 * 60 * 1000;
 const attendanceLocationFields = {
   time_in: "time_in_location",
   break_time_out: "break_time_out_location",
@@ -246,7 +250,16 @@ export default async function handler(req, res) {
     return res.status(200).json({ action: "break_time_out", log });
   }
 
-  if (!currentLog.break_time_in) {
+  // If the break-in window has lapsed (scheduled break-out was long ago and the
+  // employee never punched their return), don't back-fill Time In(2). Treat this
+  // scan as the final Time Out and leave Time In(2) missing — this prevents an
+  // end-of-day scan (e.g. 7:19 PM) from being mislabeled as the break return.
+  const breakInWindowLapsed = Boolean(
+    autoBreak?.break_time_out &&
+    minutesSince(autoBreak.break_time_out, nowDate) >= BREAK_TIME_IN_MISSING_AFTER_MS
+  );
+
+  if (!currentLog.break_time_in && !breakInWindowLapsed) {
     const breakOutTime = currentLog.break_time_out;
     const isScheduledBreakOut = autoBreak?.break_time_out &&
       new Date(breakOutTime).getTime() === new Date(autoBreak.break_time_out).getTime();

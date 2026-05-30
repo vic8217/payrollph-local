@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { useCompany } from '@/lib/CompanyContext';
 import { computeWeeklyPayroll } from '@/lib/payrollUtils';
-import { getPayrollPeriodForDate, getPayrollPeriodName } from '@/lib/payrollPeriod';
+import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
 import PayslipView from '@/components/payroll/PayslipView';
 import GrossBreakdownDialog from '@/components/payroll/GrossBreakdownDialog';
@@ -150,6 +150,11 @@ function dateRange(startDate, endDate) {
   return dates;
 }
 
+// Default weekly rest day (0 = Sunday). Rest days are never counted as expected
+// work days, so working on a rest day never helps nor breaks the attendance
+// incentive — it only earns rest-day premium pay separately.
+const DEFAULT_REST_DAY = 0;
+
 /**
  * @param {string} startDate
  * @param {string} endDate
@@ -161,8 +166,24 @@ function expectedRegularWorkDates(startDate, endDate, noWorkDays, holidays) {
   const holidaySet = new Set(holidays.map(holiday => holiday.date));
   return dateRange(startDate, endDate).filter(date => {
     const day = new Date(`${date}T00:00:00+08:00`).getDay();
-    return day !== 0 && !noWorkDaySet.has(date) && !holidaySet.has(date);
+    return day !== DEFAULT_REST_DAY && !noWorkDaySet.has(date) && !holidaySet.has(date);
   });
+}
+
+/**
+ * Returns the (yyyy-MM-dd) date that starts the work week containing `dateStr`,
+ * honoring the company's declared work-week start day (0 = Sunday … 6 = Saturday).
+ * Uses the same +08:00 parsing as the rest of the period helpers so week
+ * grouping is consistent with how Sundays/holidays are determined.
+ * @param {string} dateStr
+ * @param {number} weekStartDay
+ */
+function weekStartKey(dateStr, weekStartDay) {
+  const d = new Date(`${dateStr}T00:00:00+08:00`);
+  const day = d.getDay(); // 0 = Sunday … 6 = Saturday
+  const daysSinceWeekStart = (day - weekStartDay + 7) % 7;
+  d.setDate(d.getDate() - daysSinceWeekStart);
+  return format(d, 'yyyy-MM-dd');
 }
 
 /** @param {AttendanceLogEntity | undefined} log */
@@ -204,27 +225,57 @@ function getIncentiveSettings(employee) {
  * @param {string} periodEndDate
  * @param {NoWorkDayEntity[]} noWorkDays
  * @param {HolidayEntity[]} holidays
+ * @param {number} weekStartDay
  */
-function automaticIncentivesForEmployee(employee, logs, periodStartDate, periodEndDate, noWorkDays, holidays) {
+function automaticIncentivesForEmployee(employee, logs, periodStartDate, periodEndDate, noWorkDays, holidays, weekStartDay) {
   const settings = getIncentiveSettings(employee);
   /** @type {Array<Record<string, any>>} */
   const details = [];
   const logsByDate = new Map(logs.map(log => [log.date, log]));
   const expectedWorkDates = expectedRegularWorkDates(periodStartDate, periodEndDate, noWorkDays, holidays);
   const presentDayCount = new Set(logs.filter(isPresentDay).map(log => log.date).filter(Boolean)).size;
-  const attendanceEligibleDates = expectedWorkDates.filter(date => isCompleteRegularDay(logsByDate.get(date)));
 
-  if (settings.attendance.enabled && Number(settings.attendance.amount) > 0 && attendanceEligibleDates.length > 0) {
-    const dailyAmount = money(settings.attendance.amount);
-    details.push({
-      type: 'attendance',
-      program_name: 'No Absence / No Late',
-      reason: 'Automatic attendance incentive per qualifying day',
-      daily_amount: dailyAmount,
-      present_days: attendanceEligibleDates.length,
-      amount: money(dailyAmount * attendanceEligibleDates.length),
-      source: 'employee_setup',
-    });
+  // Attendance incentive is a WEEKLY perfect-attendance bonus: the employee must
+  // complete every expected work day of a work week (holidays / rest days are
+  // excluded from the requirement) with no absence and no late. The configured
+  // amount is granted once per fully-completed work week — not per day.
+  // Note: only `expectedWorkDates` are evaluated, and Sunday (the default rest
+  // day) is never an expected work day — so working on a Sunday neither helps
+  // nor breaks this rule.
+  if (settings.attendance.enabled && Number(settings.attendance.amount) > 0 && expectedWorkDates.length > 0) {
+    const weeklyAmount = money(settings.attendance.amount);
+
+    // Group expected work days into work weeks aligned to the company's declared
+    // work-week start day (e.g. Saturday→Friday). Rest days are already excluded.
+    /** @type {Map<string, string[]>} */
+    const weeks = new Map();
+    for (const date of expectedWorkDates) {
+      const key = weekStartKey(date, weekStartDay);
+      if (!weeks.has(key)) weeks.set(key, []);
+      weeks.get(key).push(date);
+    }
+
+    // A week qualifies only when ALL of its expected work days are complete
+    // (approved, present, no absence, no late, full 8 hours).
+    const completedWeeks = [...weeks.values()].filter(
+      weekDates => weekDates.every(date => isCompleteRegularDay(logsByDate.get(date)))
+    ).length;
+
+    if (completedWeeks > 0) {
+      details.push({
+        type: 'attendance',
+        program_name: 'No Absence / No Late',
+        reason: 'Weekly attendance incentive for completing the full work week (no absence, no late)',
+        unit: 'week',
+        unit_amount: weeklyAmount,
+        unit_count: completedWeeks,
+        // Backward-compatible aliases for older display code.
+        daily_amount: weeklyAmount,
+        present_days: completedWeeks,
+        amount: money(weeklyAmount * completedWeeks),
+        source: 'employee_setup',
+      });
+    }
   }
 
   settings.special_programs
@@ -236,6 +287,9 @@ function automaticIncentivesForEmployee(employee, logs, periodStartDate, periodE
         type: 'special',
         program_name: program.program_name,
         reason: program.reason || 'Automatic special incentive per present day',
+        unit: 'day',
+        unit_amount: dailyAmount,
+        unit_count: presentDayCount,
         daily_amount: dailyAmount,
         present_days: presentDayCount,
         amount: money(dailyAmount * presentDayCount),
@@ -519,7 +573,8 @@ export default function Payroll() {
         startStr,
         endStr,
         periodNoWorkDays,
-        periodHolidays
+        periodHolidays,
+        normalizePayrollStartDay(activeCompany)
       );
       const incentivePay = money(incentiveDetails.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
       const computedWithIncentives = {

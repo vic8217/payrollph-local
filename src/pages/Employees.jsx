@@ -599,7 +599,7 @@ export default function Employees() {
                   <div>
                     <p className="text-sm font-semibold text-foreground">No absence / no late incentive</p>
                     <p className="text-xs text-muted-foreground">
-                      Per-day amount used when the employee completes a regular work day with no absence, no late, and at least 8 hours.
+                      Weekly amount granted when the employee completes the full work week — all expected work days (holidays and rest days excluded) with no absence, no late, and at least 8 hours per day.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -628,7 +628,7 @@ export default function Employees() {
                   </div>
                 </div>
                 <div>
-                  <Label className="text-xs">Default amount per qualifying day</Label>
+                  <Label className="text-xs">Default amount per completed work week</Label>
                   <Input
                     type="number"
                     min="0"

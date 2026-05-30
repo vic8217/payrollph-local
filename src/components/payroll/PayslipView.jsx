@@ -67,7 +67,7 @@ export default function PayslipView({ record }) {
               <div key={`${item.id || item.program_name || 'special'}-${index}`} className="flex justify-between gap-3 text-xs">
                 <span className="text-muted-foreground">{item.program_name || 'Special incentive'}</span>
                 <span className="font-mono text-foreground">
-                  ₱{Number(item.daily_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} × {item.present_days || 0} day(s)
+                  ₱{Number(item.unit_amount ?? item.daily_amount ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} × {item.unit_count ?? item.present_days ?? 0} {item.unit || 'day'}(s)
                 </span>
               </div>
             ))}

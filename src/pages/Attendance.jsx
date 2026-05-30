@@ -307,12 +307,14 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
-  // Admins can correct any recorded punch (incl. on approved logs); everyone else
-  // (with the daily passcode) may only fill in missing punches.
-  const canEditTimeIn = canCorrectAttendance || !log.time_in;
-  const canEditBreakOut = canCorrectAttendance || !log.break_time_out;
-  const canEditBreakIn = canCorrectAttendance || !log.break_time_in;
-  const canEditTimeOut = canCorrectAttendance || !log.time_out;
+  // Only super_admin/admin may edit time on an HR-approved log. Everyone else
+  // (with the daily passcode) may only fill in missing punches, and only while
+  // the log is still pending — once HR approves it, non-admins are locked out.
+  const isApprovedLog = log.status === 'approved';
+  const canEditTimeIn = canCorrectAttendance || (!isApprovedLog && !log.time_in);
+  const canEditBreakOut = canCorrectAttendance || (!isApprovedLog && !log.break_time_out);
+  const canEditBreakIn = canCorrectAttendance || (!isApprovedLog && !log.break_time_in);
+  const canEditTimeOut = canCorrectAttendance || (!isApprovedLog && !log.time_out);
 
   // Start camera only after passcode is verified
   useEffect(() => {
@@ -556,28 +558,28 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
                 <label className="text-sm font-medium text-foreground">Time In(1)</label>
                 <Input type="time" value={timeIn} onChange={e => setTimeIn(e.target.value)}
                   disabled={!canEditTimeIn} className={`mt-1 ${!canEditTimeIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditTimeIn ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                {!canEditTimeIn ? <p className="text-xs text-muted-foreground mt-0.5">{log.time_in ? 'Already recorded' : 'Locked — approved by HR'}</p>
                   : (canCorrectAttendance && log.time_in && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time Out(1)</label>
                 <Input type="time" value={breakOut} onChange={e => setBreakOut(e.target.value)}
                   disabled={!canEditBreakOut} className={`mt-1 ${!canEditBreakOut ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditBreakOut ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                {!canEditBreakOut ? <p className="text-xs text-muted-foreground mt-0.5">{log.break_time_out ? 'Already recorded' : 'Locked — approved by HR'}</p>
                   : (canCorrectAttendance && log.break_time_out && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time In(2)</label>
                 <Input type="time" value={breakIn} onChange={e => setBreakIn(e.target.value)}
                   disabled={!canEditBreakIn} className={`mt-1 ${!canEditBreakIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditBreakIn ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                {!canEditBreakIn ? <p className="text-xs text-muted-foreground mt-0.5">{log.break_time_in ? 'Already recorded' : 'Locked — approved by HR'}</p>
                   : (canCorrectAttendance && log.break_time_in && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time Out(2)</label>
                 <Input type="time" value={timeOut} onChange={e => setTimeOut(e.target.value)}
                   disabled={!canEditTimeOut} className={`mt-1 ${!canEditTimeOut ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditTimeOut ? <p className="text-xs text-muted-foreground mt-0.5">Already recorded</p>
+                {!canEditTimeOut ? <p className="text-xs text-muted-foreground mt-0.5">{log.time_out ? 'Already recorded' : 'Locked — approved by HR'}</p>
                   : (canCorrectAttendance && log.time_out && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
               </div>
             </div>
