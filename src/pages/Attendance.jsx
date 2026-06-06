@@ -24,6 +24,15 @@ const statusColors = {
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 const normalizeAttendanceKey = (value) => String(value || '').trim().toLowerCase();
+const normalizeAttendanceCode = (value) =>
+  normalizeAttendanceKey(value)
+    .replace(/-payrollph$/i, '')
+    .replace(/[^a-z0-9]/g, '');
+const nameTokens = (value) =>
+  normalizeAttendanceKey(value)
+    .split(/\s+/)
+    .map(token => token.replace(/[^a-z0-9]/g, ''))
+    .filter(token => token.length > 1);
 const employeeNameMatchesAttendanceLog = (employee, log) => {
   const logName = normalizeAttendanceKey(log?.employee_name);
   if (!logName) return false;
@@ -38,7 +47,14 @@ const employeeNameMatchesAttendanceLog = (employee, log) => {
 
   const firstName = normalizeAttendanceKey(employee?.first_name);
   const lastName = normalizeAttendanceKey(employee?.last_name);
-  return Boolean(firstName && lastName && logName.includes(firstName) && logName.includes(lastName));
+  if (firstName && lastName && logName.includes(firstName) && logName.includes(lastName)) return true;
+
+  const selectedTokens = new Set(nameTokens(employeeFullName(employee)));
+  const logTokens = nameTokens(logName);
+  const overlap = logTokens.filter(token => selectedTokens.has(token));
+  const firstToken = nameTokens(employee?.first_name)[0];
+
+  return Boolean(firstToken && logTokens.includes(firstToken) && overlap.length >= 2);
 };
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
@@ -840,10 +856,12 @@ export default function Attendance() {
     queryFn: async () => {
       const all = await entities.list('AttendanceLog', '-date', 5000);
       const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
+      const selectedEmployeeCode = normalizeAttendanceCode(selectedEmployee.employee_id);
       const selectedEmployeeName = normalizeAttendanceKey(employeeFullName(selectedEmployee));
       return all.filter(l =>
         (
           normalizeAttendanceKey(l.employee_id) === selectedEmployeeId ||
+          normalizeAttendanceCode(l.employee_id) === selectedEmployeeCode ||
           normalizeAttendanceKey(l.employee_name) === selectedEmployeeName ||
           employeeNameMatchesAttendanceLog(selectedEmployee, l)
         ) &&
