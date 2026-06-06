@@ -256,14 +256,14 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
 
     if (isGateMode) {
       // Just verify identity, pass employee up
-      setResult({ success: true, message: `Welcome, ${emp.first_name}!`, name: `${emp.first_name} ${emp.last_name}` });
+      setResult({ success: true, message: `Welcome, ${emp.first_name}!`, name: [emp.first_name, emp.middle_name, emp.last_name].filter(Boolean).join(' ') });
       setProcessing(false);
       setTimeout(() => { lockedRef.current = false; onEmployeeScanned?.(emp); }, 800);
       return;
     }
 
     // Full attendance logging — use backend function (service role, works on public portal)
-    const empName = `${emp.first_name} ${emp.last_name}`;
+    const empName = [emp.first_name, emp.middle_name, emp.last_name].filter(Boolean).join(' ');
     const location = await captureAttendanceLocation();
     const logRes = await appApi.functions.invoke('logAttendance', { employee_id: emp.employee_id, company_profile_id: emp.company_profile_id || companyProfileId, today, location });
     const { action, log } = logRes;

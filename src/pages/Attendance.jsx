@@ -1330,7 +1330,7 @@ export default function Attendance() {
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{selectedEmployee.first_name} {selectedEmployee.last_name}</h1>
+            <h1 className="text-2xl font-bold text-foreground">{employeeFullName(selectedEmployee)}</h1>
             <p className="text-muted-foreground text-sm mt-0.5">
               Week Covered — {format(weekStart, 'MMM d')} – {format(weekEnd, 'MMM d, yyyy')}
             </p>
