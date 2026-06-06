@@ -821,8 +821,12 @@ export default function Attendance() {
   const { data: logs = [], isLoading: loadingLogs } = useQuery({
     queryKey: ['attendance', selectedEmployee?.employee_id, startStr, endStr],
     queryFn: async () => {
-      const all = await entities.filter('AttendanceLog', { employee_id: selectedEmployee.employee_id, company_profile_id: activeCompanyId });
-      return all.filter(l => l.date >= startStr && l.date <= endStr);
+      const all = await entities.filter('AttendanceLog', { employee_id: selectedEmployee.employee_id });
+      return all.filter(l =>
+        (!l.company_profile_id || l.company_profile_id === activeCompanyId) &&
+        l.date >= startStr &&
+        l.date <= endStr
+      );
     },
     enabled: !!selectedEmployee && !!activeCompanyId,
   });

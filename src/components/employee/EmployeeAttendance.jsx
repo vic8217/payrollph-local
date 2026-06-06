@@ -25,8 +25,11 @@ export default function EmployeeAttendance({ employee }) {
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
 
   const { data: logs = [], isLoading } = useQuery({
-    queryKey: ['employee-attendance', employee?.employee_id, month],
-    queryFn: () => appApi.entities.AttendanceLog.filter({ employee_id: employee.employee_id }),
+    queryKey: ['employee-attendance', employee?.employee_id, employee?.company_profile_id, month],
+    queryFn: async () => {
+      const records = await appApi.entities.AttendanceLog.filter({ employee_id: employee.employee_id });
+      return records.filter(log => !log.company_profile_id || log.company_profile_id === employee.company_profile_id);
+    },
     enabled: !!employee?.employee_id,
   });
 
