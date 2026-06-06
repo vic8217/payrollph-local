@@ -24,6 +24,22 @@ const statusColors = {
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 const normalizeAttendanceKey = (value) => String(value || '').trim().toLowerCase();
+const employeeNameMatchesAttendanceLog = (employee, log) => {
+  const logName = normalizeAttendanceKey(log?.employee_name);
+  if (!logName) return false;
+
+  const nameCandidates = [
+    employeeFullName(employee),
+    [employee?.first_name, employee?.last_name].filter(Boolean).join(' '),
+    [employee?.first_name, employee?.middle_name].filter(Boolean).join(' '),
+  ].map(normalizeAttendanceKey).filter(Boolean);
+
+  if (nameCandidates.some((name) => logName === name)) return true;
+
+  const firstName = normalizeAttendanceKey(employee?.first_name);
+  const lastName = normalizeAttendanceKey(employee?.last_name);
+  return Boolean(firstName && lastName && logName.includes(firstName) && logName.includes(lastName));
+};
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
@@ -828,7 +844,8 @@ export default function Attendance() {
       return all.filter(l =>
         (
           normalizeAttendanceKey(l.employee_id) === selectedEmployeeId ||
-          normalizeAttendanceKey(l.employee_name) === selectedEmployeeName
+          normalizeAttendanceKey(l.employee_name) === selectedEmployeeName ||
+          employeeNameMatchesAttendanceLog(selectedEmployee, l)
         ) &&
         l.date >= startStr &&
         l.date <= endStr

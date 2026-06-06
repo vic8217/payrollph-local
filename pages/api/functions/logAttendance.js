@@ -235,7 +235,7 @@ export default async function handler(req, res) {
 
   const nowDate = new Date();
   const now = nowDate.toISOString();
-  const employeeName = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
+  const employeeName = [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(" ");
   const [lastLog] = existingLogs;
 
   if (!lastLog) {
