@@ -851,26 +851,31 @@ export default function Attendance() {
     enabled: !!activeCompanyId,
   });
 
-  const { data: logs = [], isLoading: loadingLogs } = useQuery({
+  const { data: attendanceData = { logs: [], periodLogs: [] }, isLoading: loadingLogs } = useQuery({
     queryKey: ['attendance', selectedEmployee?.employee_id, employeeFullName(selectedEmployee || {}), activeCompanyId, startStr, endStr],
     queryFn: async () => {
       const all = await entities.list('AttendanceLog', '-date', 5000);
       const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
       const selectedEmployeeCode = normalizeAttendanceCode(selectedEmployee.employee_id);
       const selectedEmployeeName = normalizeAttendanceKey(employeeFullName(selectedEmployee));
-      return all.filter(l =>
+      const periodLogs = all.filter(l => l.date >= startStr && l.date <= endStr);
+      const matchedLogs = periodLogs.filter(l =>
         (
           normalizeAttendanceKey(l.employee_id) === selectedEmployeeId ||
           normalizeAttendanceCode(l.employee_id) === selectedEmployeeCode ||
           normalizeAttendanceKey(l.employee_name) === selectedEmployeeName ||
           employeeNameMatchesAttendanceLog(selectedEmployee, l)
-        ) &&
-        l.date >= startStr &&
-        l.date <= endStr
+        )
       );
+
+      return { logs: matchedLogs, periodLogs };
     },
     enabled: !!selectedEmployee && !!activeCompanyId,
   });
+  const logs = attendanceData.logs || [];
+  const unmatchedPeriodLogs = (attendanceData.periodLogs || [])
+    .filter(log => !logs.some(matched => matched.id === log.id))
+    .slice(0, 8);
 
   const { data: payrollPeriods = [] } = useQuery({
     queryKey: ['payrollPeriods', activeCompanyId],
@@ -1393,7 +1398,40 @@ export default function Attendance() {
               <tbody>
                 {sortedLogs.length === 0 ? (
                   <tr><td colSpan={13} className="text-center py-10 text-muted-foreground">
-                    No attendance records for this week.
+                    <div className="space-y-4">
+                      <p>No attendance records for this week.</p>
+                      {unmatchedPeriodLogs.length > 0 && (
+                        <div className="mx-auto max-w-4xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-left">
+                          <p className="text-xs font-semibold text-amber-800">
+                            Attendance rows exist in this period, but none matched {employeeFullName(selectedEmployee)} / {selectedEmployee.employee_id}.
+                          </p>
+                          <div className="mt-2 overflow-x-auto">
+                            <table className="w-full text-xs text-amber-900">
+                              <thead>
+                                <tr>
+                                  <th className="py-1 pr-3 text-left font-medium">Date</th>
+                                  <th className="py-1 pr-3 text-left font-medium">Employee ID</th>
+                                  <th className="py-1 pr-3 text-left font-medium">Employee Name</th>
+                                  <th className="py-1 pr-3 text-left font-medium">Company ID</th>
+                                  <th className="py-1 pr-3 text-left font-medium">Time In</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {unmatchedPeriodLogs.map(log => (
+                                  <tr key={log.id}>
+                                    <td className="py-1 pr-3">{log.date || '—'}</td>
+                                    <td className="py-1 pr-3">{log.employee_id || '—'}</td>
+                                    <td className="py-1 pr-3">{log.employee_name || '—'}</td>
+                                    <td className="py-1 pr-3">{log.company_profile_id || '—'}</td>
+                                    <td className="py-1 pr-3">{log.time_in ? format(new Date(log.time_in), 'hh:mm a') : '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </td></tr>
                 ) : (
 	                  sortedLogs.map(log => {
