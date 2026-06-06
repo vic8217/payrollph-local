@@ -38,10 +38,24 @@ const S = {
   warningText: { fontSize: '6px', fontWeight: 600, color: '#92400e', margin: 0 },
 };
 
+function employeeQrValue(employee) {
+  if (!employee) return '';
+
+  const employeeId = employee.employee_id || employee.qr_code?.replace(/-PayrollPH$/i, '');
+  if (!employee.id && !employee.company_profile_id) return employeeId || '';
+
+  const params = new URLSearchParams();
+  if (employeeId) params.set('employee_id', employeeId);
+  if (employee.id) params.set('employee_record_id', employee.id);
+  if (employee.company_profile_id) params.set('company_profile_id', employee.company_profile_id);
+
+  return `payrollph://employee-attendance?${params.toString()}`;
+}
+
 export default function EmployeeIdCard({ employee, company }) {
   const qrRef = useRef(null);
   const [logoFailed, setLogoFailed] = useState(false);
-  const qrValue = employee?.employee_id || employee?.qr_code?.replace(/-PayrollPH$/i, '');
+  const qrValue = employeeQrValue(employee);
 
   useEffect(() => {
     setLogoFailed(false);

@@ -307,6 +307,9 @@ function entityUrl(entity, params = {}) {
 }
 
 const entities = {
+  list(entity, sort, limit) {
+    return requestJson(entityUrl(entity, { sort, limit }));
+  },
   filter(entity, filter = {}, sort, limit) {
     return requestJson(entityUrl(entity, { filter, sort, limit }));
   },

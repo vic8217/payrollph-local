@@ -203,6 +203,7 @@ export default async function handler(req, res) {
   }
 
   const employeeId = req.body?.employee_id;
+  const employeeRecordId = String(req.body?.employee_record_id || "").trim();
   const companyProfileId = String(req.body?.company_profile_id || "").trim();
   const date = req.body?.today || todayInManila();
   const location = req.body?.location;
@@ -215,9 +216,11 @@ export default async function handler(req, res) {
     filter: { employee_id: employeeId },
     limit: 2000,
   });
-  const employee = companyProfileId
-    ? matchingEmployees.find((item) => String(item.company_profile_id || "") === companyProfileId) || matchingEmployees[0]
-    : matchingEmployees[0];
+  const employee = employeeRecordId
+    ? matchingEmployees.find((item) => String(item.id || "") === employeeRecordId) || matchingEmployees[0]
+    : companyProfileId
+      ? matchingEmployees.find((item) => String(item.company_profile_id || "") === companyProfileId) || matchingEmployees[0]
+      : matchingEmployees[0];
 
   if (!employee) {
     return res.status(404).json({ error: "Employee not found" });

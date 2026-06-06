@@ -265,7 +265,13 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
     // Full attendance logging — use backend function (service role, works on public portal)
     const empName = [emp.first_name, emp.middle_name, emp.last_name].filter(Boolean).join(' ');
     const location = await captureAttendanceLocation();
-    const logRes = await appApi.functions.invoke('logAttendance', { employee_id: emp.employee_id, company_profile_id: emp.company_profile_id || companyProfileId, today, location });
+    const logRes = await appApi.functions.invoke('logAttendance', {
+      employee_id: emp.employee_id,
+      employee_record_id: emp.id,
+      company_profile_id: emp.company_profile_id || companyProfileId,
+      today,
+      location,
+    });
     const { action, log } = logRes;
     const now = new Date();
     if (logRes.duplicate) {

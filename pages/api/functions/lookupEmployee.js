@@ -11,6 +11,10 @@ function normalizeCode(value) {
     .toUpperCase();
 }
 
+function cleanRawValue(value) {
+  return String(value || "").trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
+}
+
 function isActiveEmployee(employee) {
   return String(employee?.status || "active").toLowerCase() === "active";
 }
@@ -29,7 +33,7 @@ function addCandidate(set, value) {
 }
 
 function codeCandidates(value) {
-  const raw = String(value || "").trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
+  const raw = cleanRawValue(value);
   const candidates = new Set();
   addCandidate(candidates, raw);
 
@@ -51,21 +55,69 @@ function codeCandidates(value) {
   return [...candidates].filter(Boolean);
 }
 
+function metadataCandidates(value) {
+  const raw = cleanRawValue(value);
+  const metadata = {
+    employeeRecordIds: new Set(),
+    companyProfileIds: new Set(),
+  };
+
+  const addRecordId = (item) => {
+    const cleaned = cleanRawValue(safeDecode(item));
+    if (cleaned) metadata.employeeRecordIds.add(cleaned);
+  };
+  const addCompanyId = (item) => {
+    const cleaned = cleanRawValue(safeDecode(item));
+    if (cleaned) metadata.companyProfileIds.add(cleaned);
+  };
+
+  try {
+    const url = new URL(raw);
+    ["employee_record_id", "record_id", "entity_id"].forEach((key) => addRecordId(url.searchParams.get(key)));
+    ["company_profile_id", "companyProfileId", "company_id", "companyId"].forEach((key) => addCompanyId(url.searchParams.get(key)));
+  } catch {
+    // Not a URL; continue with generic extraction.
+  }
+
+  const recordMatches = raw.match(/(?:employee_record_id|record_id|entity_id)=([^&\s,|;]+)/gi) || [];
+  recordMatches.forEach((match) => addRecordId(match.replace(/^[^=]+=/, "")));
+
+  const companyMatches = raw.match(/(?:company_profile_id|companyProfileId|company_id|companyId)=([^&\s,|;]+)/gi) || [];
+  companyMatches.forEach((match) => addCompanyId(match.replace(/^[^=]+=/, "")));
+
+  return {
+    employeeRecordIds: [...metadata.employeeRecordIds],
+    companyProfileIds: [...metadata.companyProfileIds],
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const code = String(req.body?.code || "").trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
-  const companyProfileId = String(req.body?.company_profile_id || "").trim();
+  const code = cleanRawValue(req.body?.code);
+  const requestedCompanyProfileId = cleanRawValue(req.body?.company_profile_id);
   if (!code) {
     return res.status(400).json({ error: "Employee code is required" });
   }
 
   const scannedCandidates = codeCandidates(code);
+  const scannedMetadata = metadataCandidates(code);
+  if (requestedCompanyProfileId) scannedMetadata.companyProfileIds.push(requestedCompanyProfileId);
 
   const employees = await listRecords("Employee", { limit: 2000 });
+  const activeEmployees = employees.filter(isActiveEmployee);
+
+  const recordMatchedEmployee = scannedMetadata.employeeRecordIds.length
+    ? activeEmployees.find((emp) => scannedMetadata.employeeRecordIds.includes(String(emp.id || "")))
+    : null;
+
+  if (recordMatchedEmployee) {
+    return res.status(200).json({ employee: recordMatchedEmployee });
+  }
+
   const employeeMatches = employees.filter((emp) => {
     if (!isActiveEmployee(emp)) return false;
     const employeeCandidates = [
@@ -74,8 +126,8 @@ export default async function handler(req, res) {
     ];
     return scannedCandidates.some((candidate) => employeeCandidates.includes(candidate));
   });
-  const employee = companyProfileId
-    ? employeeMatches.find((emp) => String(emp.company_profile_id || "") === companyProfileId) || employeeMatches[0]
+  const employee = scannedMetadata.companyProfileIds.length
+    ? employeeMatches.find((emp) => scannedMetadata.companyProfileIds.includes(String(emp.company_profile_id || ""))) || employeeMatches[0]
     : employeeMatches[0];
 
   if (employee) {
