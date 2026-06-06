@@ -108,6 +108,37 @@ function scheduledBreak(employee, date) {
   };
 }
 
+function scheduledBreakAfterTimeIn(employee, date, timeInValue) {
+  const autoBreak = scheduledBreak(employee, date);
+  const timeIn = timeInValue ? new Date(timeInValue) : null;
+  const breakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
+
+  if (!timeIn || !breakOut || !Number.isFinite(timeIn.getTime()) || !Number.isFinite(breakOut.getTime())) {
+    return null;
+  }
+
+  return breakOut.getTime() > timeIn.getTime() ? autoBreak : null;
+}
+
+function legacyShiftTimes(value) {
+  if (value === "night_shift") return { shift_start_time: "20:00", overtime_start_time: "05:30" };
+  return { shift_start_time: "08:00", overtime_start_time: "17:30" };
+}
+
+function resolveEmployeeShiftOptions(employee, shiftSettings) {
+  const defaultShift = shiftSettings.find(setting => setting.is_default) || shiftSettings[0] || {};
+  const shiftValue = employee?.work_schedule || defaultShift.id || "day_shift";
+  const shift = shiftSettings.find(setting => String(setting.id) === String(shiftValue)) || defaultShift;
+  const fallbackShift = legacyShiftTimes(shiftValue);
+
+  return {
+    shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
+    overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
+    timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
+    breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+  };
+}
+
 function getBreakDurationMinutes(employee) {
   const minutes = Number(employee?.break_duration_minutes);
   return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
@@ -204,13 +235,14 @@ export default async function handler(req, res) {
   const [lastLog] = existingLogs;
 
   if (!lastLog) {
-    const autoBreak = scheduledBreak(employee, date);
+    const autoBreak = scheduledBreakAfterTimeIn(employee, date, now);
     const log = await createRecord("AttendanceLog", {
       company_profile_id: employee.company_profile_id,
       employee_id: employee.employee_id,
       employee_name: employeeName,
       date,
       time_in: now,
+      work_schedule: employee.work_schedule,
       ...(autoBreak || {}),
       ...locationUpdateFor("time_in", location),
       status: "pending",
@@ -220,7 +252,7 @@ export default async function handler(req, res) {
   }
 
   let currentLog = lastLog;
-  const autoBreak = scheduledBreak(employee, date);
+  const autoBreak = scheduledBreakAfterTimeIn(employee, date, currentLog.time_in);
   const lastPunch = lastManualPunch(currentLog);
   if (lastPunch && minutesSince(lastPunch, nowDate) < DUPLICATE_SCAN_WINDOW_MS) {
     return rejectRapidScan(res, currentLog, "duplicate_scan");
@@ -285,21 +317,20 @@ export default async function handler(req, res) {
       return rejectRapidScan(res, currentLog, "break_time_in", "Last scan was just recorded. Please wait before recording Time Out.");
     }
 
-    const [defaultShift] = await listRecords("Settings", {
-      filter: { company_profile_id: employee.company_profile_id, is_default: true },
-      limit: 1,
+    const shiftSettings = await listRecords("Settings", {
+      filter: { company_profile_id: employee.company_profile_id },
     });
+    const shiftOptions = resolveEmployeeShiftOptions(
+      { ...employee, work_schedule: currentLog.work_schedule || employee.work_schedule },
+      shiftSettings,
+    );
     const completedLog = { ...currentLog, time_out: now };
     const hoursWorked = computeCreditedHoursWorked(completedLog, {
-      shiftStartTime: defaultShift?.shift_start_time || "08:00",
-      timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
-      breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
+      ...shiftOptions,
       breakDurationMinutes: getBreakDurationMinutes(employee),
     });
     const overtimeHours = computeOvertimeHours(completedLog, hoursWorked, {
-      shiftStartTime: defaultShift?.shift_start_time || "08:00",
-      overtimeStartTime: defaultShift?.overtime_start_time || "17:30",
-      breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
+      ...shiftOptions,
       breakDurationMinutes: getBreakDurationMinutes(employee),
     });
     const log = await updateRecord("AttendanceLog", currentLog.id, {

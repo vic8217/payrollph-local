@@ -296,32 +296,32 @@ export default function Landing() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-r from-fuchsia-500 via-violet-500 to-blue-600 p-4 md:p-7">
-      <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-[1080px] overflow-hidden rounded-xl bg-white shadow-[0_25px_60px_rgba(28,28,45,0.35)] md:min-h-[640px]">
-        <section className="relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-sky-500 via-indigo-500 to-fuchsia-500 p-12 text-white md:block">
+    <div className="landing-auth-page min-h-screen bg-gradient-to-r from-fuchsia-500 via-violet-500 to-blue-600">
+      <div className="landing-auth-shell mx-auto flex overflow-hidden rounded-xl bg-white shadow-[0_25px_60px_rgba(28,28,45,0.35)]">
+        <section className="landing-auth-hero relative overflow-hidden bg-gradient-to-br from-sky-500 via-indigo-500 to-fuchsia-500 text-white">
           <div className="absolute -left-24 -top-20 h-56 w-56 rounded-full bg-white/20 blur-sm" />
           <div className="absolute left-8 top-20 h-24 w-24 rounded-full bg-cyan-300/40" />
           <div className="absolute bottom-40 right-10 h-28 w-28 rounded-full bg-white/15" />
-          <div className="absolute -bottom-20 -left-8 h-52 w-[120%] rounded-[50%] bg-white/95" />
+          <div className="landing-auth-wave absolute -left-8 w-[120%] rounded-[50%] bg-white/95" />
           <div className="absolute right-10 top-28 h-44 w-72 rounded-[45%] bg-violet-400/35 blur-[1px]" />
           <div className="absolute left-16 bottom-40 h-24 w-24 rounded-full bg-blue-700/45" />
 
-          <div className="relative z-10 mt-40 space-y-4">
-            <h1 className="text-5xl font-medium leading-tight tracking-tight">Welcome Page</h1>
-            <p className="max-w-xs text-sm tracking-wide text-white/85">
+          <div className="landing-auth-hero-copy relative z-10 space-y-4">
+            <h1 className="text-4xl font-medium leading-tight tracking-tight md:text-5xl">Welcome Page</h1>
+            <p className="max-w-md text-sm tracking-wide text-white/85 xl:text-base">
               Sign in to your account and manage payroll, attendance, and employee workflows.
             </p>
           </div>
 
-          <p className="absolute bottom-10 left-12 text-xs tracking-[0.35em] text-slate-800/70">
+          <p className="landing-auth-url absolute text-xs tracking-[0.35em] text-slate-800/70 xl:left-16 2xl:left-20">
             WWW.PAYROLLPH.LOCAL
           </p>
         </section>
 
-        <section className="w-full p-6 md:w-1/2 md:px-14 md:py-16">
-          <div className="mx-auto w-full max-w-[360px]">
-            <p className="text-[22px] leading-none text-slate-700">Hello !</p>
-            <p className="mt-1 text-[30px] font-semibold leading-none text-violet-600">{greeting}</p>
+        <section className="landing-auth-form-panel flex items-center">
+          <div className="landing-auth-form mx-auto w-full">
+            <p className="text-[22px] leading-none text-slate-700 xl:text-2xl">Hello !</p>
+            <p className="mt-1 text-[30px] font-semibold leading-none text-violet-600 xl:text-4xl">{greeting}</p>
 
             {authMode.startsWith("reset") ? (
               <button
@@ -337,7 +337,7 @@ export default function Landing() {
                 Back to login
               </button>
             ) : (
-              <div className="mt-10 grid grid-cols-2 rounded-md bg-muted p-1">
+              <div className="landing-auth-tabs mt-10 grid grid-cols-2 rounded-md bg-muted p-1">
                 <button
                   type="button"
                   onClick={() => setAuthMode("login")}
@@ -366,8 +366,8 @@ export default function Landing() {
             )}
 
             {authMode === "login" ? (
-              <form onSubmit={handleLogin} className="mt-8 space-y-5">
-                <p className="text-base font-medium text-foreground">Login Your Account</p>
+              <form onSubmit={handleLogin} className="landing-auth-fields mt-8 space-y-5 xl:space-y-6">
+                <p className="text-base font-medium text-foreground xl:text-lg">Login Your Account</p>
                 <div className="space-y-2">
                   <Label htmlFor="login-email" className="text-[11px] tracking-[0.28em] text-slate-400">
                     EMAIL ADDRESS
@@ -434,7 +434,7 @@ export default function Landing() {
                 </p>
               </form>
             ) : authMode === "register" ? (
-              <form onSubmit={handleRegister} className="mt-8 space-y-4">
+              <form onSubmit={handleRegister} className="landing-auth-fields mt-8 space-y-4">
                 <p className="text-base font-medium text-foreground">Create Account</p>
                 <div className="space-y-2">
                   <Label htmlFor="register-name" className="text-[11px] tracking-[0.28em] text-slate-400">
@@ -542,7 +542,7 @@ export default function Landing() {
                 </p>
               </form>
             ) : authMode === "reset-request" ? (
-              <form onSubmit={showSuperAdminRecovery ? handleSuperAdminRecovery : handlePasscodeReset} className="mt-8 space-y-4">
+              <form onSubmit={showSuperAdminRecovery ? handleSuperAdminRecovery : handlePasscodeReset} className="landing-auth-fields mt-8 space-y-4">
                 <div className="space-y-1">
                   <p className="flex items-center gap-2 text-base font-medium text-foreground">
                     <KeyRound className="h-4 w-4 text-violet-600" />
@@ -643,7 +643,7 @@ export default function Landing() {
                 </button>
               </form>
             ) : (
-              <form onSubmit={handlePasswordReset} className="mt-8 space-y-5">
+              <form onSubmit={handlePasswordReset} className="landing-auth-fields mt-8 space-y-5">
                 <div className="space-y-1">
                   <p className="flex items-center gap-2 text-base font-medium text-foreground">
                     <KeyRound className="h-4 w-4 text-violet-600" />

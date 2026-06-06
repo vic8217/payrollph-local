@@ -54,6 +54,49 @@ function scheduledBreak(employee, date) {
   };
 }
 
+function scheduledBreakAfterTimeIn(employee, date, timeInValue) {
+  const autoBreak = scheduledBreak(employee, date);
+  const timeIn = timeInValue ? new Date(timeInValue) : null;
+  const breakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
+
+  if (!timeIn || !breakOut || !Number.isFinite(timeIn.getTime()) || !Number.isFinite(breakOut.getTime())) {
+    return null;
+  }
+
+  return breakOut.getTime() > timeIn.getTime() ? autoBreak : null;
+}
+
+function isPastAutoScheduledBreak(log, employee) {
+  const autoBreak = scheduledBreak(employee, log?.date);
+  const timeIn = log?.time_in ? new Date(log.time_in) : null;
+  const breakOut = log?.break_time_out ? new Date(log.break_time_out) : null;
+  const scheduledBreakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
+
+  if (!timeIn || !breakOut || !scheduledBreakOut) return false;
+  if (![timeIn, breakOut, scheduledBreakOut].every(date => Number.isFinite(date.getTime()))) return false;
+
+  return breakOut.getTime() === scheduledBreakOut.getTime() && breakOut.getTime() <= timeIn.getTime();
+}
+
+function legacyShiftTimes(value) {
+  if (value === 'night_shift') return { shift_start_time: '20:00', overtime_start_time: '05:30' };
+  return { shift_start_time: '08:00', overtime_start_time: '17:30' };
+}
+
+function resolveEmployeeShiftOptions(employee, shiftSettings) {
+  const defaultShift = shiftSettings.find(setting => setting.is_default) || shiftSettings[0] || {};
+  const shiftValue = employee?.work_schedule || defaultShift.id || 'day_shift';
+  const shift = shiftSettings.find(setting => String(setting.id) === String(shiftValue)) || defaultShift;
+  const fallbackShift = legacyShiftTimes(shiftValue);
+
+  return {
+    shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
+    overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
+    timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
+    breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+  };
+}
+
 function getBreakDurationMinutes(employee) {
   const minutes = Number(employee?.break_duration_minutes);
   return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
@@ -278,7 +321,8 @@ export default function ScanConfirm() {
         employee_name: `${employee.first_name} ${employee.last_name}`,
         date: today,
         time_in: effectiveTimeIn,
-        ...(scheduledBreak(employee, today) || {}),
+        work_schedule: employee.work_schedule,
+        ...(scheduledBreakAfterTimeIn(employee, today, effectiveTimeIn) || {}),
         day_type: 'regular',
         status: 'pending',
         ...photoUpdates,
@@ -286,7 +330,7 @@ export default function ScanConfirm() {
       });
       setDone({ action: 'time_in', employee, lunchSnapped: isLunchWindow });
     } else if (action === 'break_time_in' && todayLog) {
-      const autoBreak = scheduledBreak(employee, today);
+      const autoBreak = scheduledBreakAfterTimeIn(employee, today, todayLog.time_in);
       await appApi.entities.AttendanceLog.update(todayLog.id, {
         ...(!todayLog.break_time_out && autoBreak ? { break_time_out: autoBreak.break_time_out } : {}),
         break_time_in: now,
@@ -295,14 +339,19 @@ export default function ScanConfirm() {
       });
       setDone({ action: 'break_time_in', employee });
     } else if (action === 'time_out' && todayLog) {
-      const autoBreak = scheduledBreak(employee, today);
+      const autoBreak = scheduledBreakAfterTimeIn(employee, today, todayLog.time_in);
+      const shouldClearPastBreakOut = isPastAutoScheduledBreak(todayLog, employee);
       const breakUpdates = autoBreak ? {
         ...(!todayLog.break_time_out ? { break_time_out: autoBreak.break_time_out } : {}),
         ...(isAutoScheduledBreakIn(employee, today, todayLog.break_time_in) ? { break_time_in: null } : {}),
+      } : shouldClearPastBreakOut ? {
+        break_time_out: null,
+        break_time_in: null,
       } : {};
-      const effectiveBreakOut = breakUpdates.break_time_out || todayLog.break_time_out;
+      const effectiveBreakOut = breakUpdates.break_time_out === null ? null : breakUpdates.break_time_out || todayLog.break_time_out;
       const effectiveBreakIn = breakUpdates.break_time_in === null ? null : todayLog.break_time_in;
-      const [defaultShift] = await appApi.entities.Settings.filter({ company_profile_id: employee.company_profile_id, is_default: true }, undefined, 1);
+      const shiftSettings = await appApi.entities.Settings.filter({ company_profile_id: employee.company_profile_id });
+      const shiftOptions = resolveEmployeeShiftOptions(employee, shiftSettings);
       const hoursWorked = computeCreditedHoursWorked({
         ...todayLog,
         ...breakUpdates,
@@ -310,9 +359,7 @@ export default function ScanConfirm() {
         break_time_out: effectiveBreakOut,
         break_time_in: effectiveBreakIn,
       }, {
-        shiftStartTime: defaultShift?.shift_start_time || '08:00',
-        timeInAllowanceMinutes: defaultShift?.time_in_allowance_minutes || 0,
-        breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
+        ...shiftOptions,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       const overtimeHours = computeOvertimeHours({
@@ -322,9 +369,7 @@ export default function ScanConfirm() {
         break_time_out: effectiveBreakOut,
         break_time_in: effectiveBreakIn,
       }, hoursWorked, {
-        shiftStartTime: defaultShift?.shift_start_time || '08:00',
-        overtimeStartTime: defaultShift?.overtime_start_time || '17:30',
-        breakInGraceMinutes: defaultShift?.grace_period_minutes || 0,
+        ...shiftOptions,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       const timeIn = new Date(todayLog.time_in);

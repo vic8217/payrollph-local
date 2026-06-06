@@ -31,6 +31,18 @@ function scheduledBreak(employee, date) {
   };
 }
 
+function scheduledBreakAfterTimeIn(employee, date, timeInValue) {
+  const autoBreak = scheduledBreak(employee, date);
+  const timeIn = timeInValue ? new Date(timeInValue) : null;
+  const breakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
+
+  if (!timeIn || !breakOut || !Number.isFinite(timeIn.getTime()) || !Number.isFinite(breakOut.getTime())) {
+    return null;
+  }
+
+  return breakOut.getTime() > timeIn.getTime() ? autoBreak : null;
+}
+
 function getBreakDurationMinutes(employee) {
   const minutes = Number(employee?.break_duration_minutes);
   return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
@@ -129,9 +141,12 @@ export default function QRScanner() {
 
     let action;
     const hasActualBreakIn = todayLog?.break_time_in && !isAutoScheduledBreakIn(employee, today, todayLog.break_time_in);
+    const applicableScheduledBreak = todayLog?.time_in
+      ? scheduledBreakAfterTimeIn(employee, today, todayLog.time_in)
+      : null;
     if (!todayLog || !todayLog.time_in) {
       action = 'time_in';
-    } else if (employee.break_time && !hasActualBreakIn && !todayLog.time_out) {
+    } else if (applicableScheduledBreak && !hasActualBreakIn && !todayLog.time_out) {
       const lastPunch = lastManualPunch(todayLog);
       if (minutesSince(lastPunch, now) < DUPLICATE_SCAN_WINDOW_MS) {
         setScanError('Scan already recorded. Please wait before scanning again.');
@@ -141,8 +156,8 @@ export default function QRScanner() {
       }
 
       const autoBreakIn = scheduledBreakIn(employee, today);
-      const isScheduledBreakOut = todayLog.break_time_out && scheduledBreak(employee, today)?.break_time_out &&
-        new Date(todayLog.break_time_out).getTime() === new Date(scheduledBreak(employee, today).break_time_out).getTime();
+      const isScheduledBreakOut = todayLog.break_time_out &&
+        new Date(todayLog.break_time_out).getTime() === new Date(applicableScheduledBreak.break_time_out).getTime();
       if (isScheduledBreakOut && autoBreakIn && now.getTime() < new Date(autoBreakIn).getTime()) {
         const durationLabel = getBreakDurationMinutes(employee) === 30 ? '30-minute' : '1-hour';
         setScanError(`Break In is not available until the scheduled ${durationLabel} break is over.`);

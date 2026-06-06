@@ -77,3 +77,183 @@
     @apply bg-background text-foreground font-inter;
   }
 }
+
+@layer components {
+  .landing-auth-page {
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    overflow-x: hidden;
+    padding: 1rem;
+  }
+
+  .landing-auth-shell {
+    display: flex;
+    flex-direction: column;
+    max-width: 1120px;
+    min-height: auto;
+    width: 100%;
+  }
+
+  .landing-auth-hero {
+    min-height: 300px;
+    padding: 2rem;
+  }
+
+  .landing-auth-form {
+    max-width: 420px;
+  }
+
+  .landing-auth-form-panel {
+    justify-content: center;
+    min-height: 430px;
+    padding: 2rem;
+    width: 100%;
+  }
+
+  .landing-auth-hero-copy {
+    margin-top: 4.5rem;
+  }
+
+  .landing-auth-wave {
+    bottom: -4.5rem;
+    height: 9rem;
+  }
+
+  .landing-auth-url {
+    bottom: 2rem;
+    left: 2rem;
+  }
+
+  .landing-auth-tabs button {
+    min-height: 2.875rem;
+    font-size: 0.9375rem;
+  }
+
+  .landing-auth-tabs svg {
+    height: 1.0625rem;
+    width: 1.0625rem;
+  }
+
+  .landing-auth-fields label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
+  .landing-auth-fields input:not([type="checkbox"]) {
+    height: 3.25rem;
+    font-size: 1rem;
+    padding-bottom: 0.75rem;
+    padding-top: 0.75rem;
+  }
+
+  .landing-auth-fields input[type="checkbox"] {
+    height: 1rem;
+    width: 1rem;
+  }
+
+  .landing-auth-fields > p:first-child {
+    font-size: 1.125rem;
+  }
+
+  .landing-auth-fields .flex.items-center.justify-between,
+  .landing-auth-fields > p:last-child {
+    font-size: 0.8125rem;
+  }
+
+  .landing-auth-fields button[type="submit"] {
+    height: 3.25rem;
+    font-size: 0.875rem;
+  }
+
+  @media (min-width: 768px) {
+    .landing-auth-page {
+      padding: 2rem;
+    }
+
+    .landing-auth-shell {
+      flex-direction: row;
+      height: clamp(650px, calc(100vh - 4rem), 720px);
+      min-height: 650px;
+      width: min(92vw, 1120px);
+    }
+
+    .landing-auth-hero {
+      flex: 0 0 45%;
+      min-height: auto;
+      padding: 3rem;
+      width: 45%;
+    }
+
+    .landing-auth-wave {
+      bottom: -5rem;
+      height: 13rem;
+    }
+
+    .landing-auth-url {
+      bottom: 2.5rem;
+      left: 3rem;
+    }
+
+    .landing-auth-form-panel {
+      flex: 0 0 55%;
+      min-height: auto;
+      padding: 3rem 4rem;
+      width: 55%;
+    }
+
+    .landing-auth-hero-copy {
+      margin-top: 8rem;
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .landing-auth-page {
+      padding: 2rem;
+    }
+
+    .landing-auth-shell {
+      width: min(92vw, 1180px);
+    }
+
+    .landing-auth-hero {
+      padding: 3.5rem;
+    }
+
+    .landing-auth-form-panel {
+      padding: 3.5rem 4.5rem;
+    }
+
+    .landing-auth-form {
+      max-width: 420px;
+    }
+
+    .landing-auth-tabs button {
+      min-height: 3rem;
+      font-size: 0.9375rem;
+    }
+
+    .landing-auth-fields label {
+      font-size: 0.8125rem;
+    }
+
+    .landing-auth-fields input:not([type="checkbox"]) {
+      height: 3.5rem;
+      font-size: 1.0625rem;
+    }
+
+    .landing-auth-fields > p:first-child {
+      font-size: 1.25rem;
+    }
+
+    .landing-auth-fields .flex.items-center.justify-between,
+    .landing-auth-fields > p:last-child {
+      font-size: 0.875rem;
+    }
+
+    .landing-auth-fields button[type="submit"] {
+      height: 3.5rem;
+      font-size: 0.9375rem;
+    }
+  }
+}

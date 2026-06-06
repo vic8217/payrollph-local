@@ -43,6 +43,7 @@
  * @property {number=} breakInGraceMinutes
  * @property {number=} breakDurationMinutes
  * @property {string=} overtimeStartTime
+ * @property {(log: PayrollLog, employee?: EmployeePayrollInfo) => HoursComputationOptions=} resolveLogOptions
  */
 
 // SSS Contribution Table effective January 2025 and used for 2026.
@@ -473,8 +474,15 @@ export function computeWeeklyPayroll(
 
 	// No-work days declared by management (no work = no pay, except regular holiday still pays)
 	const noWorkDaySet = new Set((noWorkDays || []).map((d) => d.date));
+	const resolveLogOptions =
+		typeof options.resolveLogOptions === 'function'
+			? options.resolveLogOptions
+			: null;
 
 	for (const log of attendanceLogs.filter((l) => l.status !== 'pending')) {
+		const logOptions = resolveLogOptions
+			? { ...options, ...resolveLogOptions(log, employee) }
+			: options;
 		const logDate = log.date || '';
 		const dayType = resolvePayDayType(log, holidayMap[logDate] || []);
 		const holidayMultiplier = getHolidayMultiplier(dayType, !!log.time_in);
@@ -503,7 +511,7 @@ export function computeWeeklyPayroll(
 		const multiplier = getHolidayMultiplier(dayType, worked);
 		if (worked) workedDays++;
 
-		const hoursWorked = computeCreditedHoursWorked(log, options);
+		const hoursWorked = computeCreditedHoursWorked(log, logOptions);
 		totalHoursWorked += hoursWorked;
 		const effectivePay = dailyRate * multiplier;
 
@@ -541,8 +549,8 @@ export function computeWeeklyPayroll(
 		}
 
 		// Overtime
-		const overtimeHours = options.overtimeStartTime
-			? computeOvertimeHours(log, hoursWorked, options)
+		const overtimeHours = logOptions.overtimeStartTime
+			? computeOvertimeHours(log, hoursWorked, logOptions)
 			: Number(log.overtime_hours) || 0;
 		if (overtimeHours > 0) {
 			totalOvertimeHours += overtimeHours;

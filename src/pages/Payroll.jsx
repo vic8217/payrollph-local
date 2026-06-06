@@ -134,6 +134,24 @@ function money(value) {
   return parseFloat((Number(value) || 0).toFixed(2));
 }
 
+function legacyShiftTimes(value) {
+  if (value === 'night_shift') return { shift_start_time: '20:00', overtime_start_time: '05:30' };
+  return { shift_start_time: '08:00', overtime_start_time: '17:30' };
+}
+
+function resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift) {
+  const shiftValue = log?.work_schedule || employee?.work_schedule || defaultShift?.id || 'day_shift';
+  const shift = shiftSettings.find(setting => String(setting.id) === String(shiftValue)) || defaultShift || {};
+  const fallbackShift = legacyShiftTimes(shiftValue);
+
+  return {
+    shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
+    overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
+    timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
+    breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+  };
+}
+
 /**
  * @param {string} startDate
  * @param {string} endDate
@@ -565,6 +583,10 @@ export default function Payroll() {
           timeInAllowanceMinutes,
           breakInGraceMinutes: gracePeriodMinutes,
           breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
+          resolveLogOptions: (log) => ({
+            ...resolveShiftOptionsForLog(log, emp, shiftSettings, defaultShift),
+            breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
+          }),
         }
       );
       const incentiveDetails = automaticIncentivesForEmployee(
