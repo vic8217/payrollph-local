@@ -203,6 +203,7 @@ export default async function handler(req, res) {
   }
 
   const employeeId = req.body?.employee_id;
+  const companyProfileId = String(req.body?.company_profile_id || "").trim();
   const date = req.body?.today || todayInManila();
   const location = req.body?.location;
 
@@ -210,10 +211,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "employee_id is required" });
   }
 
-  const [employee] = await listRecords("Employee", {
+  const matchingEmployees = await listRecords("Employee", {
     filter: { employee_id: employeeId },
-    limit: 1,
+    limit: 2000,
   });
+  const employee = companyProfileId
+    ? matchingEmployees.find((item) => String(item.company_profile_id || "") === companyProfileId) || matchingEmployees[0]
+    : matchingEmployees[0];
 
   if (!employee) {
     return res.status(404).json({ error: "Employee not found" });

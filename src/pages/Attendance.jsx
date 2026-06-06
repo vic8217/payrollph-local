@@ -23,6 +23,7 @@ const statusColors = {
 
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
+const normalizeAttendanceKey = (value) => String(value || '').trim().toLowerCase();
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
@@ -819,11 +820,16 @@ export default function Attendance() {
   });
 
   const { data: logs = [], isLoading: loadingLogs } = useQuery({
-    queryKey: ['attendance', selectedEmployee?.employee_id, startStr, endStr],
+    queryKey: ['attendance', selectedEmployee?.employee_id, employeeFullName(selectedEmployee || {}), activeCompanyId, startStr, endStr],
     queryFn: async () => {
-      const all = await entities.filter('AttendanceLog', { employee_id: selectedEmployee.employee_id });
+      const all = await entities.list('AttendanceLog', '-date', 5000);
+      const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
+      const selectedEmployeeName = normalizeAttendanceKey(employeeFullName(selectedEmployee));
       return all.filter(l =>
-        (!l.company_profile_id || l.company_profile_id === activeCompanyId) &&
+        (
+          normalizeAttendanceKey(l.employee_id) === selectedEmployeeId ||
+          normalizeAttendanceKey(l.employee_name) === selectedEmployeeName
+        ) &&
         l.date >= startStr &&
         l.date <= endStr
       );

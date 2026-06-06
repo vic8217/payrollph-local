@@ -31,6 +31,11 @@ const employeePhotoUrl = (employee) =>
   employee.photo_url || employee.photo || employee.image || employee.picture || '';
 
 const normalizeEmployeeId = (value) => String(value || '').trim().toLowerCase();
+const normalizeEmployeeStatus = (value) => String(value || 'active').trim().toLowerCase() || 'active';
+const employeeStatusLabel = (value) => {
+  const status = normalizeEmployeeStatus(value);
+  return status.charAt(0).toUpperCase() + status.slice(1);
+};
 
 const defaultIncentiveSettings = {
   attendance: {
@@ -241,15 +246,15 @@ export default function Employees() {
   });
 
   const statusCounts = employees.reduce((counts, employee) => {
-    const status = employee.status || 'active';
+    const status = normalizeEmployeeStatus(employee.status);
     counts[status] = (counts[status] || 0) + 1;
     return counts;
   }, {});
-  const currentCount = employees.filter(e => e.status !== 'archived').length;
+  const currentCount = employees.filter(e => normalizeEmployeeStatus(e.status) !== 'archived').length;
 
   const filtered = employees.filter(e =>
     (statusFilter === 'all' ||
-      (statusFilter === 'current' ? e.status !== 'archived' : e.status === statusFilter)) &&
+      (statusFilter === 'current' ? normalizeEmployeeStatus(e.status) !== 'archived' : normalizeEmployeeStatus(e.status) === statusFilter)) &&
     `${employeeFullName(e)} ${e.employee_id} ${e.department}`.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -464,12 +469,13 @@ export default function Employees() {
             const fullName = employeeFullName(emp);
             const initials = employeeInitials(emp) || '?';
             const photoUrl = employeePhotoUrl(emp);
+            const status = normalizeEmployeeStatus(emp.status);
 
             return (
             <Card key={emp.id} className="border border-border shadow-sm hover:shadow-md transition-shadow">
               <CardContent className="p-4 relative">
                 <div className="absolute right-4 top-4">
-                  {emp.status === 'archived' ? (
+                  {status === 'archived' ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -484,8 +490,8 @@ export default function Employees() {
                       size="icon"
                       variant="outline"
                       className="h-8 w-8 text-muted-foreground hover:bg-muted"
-                      disabled={emp.status !== 'resigned' || updateStatusMutation.isPending}
-                      title={emp.status === 'resigned' ? 'Archive resigned employee' : 'Tag employee as resigned before archiving'}
+                      disabled={status !== 'resigned' || updateStatusMutation.isPending}
+                      title={status === 'resigned' ? 'Archive resigned employee' : 'Tag employee as resigned before archiving'}
                       onClick={() => { if (confirm('Archive this resigned employee?')) updateStatusMutation.mutate({ id: emp.id, status: 'archived' }); }}
                     >
                       <Archive className="w-3.5 h-3.5" />
@@ -507,8 +513,8 @@ export default function Employees() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-sm text-foreground truncate">{fullName}</p>
-                      <Badge className={`text-xs capitalize px-1.5 py-0.5 ${statusColor[emp.status] || ''}`} variant="outline">
-                        {emp.status}
+                      <Badge className={`shrink-0 text-[11px] font-medium px-2 py-0.5 leading-none ${statusColor[status] || statusColor.active}`} variant="outline">
+                        {employeeStatusLabel(status)}
                       </Badge>
                     </div>
                     {emp.position && <p className="text-xs text-primary font-medium">{emp.position}</p>}
@@ -521,7 +527,7 @@ export default function Employees() {
                      <FileText className="w-3.5 h-3.5" /> 201 File
                    </Button>
 
-                   {emp.status !== 'archived' && (
+                   {status !== 'archived' && (
                      <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => setIdEmployee(emp)}>
                        <CreditCard className="w-3.5 h-3.5" /> ID
                      </Button>
@@ -529,12 +535,12 @@ export default function Employees() {
                    <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => { setEditEmployee(emp); setShowForm(true); }}>
                      <Edit2 className="w-3.5 h-3.5" /> Edit
                    </Button>
-                   {emp.status !== 'archived' && (
+                   {status !== 'archived' && (
                      <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => openIncentiveDialog(emp)}>
                        <Gift className="w-3.5 h-3.5" /> Incentives
                      </Button>
                    )}
-                   {emp.status !== 'archived' && emp.status !== 'resigned' && (
+                   {status !== 'archived' && status !== 'resigned' && (
                      <Button
                        size="sm"
                        variant="outline"

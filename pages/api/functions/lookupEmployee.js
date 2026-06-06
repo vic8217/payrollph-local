@@ -58,6 +58,7 @@ export default async function handler(req, res) {
   }
 
   const code = String(req.body?.code || "").trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
+  const companyProfileId = String(req.body?.company_profile_id || "").trim();
   if (!code) {
     return res.status(400).json({ error: "Employee code is required" });
   }
@@ -65,7 +66,7 @@ export default async function handler(req, res) {
   const scannedCandidates = codeCandidates(code);
 
   const employees = await listRecords("Employee", { limit: 2000 });
-  const employee = employees.find((emp) => {
+  const employeeMatches = employees.filter((emp) => {
     if (!isActiveEmployee(emp)) return false;
     const employeeCandidates = [
       ...codeCandidates(emp.employee_id),
@@ -73,6 +74,9 @@ export default async function handler(req, res) {
     ];
     return scannedCandidates.some((candidate) => employeeCandidates.includes(candidate));
   });
+  const employee = companyProfileId
+    ? employeeMatches.find((emp) => String(emp.company_profile_id || "") === companyProfileId) || employeeMatches[0]
+    : employeeMatches[0];
 
   if (employee) {
     return res.status(200).json({ employee });

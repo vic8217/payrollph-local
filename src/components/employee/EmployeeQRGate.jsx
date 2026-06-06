@@ -94,8 +94,9 @@ function captureAttendanceLocation() {
  * @param {(employee: Employee) => void=} props.onEmployeeScanned
  * @param {(info: AttendanceInfo) => void=} props.onAttendanceLogged
  * @param {string=} props.promptMessage
+ * @param {string=} props.companyProfileId
  */
-export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, promptMessage }) {
+export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, promptMessage, companyProfileId }) {
   const [mode, setMode] = useState('camera');
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
@@ -239,7 +240,7 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
     // Use backend function (service role) so it works even when user is not logged in
     let emp = null;
     try {
-      const res = await appApi.functions.invoke('lookupEmployee', { code: trimmed });
+      const res = await appApi.functions.invoke('lookupEmployee', { code: trimmed, company_profile_id: companyProfileId });
       emp = res.employee;
     } catch {
       emp = null;
@@ -264,7 +265,7 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
     // Full attendance logging — use backend function (service role, works on public portal)
     const empName = `${emp.first_name} ${emp.last_name}`;
     const location = await captureAttendanceLocation();
-    const logRes = await appApi.functions.invoke('logAttendance', { employee_id: emp.employee_id, today, location });
+    const logRes = await appApi.functions.invoke('logAttendance', { employee_id: emp.employee_id, company_profile_id: emp.company_profile_id || companyProfileId, today, location });
     const { action, log } = logRes;
     const now = new Date();
     if (logRes.duplicate) {

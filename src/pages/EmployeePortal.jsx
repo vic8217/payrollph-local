@@ -8,6 +8,7 @@ import EmployeeProfile from '@/components/employee/EmployeeProfile';
 import EmployeePolicies from '@/components/employee/EmployeePolicies';
 import EmployeeVehicleTripReport from '@/components/employee/EmployeeVehicleTripReport';
 import EmployeePersonalLeave from '@/components/employee/EmployeePersonalLeave';
+import { useCompany } from '@/lib/CompanyContext';
 
 const tabs = [
   { id: 'scan', label: 'Attendance Logger', icon: QrCode },
@@ -39,6 +40,7 @@ export default function EmployeePortal() {
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error | uploading
   const [photoSubmitError, setPhotoSubmitError] = useState('');
   const [photoCaptureKey, setPhotoCaptureKey] = useState(0);
+  const { activeCompanyId } = useCompany();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -183,12 +185,14 @@ export default function EmployeePortal() {
         {activeTab === 'scan' && (
           <EmployeeQRGate
             key={scanKey}
+            companyProfileId={activeCompanyId}
             onAttendanceLogged={(info) => setScanConfirm(info)}
           />
         )}
         {showGate && (
           <EmployeeQRGate
             key={`${activeTab}-${scanKey}`}
+            companyProfileId={activeCompanyId}
             onEmployeeScanned={handleEmployeeScanned}
             promptMessage={`Scan your QR code to access ${tabs.find(t => t.id === activeTab)?.label}`}
           />
