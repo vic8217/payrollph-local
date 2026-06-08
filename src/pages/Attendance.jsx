@@ -28,34 +28,6 @@ const normalizeAttendanceCode = (value) =>
   normalizeAttendanceKey(value)
     .replace(/-payrollph$/i, '')
     .replace(/[^a-z0-9]/g, '');
-const nameTokens = (value) =>
-  normalizeAttendanceKey(value)
-    .split(/\s+/)
-    .map(token => token.replace(/[^a-z0-9]/g, ''))
-    .filter(token => token.length > 1);
-const employeeNameMatchesAttendanceLog = (employee, log) => {
-  const logName = normalizeAttendanceKey(log?.employee_name);
-  if (!logName) return false;
-
-  const nameCandidates = [
-    employeeFullName(employee),
-    [employee?.first_name, employee?.last_name].filter(Boolean).join(' '),
-    [employee?.first_name, employee?.middle_name].filter(Boolean).join(' '),
-  ].map(normalizeAttendanceKey).filter(Boolean);
-
-  if (nameCandidates.some((name) => logName === name)) return true;
-
-  const firstName = normalizeAttendanceKey(employee?.first_name);
-  const lastName = normalizeAttendanceKey(employee?.last_name);
-  if (firstName && lastName && logName.includes(firstName) && logName.includes(lastName)) return true;
-
-  const selectedTokens = new Set(nameTokens(employeeFullName(employee)));
-  const logTokens = nameTokens(logName);
-  const overlap = logTokens.filter(token => selectedTokens.has(token));
-  const firstToken = nameTokens(employee?.first_name)[0];
-
-  return Boolean(firstToken && logTokens.includes(firstToken) && overlap.length >= 2);
-};
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
@@ -855,21 +827,23 @@ export default function Attendance() {
   });
 
   const { data: attendanceData = { logs: [], periodLogs: [] }, isLoading: loadingLogs } = useQuery({
-    queryKey: ['attendance', selectedEmployee?.employee_id, employeeFullName(selectedEmployee || {}), activeCompanyId, startStr, endStr],
+    queryKey: ['attendance', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId, startStr, endStr],
     queryFn: async () => {
       const all = await entities.list('AttendanceLog', '-date', 5000);
+      const selectedRecordId = String(selectedEmployee.id || '');
       const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
       const selectedEmployeeCode = normalizeAttendanceCode(selectedEmployee.employee_id);
-      const selectedEmployeeName = normalizeAttendanceKey(employeeFullName(selectedEmployee));
       const periodLogs = all.filter(l => l.date >= startStr && l.date <= endStr);
-      const matchedLogs = periodLogs.filter(l =>
-        (
+      const matchedLogs = periodLogs.filter(l => {
+        const logCompanyId = String(l.company_profile_id || '');
+        const sameCompany = !logCompanyId || logCompanyId === String(activeCompanyId);
+        const sameRecord = selectedRecordId && String(l.employee_record_id || '') === selectedRecordId;
+        const sameEmployeeId =
           normalizeAttendanceKey(l.employee_id) === selectedEmployeeId ||
-          normalizeAttendanceCode(l.employee_id) === selectedEmployeeCode ||
-          normalizeAttendanceKey(l.employee_name) === selectedEmployeeName ||
-          employeeNameMatchesAttendanceLog(selectedEmployee, l)
-        )
-      );
+          normalizeAttendanceCode(l.employee_id) === selectedEmployeeCode;
+
+        return sameCompany && (sameRecord || sameEmployeeId);
+      });
 
       return { logs: matchedLogs, periodLogs, recentLogs: all.slice(0, 8) };
     },

@@ -245,6 +245,7 @@ export default async function handler(req, res) {
     const autoBreak = scheduledBreakAfterTimeIn(employee, date, now);
     const log = await createRecord("AttendanceLog", {
       company_profile_id: employee.company_profile_id,
+      employee_record_id: employee.id,
       employee_id: employee.employee_id,
       employee_name: employeeName,
       date,

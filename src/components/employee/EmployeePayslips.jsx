@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { appApi } from '@/lib/appApi';
 import { FileText } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import PayslipView from '@/components/payroll/PayslipView';
+import { useCompany } from '@/lib/CompanyContext';
+import { fetchEmployeePayrollRecords, isReleasedPayslip } from '@/lib/payslipRecords';
 
 const statusColors = {
   draft: 'bg-gray-100 text-gray-600',
@@ -14,14 +15,17 @@ const statusColors = {
 
 export default function EmployeePayslips({ employee }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const { activeCompanyId } = useCompany();
 
-  const { data: records = [], isLoading } = useQuery({
-    queryKey: ['myPayrollRecords', employee?.employee_id],
-    queryFn: () => appApi.entities.PayrollRecord.filter({ employee_id: employee.employee_id, status: 'released' }),
-    enabled: !!employee,
+  const { data: allRecords = [], isLoading } = useQuery({
+    queryKey: ['myPayrollRecords', employee?.employee_id, activeCompanyId],
+    queryFn: () => fetchEmployeePayrollRecords(employee, employee.company_profile_id || activeCompanyId),
+    enabled: !!employee?.employee_id,
   });
 
+  const records = allRecords.filter(isReleasedPayslip);
   const sorted = [...records].sort((a, b) => (b.created_date || '').localeCompare(a.created_date || ''));
+  const hasUnreleasedPayroll = allRecords.length > records.length;
 
   if (!employee) return (
     <div className="p-6 text-center text-muted-foreground text-sm">
@@ -38,7 +42,9 @@ export default function EmployeePayslips({ employee }) {
       {isLoading ? (
         <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" /></div>
       ) : sorted.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground text-sm">No payslips yet.</div>
+        <div className="text-center py-16 text-muted-foreground text-sm">
+          {hasUnreleasedPayroll ? 'Payroll was generated but has not been released yet.' : 'No payslips yet.'}
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="space-y-2">
