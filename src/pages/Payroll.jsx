@@ -609,13 +609,18 @@ export default function Payroll() {
 
       // Upsert payroll record
       const existing = await entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });
+      const recordStatus = period.status === 'released'
+        ? 'released'
+        : period.status === 'approved'
+          ? 'approved'
+          : 'draft';
       const recordData = {
         payroll_period_id: period.id,
         period_name: periodName,
         employee_id: emp.employee_id,
         employee_name: `${emp.first_name} ${emp.last_name}`,
         department: emp.department,
-        status: 'draft',
+        status: recordStatus,
         company_profile_id: activeCompanyId,
         incentive_settings: emp.incentive_settings || {},
         cash_advance_deduction_details: cashAdvanceDeductionDetails,
