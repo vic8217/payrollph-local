@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 
 const dayTypeColors = {
   regular: 'bg-blue-50 text-blue-700',
+  half_day: 'bg-amber-50 text-amber-700',
   rest_day: 'bg-purple-50 text-purple-700',
   regular_holiday: 'bg-red-50 text-red-700',
   special_holiday: 'bg-orange-50 text-orange-700',
@@ -15,6 +16,7 @@ const dayTypeColors = {
 
 const dayTypeLabels = {
   regular: 'Regular',
+  half_day: 'Half Day',
   rest_day: 'Rest Day',
   regular_holiday: 'Regular Holiday',
   special_holiday: 'Special Non-Working Holiday',

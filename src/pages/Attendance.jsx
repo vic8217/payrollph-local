@@ -142,6 +142,7 @@ function scheduledBreakIn(employee, date) {
 }
 
 function isBreakTimeInMissing(log, employee, now = new Date()) {
+  if (log?.day_type === 'half_day') return false;
   if (!log?.time_in || log.break_time_in || !employee?.break_time) return false;
 
   const autoBreak = scheduledBreakAfterTimeIn(employee, log.date, log.time_in);
@@ -1580,6 +1581,7 @@ export default function Attendance() {
                             <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="regular">Regular</SelectItem>
+                              <SelectItem value="half_day">Half Day</SelectItem>
                               <SelectItem value="rest_day">Rest Day</SelectItem>
                               <SelectItem value="regular_holiday">Regular Holiday</SelectItem>
                               <SelectItem value="special_holiday">Special Non-Working Holiday</SelectItem>
