@@ -1,14 +1,10 @@
 // @ts-nocheck
 import { createRecord, listRecords, updateRecord } from "@/server/entityStore";
+import { manilaDateString } from "@/lib/dateUtils";
 import { computeCreditedHoursWorked, computeOvertimeHours } from "@/lib/payrollUtils";
 
 function todayInManila() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  return manilaDateString();
 }
 
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
@@ -187,6 +183,15 @@ function lastManualPunch(log) {
     .sort((a, b) => b.time - a.time)[0]?.value || null;
 }
 
+function attendanceLogManilaDate(log) {
+  const firstPunch = [log?.time_in, log?.break_time_out, log?.break_time_in, log?.time_out]
+    .filter(Boolean)
+    .map((value) => new Date(value))
+    .find((value) => Number.isFinite(value.getTime()));
+
+  return firstPunch ? manilaDateString(firstPunch) : null;
+}
+
 function rejectRapidScan(res, log, action, message = "Scan already recorded. Please wait before scanning again.") {
   return res.status(200).json({
     action,
@@ -205,7 +210,7 @@ export default async function handler(req, res) {
   const employeeId = req.body?.employee_id;
   const employeeRecordId = String(req.body?.employee_record_id || "").trim();
   const companyProfileId = String(req.body?.company_profile_id || "").trim();
-  const date = req.body?.today || todayInManila();
+  const date = todayInManila();
   const location = req.body?.location;
 
   if (!employeeId) {
@@ -226,20 +231,25 @@ export default async function handler(req, res) {
     return res.status(404).json({ error: "Employee not found" });
   }
 
-  const existingLogs = await listRecords("AttendanceLog", {
+  const employeeLogs = await listRecords("AttendanceLog", {
     filter: {
       employee_id: employeeId,
-      date,
       company_profile_id: employee.company_profile_id,
     },
     sort: "-created_date",
-    limit: 1,
+    limit: 20,
   });
+  const existingLogs = employeeLogs.filter((log) =>
+    log.date === date || attendanceLogManilaDate(log) === date
+  );
 
   const nowDate = new Date();
   const now = nowDate.toISOString();
   const employeeName = [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(" ");
-  const [lastLog] = existingLogs;
+  let [lastLog] = existingLogs;
+  if (lastLog && lastLog.date !== date) {
+    lastLog = await updateRecord("AttendanceLog", lastLog.id, { date });
+  }
 
   if (!lastLog) {
     const autoBreak = scheduledBreakAfterTimeIn(employee, date, now);

@@ -5,11 +5,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { KeyRound, RefreshCw, Copy, Check, ShieldAlert, UserCheck, Briefcase } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
+import { manilaDateString } from '@/lib/dateUtils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-
-const TODAY = format(new Date(), 'yyyy-MM-dd');
 
 function generatePasscode() {
   return String(Math.floor(100000 + Math.random() * 900000));
@@ -20,6 +19,7 @@ export default function PasscodeManager() {
   const qc = useQueryClient();
   const [copied, setCopied] = useState(''); // 'hr' | 'manager' | ''
   const { activeCompanyId } = useCompany();
+  const TODAY = manilaDateString();
 
   const { data: passcodes = [], isLoading } = useQuery({
     queryKey: ['dailyPasscodes', activeCompanyId],

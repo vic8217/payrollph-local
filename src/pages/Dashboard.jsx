@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import { useCompany } from '@/lib/CompanyContext';
+import { manilaDateString } from '@/lib/dateUtils';
 
 function StatCard({ title, value, icon: Icon, color, sub }) {
   return (
@@ -48,7 +49,7 @@ export default function Dashboard() {
   });
   const { data: todayAttendance = [] } = useQuery({
     queryKey: ['todayAttendance', activeCompanyId],
-    queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId, date: format(new Date(), 'yyyy-MM-dd') }),
+    queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId, date: manilaDateString() }),
     enabled: !!activeCompanyId,
   });
 

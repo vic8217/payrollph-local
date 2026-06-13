@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, format } from 'date-fns';
 import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 import { computeCreditedHoursWorked, computeOvertimeHours } from '@/lib/payrollUtils';
+import { manilaDateString } from '@/lib/dateUtils';
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -319,7 +320,7 @@ async function uploadFile(file) {
 
 // ── Edit Attendance Modal ──
 function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions, onClose, onSave, currentUser, activeCompanyId, canCorrectAttendance = false }) {
-  const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
+  const TODAY_STR = manilaDateString();
 
   // Step 1: passcode gate. Step 2: actual edit form.
   const [step, setStep] = useState('passcode'); // 'passcode' | 'edit'
@@ -332,6 +333,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const [breakOut, setBreakOut] = useState(log.break_time_out ? format(new Date(log.break_time_out), "HH:mm") : '');
   const [breakIn, setBreakIn] = useState(log.break_time_in ? format(new Date(log.break_time_in), "HH:mm") : '');
   const [timeOut, setTimeOut] = useState(log.time_out ? format(new Date(log.time_out), "HH:mm") : '');
+  const [attendanceDate, setAttendanceDate] = useState(log.date || '');
   const [workSchedule, setWorkSchedule] = useState(log.work_schedule || defaultWorkSchedule || 'day_shift');
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
@@ -347,6 +349,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const canEditBreakOut = canCorrectAttendance || (!isApprovedLog && !log.break_time_out);
   const canEditBreakIn = canCorrectAttendance || (!isApprovedLog && !log.break_time_in);
   const canEditTimeOut = canCorrectAttendance || (!isApprovedLog && !log.time_out);
+  const canEditAttendanceDate = canCorrectAttendance;
 
   // Start camera only after passcode is verified
   useEffect(() => {
@@ -445,11 +448,15 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     applyField('break_time_out', breakOut, canEditBreakOut);
     applyField('break_time_in', breakIn, canEditBreakIn);
     applyField('time_out', timeOut, canEditTimeOut);
+    if (canEditAttendanceDate && attendanceDate && attendanceDate !== log.date) {
+      updates.date = attendanceDate;
+    }
     if (workSchedule !== (log.work_schedule || defaultWorkSchedule || 'day_shift')) {
       updates.work_schedule = workSchedule;
     }
 
     const pick = (key) => (key in updates ? updates[key] : log[key]);
+    const effDate = pick('date');
     const effTimeIn = pick('time_in');
     const effBreakOut = pick('break_time_out');
     const effBreakIn = pick('break_time_in');
@@ -462,6 +469,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       const fallbackShift = legacyShiftTimes(selectedShift.value);
       const hrs = computeCreditedHoursWorked({
         ...log,
+        date: effDate,
         time_in: effTimeIn,
         break_time_out: effBreakOut,
         break_time_in: effBreakIn,
@@ -475,6 +483,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       updates.hours_worked = parseFloat(hrs.toFixed(2));
       updates.overtime_hours = computeOvertimeHours({
         ...log,
+        date: effDate,
         time_in: effTimeIn,
         break_time_out: effBreakOut,
         break_time_in: effBreakIn,
@@ -502,11 +511,14 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     }
 
     const editKind = canCorrectAttendance ? 'Attendance correction' : 'Manual edit';
+    const dateCorrectionNote = updates.date
+      ? ` | Date corrected: ${log.date || 'none'} to ${updates.date}`
+      : '';
     const recomputeNote = 'hours_worked' in updates
       ? ` | Recomputed: ${updates.hours_worked}h worked, ${updates.overtime_hours}h OT`
       : '';
     const previousNotes = log.notes ? `${log.notes}\n` : '';
-    updates.notes = `${previousNotes}${editKind} by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}${recomputeNote}${photoUrl ? ` | Audit photo: ${photoUrl}` : ''}`;
+    updates.notes = `${previousNotes}${editKind} by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}${dateCorrectionNote}${recomputeNote}${photoUrl ? ` | Audit photo: ${photoUrl}` : ''}`;
 
     await onSave(log.id, updates);
     setSaving(false);
@@ -568,9 +580,26 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
 
             <p className="text-xs text-muted-foreground">
               {canCorrectAttendance
-                ? 'Admins can correct any punch, including on approved records. Hours worked and overtime are recomputed automatically when saved. Clear a field to remove a punch.'
+                ? 'Admins can correct the attendance date and any punch, including on approved records. Hours worked and overtime are recomputed automatically when saved. Clear a field to remove a punch.'
                 : 'Only missing time fields can be filled in. Shift can be corrected for this attendance record.'}
             </p>
+
+            {canEditAttendanceDate && (
+              <div>
+                <label className="text-sm font-medium text-foreground">Attendance Date</label>
+                <Input
+                  type="date"
+                  value={attendanceDate}
+                  onChange={e => setAttendanceDate(e.target.value)}
+                  className="mt-1"
+                />
+                {attendanceDate !== log.date && (
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    This moves the record from {log.date || 'no date'} to {attendanceDate}.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="text-sm font-medium text-foreground">Shift</label>
@@ -719,7 +748,7 @@ function InlineLocationButton({ locationItem, log, onView }) {
 }
 
 function ShiftPasscodeModal({ log, shift, currentUser, activeCompanyId, onClose, onConfirm }) {
-  const TODAY_STR = format(new Date(), 'yyyy-MM-dd');
+  const TODAY_STR = manilaDateString();
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState('');
   const [verifying, setVerifying] = useState(false);

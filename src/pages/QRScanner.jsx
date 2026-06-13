@@ -7,6 +7,7 @@ import { QrCode, Camera, CameraOff, Keyboard, XCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { manilaDateString } from '@/lib/dateUtils';
 import { format } from 'date-fns';
 
 const normalizeQrValue = (value) => String(value || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/-PayrollPH$/i, '');
@@ -81,6 +82,15 @@ function lastManualPunch(log) {
     .sort((a, b) => b.time - a.time)[0]?.value || null;
 }
 
+function attendanceLogManilaDate(log) {
+  const firstPunch = [log?.time_in, log?.break_time_out, log?.break_time_in, log?.time_out]
+    .filter(Boolean)
+    .map(value => new Date(value))
+    .find(value => Number.isFinite(value.getTime()));
+
+  return firstPunch ? manilaDateString(firstPunch) : null;
+}
+
 export default function QRScanner() {
   const navigate = useNavigate();
   const [scanInput, setScanInput] = useState('');
@@ -133,10 +143,17 @@ export default function QRScanner() {
       return;
     }
 
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const existing = await appApi.entities.AttendanceLog.filter({ employee_id: employee.employee_id, date: today });
+    const today = manilaDateString();
+    const employeeLogs = await appApi.entities.AttendanceLog.filter({ employee_id: employee.employee_id });
+    const existing = employeeLogs.filter(log => {
+      const sameCompany = !log.company_profile_id || log.company_profile_id === employee.company_profile_id;
+      return sameCompany && (log.date === today || attendanceLogManilaDate(log) === today);
+    });
     const sorted = existing.sort((a, b) => (b.time_in || '').localeCompare(a.time_in || ''));
-    const todayLog = sorted[0];
+    let todayLog = sorted[0];
+    if (todayLog && todayLog.date !== today) {
+      todayLog = await appApi.entities.AttendanceLog.update(todayLog.id, { date: today });
+    }
     const now = new Date();
 
     let action;

@@ -6,6 +6,7 @@ import { format } from 'date-fns';
 import { LogIn, LogOut, Camera, CameraOff, CheckCircle2, AlertTriangle, Shield, UserCheck, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { manilaDateString } from '@/lib/dateUtils';
 
 const LABOR_CODE_INFO = {
   time_in: {
@@ -296,7 +297,7 @@ export default function ScanConfirm() {
     }
 
     setConfirming(true);
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const today = manilaDateString();
     const now = new Date().toISOString();
     let photoUpdates = {};
     try {

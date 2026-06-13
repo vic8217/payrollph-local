@@ -108,7 +108,6 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
   const startingRef = useRef(false);
   const startTokenRef = useRef(0);
   const lockedRef = useRef(false); // sync lock to prevent multiple scans
-  const today = format(new Date(), 'yyyy-MM-dd');
   const isGateMode = !!promptMessage; // gate mode = just verify, don't log attendance
   const readerId = isGateMode ? 'employee-qr-gate-reader' : 'employee-attendance-reader';
 
@@ -269,7 +268,6 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
       employee_id: emp.employee_id,
       employee_record_id: emp.id,
       company_profile_id: emp.company_profile_id || companyProfileId,
-      today,
       location,
     });
     const { action, log } = logRes;
