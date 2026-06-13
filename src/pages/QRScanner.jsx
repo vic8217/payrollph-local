@@ -62,11 +62,6 @@ function scheduledBreakIn(employee, date) {
   return new Date(`${breakInDate}T${breakInTime}:00+08:00`).toISOString();
 }
 
-function isAutoScheduledBreakIn(employee, date, value) {
-  const autoBreakIn = scheduledBreakIn(employee, date);
-  return !!value && !!autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime();
-}
-
 function minutesSince(value, now = new Date()) {
   if (!value) return Infinity;
   const time = new Date(value).getTime();
@@ -157,7 +152,7 @@ export default function QRScanner() {
     const now = new Date();
 
     let action;
-    const hasActualBreakIn = todayLog?.break_time_in && !isAutoScheduledBreakIn(employee, today, todayLog.break_time_in);
+    const hasActualBreakIn = Boolean(todayLog?.break_time_in);
     const applicableScheduledBreak = todayLog?.time_in
       ? scheduledBreakAfterTimeIn(employee, today, todayLog.time_in)
       : null;

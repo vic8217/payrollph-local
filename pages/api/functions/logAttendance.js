@@ -163,11 +163,6 @@ function scheduledBreakIn(employee, date) {
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
 }
 
-function isAutoScheduledBreakIn(employee, date, value) {
-  const autoBreakIn = scheduledBreakIn(employee, date);
-  return Boolean(value && autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime());
-}
-
 function minutesSince(value, now = new Date()) {
   if (!value) return Infinity;
   const time = new Date(value).getTime();
@@ -279,12 +274,6 @@ export default async function handler(req, res) {
   if (autoBreak && !currentLog.break_time_out) {
     currentLog = await updateRecord("AttendanceLog", currentLog.id, {
       break_time_out: autoBreak.break_time_out,
-    });
-  }
-
-  if (isAutoScheduledBreakIn(employee, date, currentLog.break_time_in)) {
-    currentLog = await updateRecord("AttendanceLog", currentLog.id, {
-      break_time_in: null,
     });
   }
 

@@ -184,6 +184,14 @@ function isFinalTimeOutMissing(log, employee, shift, now = new Date()) {
   return now.getTime() >= missingAfter.getTime();
 }
 
+function missingAttendanceFields(log, employee, shift, now = new Date()) {
+  const missing = [];
+  if (!log?.time_in) missing.push('Time In(1)');
+  if (isBreakTimeInMissing(log, employee, now)) missing.push('Time In(2)');
+  if (isFinalTimeOutMissing(log, employee, shift, now)) missing.push('Time Out(2)');
+  return missing;
+}
+
 const punchPhotoFields = [
   { action: 'time_in', label: 'Time In(1)', timeField: 'time_in', photoField: 'time_in_photo_url', locationField: 'time_in_location' },
   { action: 'break_time_out', label: 'Time Out(1)', timeField: 'break_time_out', photoField: 'break_time_out_photo_url', locationField: 'break_time_out_location' },
@@ -941,6 +949,20 @@ export default function Attendance() {
     });
   };
 
+  const handleApproveLog = (log) => {
+    const logShiftValue = getLogShiftValue(log);
+    const logShift = getShiftOption(shiftOptions, logShiftValue, defaultShiftValue);
+    const logEmployee = { ...selectedEmployee, work_schedule: logShiftValue };
+    const missing = missingAttendanceFields(log, logEmployee, logShift, currentTime);
+
+    if (missing.length > 0) {
+      alert(`Cannot approve this attendance while ${missing.join(', ')} is still marked Missing. Please edit the missing field first.`);
+      return;
+    }
+
+    approveMutation.mutate({ id: log.id, status: 'approved' });
+  };
+
   const savePendingShiftEdit = async ({ notes }) => {
     if (!pendingShiftEdit) return;
     const previousNotes = pendingShiftEdit.log.notes ? `${pendingShiftEdit.log.notes}\n` : '';
@@ -978,10 +1000,8 @@ export default function Attendance() {
 
     const logsNeedingBreak = logs.filter(log => {
       const autoBreakOut = scheduledBreakAfterTimeIn(selectedEmployee, log.date, log.time_in);
-      const autoBreakIn = scheduledBreakIn(selectedEmployee, log.date);
-      const shouldClearAutoBreakIn = log.break_time_in && autoBreakIn && new Date(log.break_time_in).getTime() === new Date(autoBreakIn).getTime();
       const shouldClearPastBreakOut = isPastAutoScheduledBreak(log, selectedEmployee);
-      return log.time_in && ((autoBreakOut && (!log.break_time_out || shouldClearAutoBreakIn)) || shouldClearPastBreakOut);
+      return log.time_in && ((autoBreakOut && !log.break_time_out) || shouldClearPastBreakOut);
     });
 
     if (logsNeedingBreak.length === 0) return;
@@ -990,17 +1010,15 @@ export default function Attendance() {
     const applyScheduledBreaks = async () => {
       await Promise.all(logsNeedingBreak.map(log => {
         const autoBreak = scheduledBreakAfterTimeIn(selectedEmployee, log.date, log.time_in);
-        const autoBreakIn = scheduledBreakIn(selectedEmployee, log.date);
-        const shouldClearAutoBreakIn = log.break_time_in && autoBreakIn && new Date(log.break_time_in).getTime() === new Date(autoBreakIn).getTime();
         const shouldClearPastBreakOut = isPastAutoScheduledBreak(log, selectedEmployee);
         const updates = {
           ...(!log.break_time_out && autoBreak ? { break_time_out: autoBreak.break_time_out } : {}),
           ...(shouldClearPastBreakOut ? { break_time_out: null } : {}),
-          ...(shouldClearAutoBreakIn || shouldClearPastBreakOut ? { break_time_in: null } : {}),
+          ...(shouldClearPastBreakOut ? { break_time_in: null } : {}),
         };
 
         const effectiveBreakOut = shouldClearPastBreakOut ? null : updates.break_time_out || log.break_time_out;
-        const effectiveBreakIn = shouldClearAutoBreakIn || shouldClearPastBreakOut ? null : log.break_time_in;
+        const effectiveBreakIn = shouldClearPastBreakOut ? null : log.break_time_in;
         if (log.time_out) {
           const computationOptions = getLogComputationOptions(log);
           const hoursWorked = computeCreditedHoursWorked({
@@ -1486,8 +1504,10 @@ export default function Attendance() {
 	                    const logWorkSchedule = getLogShiftValue(log);
 	                    const logShift = getShiftOption(shiftOptions, logWorkSchedule, defaultShiftValue);
 	                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
-	                    const breakTimeInMissing = isBreakTimeInMissing(log, logEmployee, currentTime);
-	                    const finalTimeOutMissing = isFinalTimeOutMissing(log, logEmployee, logShift, currentTime);
+	                    const missingFields = missingAttendanceFields(log, logEmployee, logShift, currentTime);
+	                    const breakTimeInMissing = missingFields.includes('Time In(2)');
+	                    const finalTimeOutMissing = missingFields.includes('Time Out(2)');
+                      const approvalBlocked = missingFields.length > 0;
 	                    const timeInPhoto = attendancePhotoItem(log, 'time_in');
 	                    const breakOutPhoto = attendancePhotoItem(log, 'break_time_out');
 	                    const breakInPhoto = attendancePhotoItem(log, 'break_time_in');
@@ -1577,9 +1597,11 @@ export default function Attendance() {
                               onClick={() => setEditingLog(log)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:bg-green-50"
-                              title="Approve attendance"
-                              onClick={() => approveMutation.mutate({ id: log.id, status: 'approved' })}>
+                            <Button size="icon" variant="ghost"
+                              className={`h-7 w-7 ${approvalBlocked ? 'text-muted-foreground opacity-50 cursor-not-allowed' : 'text-green-600 hover:bg-green-50'}`}
+                              title={approvalBlocked ? `Cannot approve while ${missingFields.join(', ')} is Missing` : 'Approve attendance'}
+                              disabled={approvalBlocked}
+                              onClick={() => handleApproveLog(log)}>
                               <CheckCircle2 className="w-4 h-4" />
                               <span className="sr-only">Approve attendance</span>
                             </Button>

@@ -124,11 +124,6 @@ function scheduledBreakIn(employee, date) {
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
 }
 
-function isAutoScheduledBreakIn(employee, date, value) {
-  const autoBreakIn = scheduledBreakIn(employee, date);
-  return !!value && !!autoBreakIn && new Date(value).getTime() === new Date(autoBreakIn).getTime();
-}
-
 const attendancePhotoFields = {
   time_in: 'time_in_photo_url',
   break_time_out: 'break_time_out_photo_url',
@@ -344,7 +339,6 @@ export default function ScanConfirm() {
       const shouldClearPastBreakOut = isPastAutoScheduledBreak(todayLog, employee);
       const breakUpdates = autoBreak ? {
         ...(!todayLog.break_time_out ? { break_time_out: autoBreak.break_time_out } : {}),
-        ...(isAutoScheduledBreakIn(employee, today, todayLog.break_time_in) ? { break_time_in: null } : {}),
       } : shouldClearPastBreakOut ? {
         break_time_out: null,
         break_time_in: null,
