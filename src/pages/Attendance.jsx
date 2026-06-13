@@ -343,6 +343,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const [breakIn, setBreakIn] = useState(log.break_time_in ? format(new Date(log.break_time_in), "HH:mm") : '');
   const [timeOut, setTimeOut] = useState(log.time_out ? format(new Date(log.time_out), "HH:mm") : '');
   const [attendanceDate, setAttendanceDate] = useState(log.date || '');
+  const [dayType, setDayType] = useState(log.day_type || 'regular');
   const [workSchedule, setWorkSchedule] = useState(log.work_schedule || defaultWorkSchedule || 'day_shift');
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
@@ -460,6 +461,9 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     if (canEditAttendanceDate && attendanceDate && attendanceDate !== log.date) {
       updates.date = attendanceDate;
     }
+    if (dayType !== (log.day_type || 'regular')) {
+      updates.day_type = dayType;
+    }
     if (workSchedule !== (log.work_schedule || defaultWorkSchedule || 'day_shift')) {
       updates.work_schedule = workSchedule;
     }
@@ -523,11 +527,14 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     const dateCorrectionNote = updates.date
       ? ` | Date corrected: ${log.date || 'none'} to ${updates.date}`
       : '';
+    const dayTypeCorrectionNote = updates.day_type
+      ? ` | Day type corrected: ${log.day_type || 'regular'} to ${updates.day_type}`
+      : '';
     const recomputeNote = 'hours_worked' in updates
       ? ` | Recomputed: ${updates.hours_worked}h worked, ${updates.overtime_hours}h OT`
       : '';
     const previousNotes = log.notes ? `${log.notes}\n` : '';
-    updates.notes = `${previousNotes}${editKind} by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}${dateCorrectionNote}${recomputeNote}${photoUrl ? ` | Audit photo: ${photoUrl}` : ''}`;
+    updates.notes = `${previousNotes}${editKind} by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}${dateCorrectionNote}${dayTypeCorrectionNote}${recomputeNote}${photoUrl ? ` | Audit photo: ${photoUrl}` : ''}`;
 
     await onSave(log.id, updates);
     setSaving(false);
@@ -609,6 +616,23 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
                 )}
               </div>
             )}
+
+            <div>
+              <label className="text-sm font-medium text-foreground">Day Type</label>
+              <Select value={dayType} onValueChange={setDayType}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="regular">Regular</SelectItem>
+                  <SelectItem value="half_day">Half Day</SelectItem>
+                  <SelectItem value="rest_day">Rest Day</SelectItem>
+                  <SelectItem value="regular_holiday">Regular Holiday</SelectItem>
+                  <SelectItem value="special_holiday">Special Non-Working Holiday</SelectItem>
+                  <SelectItem value="special_working_holiday">Special Working Holiday</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
             <div>
               <label className="text-sm font-medium text-foreground">Shift</label>
@@ -829,6 +853,94 @@ function ShiftPasscodeModal({ log, shift, currentUser, activeCompanyId, onClose,
   );
 }
 
+function RejectAttendanceModal({ log, currentUser, activeCompanyId, onClose, onConfirm }) {
+  const TODAY_STR = manilaDateString();
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const rejectAttendance = async () => {
+    if (!passcodeInput.trim()) {
+      setError('Please enter the daily passcode.');
+      return;
+    }
+    if (!reason.trim()) {
+      setError('Please enter the reason for rejection.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try {
+      const records = await entities.filter('DailyPasscode', { date: TODAY_STR, company_profile_id: activeCompanyId });
+      const match = records.find(r => r.passcode === passcodeInput.trim() || r.manager_passcode === passcodeInput.trim());
+      if (!match) {
+        setError('Incorrect passcode. Please check with your administrator.');
+        return;
+      }
+
+      const previousNotes = log.notes ? `${log.notes}\n` : '';
+      await onConfirm({
+        status: 'rejected',
+        notes: `${previousNotes}Attendance rejected by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}`,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reject Attendance</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-3">
+            <XCircle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-red-800">
+              Rejecting the attendance for {log.date} requires the daily passcode and a rejection reason.
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground">Daily Passcode</label>
+            <Input
+              type="password"
+              placeholder="Enter 6-digit passcode"
+              value={passcodeInput}
+              onChange={e => setPasscodeInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && rejectAttendance()}
+              className="mt-1 font-mono text-center tracking-widest text-lg"
+              maxLength={6}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground">Reason for Rejection <span className="text-destructive">*</span></label>
+            <Textarea
+              placeholder="e.g. Incorrect punch sequence, wrong employee scan, missing required final time out..."
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              className="mt-1 h-24 text-sm"
+            />
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={rejectAttendance}
+              disabled={saving || !reason.trim() || !passcodeInput.trim()}
+            >
+              {saving ? 'Rejecting...' : 'Reject Attendance'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Attendance() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -836,6 +948,7 @@ export default function Attendance() {
   const [filterDept, setFilterDept] = useState('all');
   const [editingLog, setEditingLog] = useState(null);
   const [pendingShiftEdit, setPendingShiftEdit] = useState(null);
+  const [rejectingLog, setRejectingLog] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [locationLog, setLocationLog] = useState(null);
   const [downloading, setDownloading] = useState(false);
@@ -1609,7 +1722,7 @@ export default function Attendance() {
                             </Button>
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:bg-destructive/10"
                               title="Reject attendance"
-                              onClick={() => approveMutation.mutate({ id: log.id, status: 'rejected' })}>
+                              onClick={() => setRejectingLog(log)}>
                               <XCircle className="w-4 h-4" />
                               <span className="sr-only">Reject attendance</span>
                             </Button>
@@ -1636,6 +1749,19 @@ export default function Attendance() {
           canCorrectAttendance={canCorrectAttendance}
           onClose={() => setEditingLog(null)}
           onSave={updateLog}
+        />
+      )}
+
+      {rejectingLog && (
+        <RejectAttendanceModal
+          log={rejectingLog}
+          currentUser={currentUser}
+          activeCompanyId={activeCompanyId}
+          onClose={() => setRejectingLog(null)}
+          onConfirm={async (updates) => {
+            await updateLog(rejectingLog.id, updates);
+            setRejectingLog(null);
+          }}
         />
       )}
 
