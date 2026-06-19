@@ -2,16 +2,18 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Play, CheckCircle2, FileText, Printer, Search } from 'lucide-react';
+import { Play, CheckCircle2, FileText, Printer, Search, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCompany } from '@/lib/CompanyContext';
 import { computeWeeklyPayroll } from '@/lib/payrollUtils';
 import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
+import { manilaDateString } from '@/lib/dateUtils';
 import PayslipView from '@/components/payroll/PayslipView';
 import GrossBreakdownDialog from '@/components/payroll/GrossBreakdownDialog';
 
@@ -325,6 +327,12 @@ export default function Payroll() {
   const [reviewRecord, setReviewRecord] = useState(/** @type {PayrollEntity | null} */ (null));
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [previewEmployeeId, setPreviewEmployeeId] = useState('');
+  const [previewStartDate, setPreviewStartDate] = useState(manilaDateString());
+  const [previewEndDate, setPreviewEndDate] = useState(manilaDateString());
+  const [previewing, setPreviewing] = useState(false);
+  const [payPreview, setPayPreview] = useState(null);
+  const [payPreviewError, setPayPreviewError] = useState('');
   const [incompleteLogsError, setIncompleteLogsError] = useState(/** @type {Array<{ employeeName: string, date: string }> | null} */ (null));
   const [pendingAttendanceError, setPendingAttendanceError] = useState(/** @type {Array<{ employeeName: string, count: number }> | null} */ (null));
   const qc = useQueryClient();
@@ -396,6 +404,116 @@ export default function Payroll() {
       setSelectedPeriod(previous => previous?.id === updatedPeriod.id ? { ...previous, ...updatedPeriod } : updatedPeriod);
     },
   });
+
+  const previewEmployeePay = async () => {
+    setPayPreviewError('');
+    setPayPreview(null);
+
+    if (!previewEmployeeId) {
+      setPayPreviewError('Select an employee.');
+      return;
+    }
+    if (!previewStartDate || !previewEndDate || previewStartDate > previewEndDate) {
+      setPayPreviewError('Choose a valid date range.');
+      return;
+    }
+
+    const employee = employees.find(emp => String(emp.employee_id) === String(previewEmployeeId));
+    if (!employee) {
+      setPayPreviewError('Employee not found.');
+      return;
+    }
+
+    setPreviewing(true);
+    try {
+      const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.filter({
+        company_profile_id: activeCompanyId,
+        employee_id: employee.employee_id,
+      }, '-date', 1000));
+      const rangeLogs = allLogs.filter(log =>
+        log.date >= previewStartDate &&
+        log.date <= previewEndDate &&
+        (log.status === 'approved' || log.status === 'pending')
+      );
+      const incompleteDates = rangeLogs
+        .filter(log => log.time_in && !log.time_out && !log.is_absent)
+        .map(log => log.date);
+      const usableLogs = rangeLogs
+        .filter(log => log.is_absent || !log.time_in || log.time_out)
+        .map(log => ({ ...log, status: 'approved' }));
+      const previewHolidays = holidays.filter(holiday =>
+        holiday.date >= previewStartDate && holiday.date <= previewEndDate
+      );
+      const previewNoWorkDays = noWorkDays.filter(noWorkDay =>
+        noWorkDay.date >= previewStartDate && noWorkDay.date <= previewEndDate
+      );
+      const loggedDates = new Set(usableLogs.map(log => log.date));
+      const regularHolidayLogs = previewHolidays
+        .filter(holiday => holiday.type === 'regular_holiday' && !loggedDates.has(holiday.date))
+        .map(holiday => ({
+          employee_id: employee.employee_id,
+          date: holiday.date,
+          status: 'approved',
+          day_type: 'regular_holiday',
+          time_in: null,
+          is_absent: false,
+        }));
+      const payrollLogs = [...usableLogs, ...regularHolidayLogs];
+      const defaultShift = shiftSettings.find(setting => setting.is_default) || shiftSettings[0] || {};
+      const gracePeriodMinutes = Number(defaultShift.grace_period_minutes) || 0;
+      const computed = computeWeeklyPayroll(
+        employee,
+        payrollLogs,
+        previewHolidays,
+        0,
+        previewNoWorkDays,
+        gracePeriodMinutes,
+        {
+          shiftStartTime: defaultShift.shift_start_time || '08:00',
+          overtimeStartTime: defaultShift.overtime_start_time || '17:30',
+          timeInAllowanceMinutes: Number(defaultShift.time_in_allowance_minutes) || 0,
+          breakInGraceMinutes: gracePeriodMinutes,
+          breakDurationMinutes: [30, 60].includes(Number(employee.break_duration_minutes))
+            ? Number(employee.break_duration_minutes)
+            : 60,
+          applyStatutoryDeductions: false,
+          resolveLogOptions: (log) => ({
+            ...resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift),
+            breakDurationMinutes: [30, 60].includes(Number(employee.break_duration_minutes))
+              ? Number(employee.break_duration_minutes)
+              : 60,
+          }),
+        },
+      );
+      const incentiveDetails = automaticIncentivesForEmployee(
+        employee,
+        payrollLogs,
+        previewStartDate,
+        previewEndDate,
+        previewNoWorkDays,
+        previewHolidays,
+        normalizePayrollStartDay(activeCompany),
+      );
+      const incentivePay = money(incentiveDetails.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
+
+      setPayPreview({
+        ...computed,
+        employee_name: `${employee.first_name} ${employee.last_name}`,
+        department: employee.department,
+        period_name: `${previewStartDate} to ${previewEndDate}`,
+        incentive_pay: incentivePay,
+        incentive_details: incentiveDetails,
+        gross_pay: money(computed.gross_pay + incentivePay),
+        net_pay: money(computed.net_pay + incentivePay),
+        included_logs: usableLogs.length,
+        incomplete_dates: incompleteDates,
+      });
+    } catch (error) {
+      setPayPreviewError(error?.message || 'Unable to calculate the pay preview.');
+    } finally {
+      setPreviewing(false);
+    }
+  };
 
   const generatePayroll = async () => {
     if (weekStart > new Date()) return;
@@ -736,6 +854,132 @@ export default function Payroll() {
           </Button>
         </div>
       </div>
+
+      <PayrollCard className="border border-border shadow-sm">
+        <div className="p-4 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Calculator className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">Employee Pay Preview</p>
+              <p className="text-xs text-muted-foreground">
+                Estimate one employee’s pay for a single day or selected dates without generating payroll.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_160px_160px_auto]">
+            <Select value={previewEmployeeId} onValueChange={value => {
+              setPreviewEmployeeId(value);
+              setPayPreview(null);
+              setPayPreviewError('');
+            }}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select employee" />
+              </SelectTrigger>
+              <SelectContent>
+                {employees
+                  .filter(employee => employee.status === 'active')
+                  .map(employee => (
+                    <SelectItem key={employee.id} value={String(employee.employee_id)}>
+                      {employee.first_name} {employee.last_name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <Input
+              type="date"
+              value={previewStartDate}
+              onChange={event => {
+                const value = event.target.value;
+                setPreviewStartDate(value);
+                if (previewEndDate < value) setPreviewEndDate(value);
+                setPayPreview(null);
+              }}
+            />
+            <Input
+              type="date"
+              value={previewEndDate}
+              min={previewStartDate}
+              onChange={event => {
+                setPreviewEndDate(event.target.value);
+                setPayPreview(null);
+              }}
+            />
+            <Button onClick={previewEmployeePay} disabled={previewing} className="gap-2">
+              <Calculator className="w-4 h-4" />
+              {previewing ? 'Calculating...' : 'Preview Pay'}
+            </Button>
+          </div>
+
+          {payPreviewError && (
+            <p className="text-sm text-destructive">{payPreviewError}</p>
+          )}
+
+          {payPreview && (
+            <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="font-semibold text-foreground">{payPreview.employee_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {payPreview.period_name} · {payPreview.included_logs} attendance record{payPreview.included_logs === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Estimated Pay</p>
+                  <p className="text-2xl font-bold text-primary">
+                    ₱{Number(payPreview.net_pay || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
+                <div className="rounded-lg bg-background p-3">
+                  <p className="text-xs text-muted-foreground">Hours</p>
+                  <p className="font-semibold">{payPreview.hours_worked || 0}h</p>
+                </div>
+                <div className="rounded-lg bg-background p-3">
+                  <p className="text-xs text-muted-foreground">Basic Pay</p>
+                  <p className="font-semibold">₱{Number(payPreview.basic_pay || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                </div>
+                <div className="rounded-lg bg-background p-3">
+                  <p className="text-xs text-muted-foreground">OT / Premiums</p>
+                  <p className="font-semibold">
+                    ₱{Number(
+                      (payPreview.overtime_pay || 0) +
+                      (payPreview.holiday_pay || 0) +
+                      (payPreview.night_diff_pay || 0) +
+                      (payPreview.incentive_pay || 0)
+                    ).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-background p-3">
+                  <p className="text-xs text-muted-foreground">Attendance Deductions</p>
+                  <p className="font-semibold text-destructive">
+                    -₱{Number(
+                      (payPreview.late_deduction || 0) +
+                      (payPreview.undertime_deduction || 0) +
+                      (payPreview.absent_deduction || 0) +
+                      (payPreview.agency_fee || 0)
+                    ).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+              {payPreview.incomplete_dates.length > 0 && (
+                <p className="text-xs text-amber-700">
+                  Incomplete attendance excluded: {payPreview.incomplete_dates.join(', ')}.
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Preview only. No payroll record or cash-advance deduction was posted. Statutory deductions are applied during the actual payroll run.
+              </p>
+              <Button size="sm" variant="outline" onClick={() => setReviewRecord(payPreview)} className="gap-1">
+                <Search className="w-3 h-3" /> View Breakdown
+              </Button>
+            </div>
+          )}
+        </div>
+      </PayrollCard>
 
       {/* Pending attendance error */}
       {pendingAttendanceError && (

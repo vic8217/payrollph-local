@@ -344,7 +344,8 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const [timeOut, setTimeOut] = useState(log.time_out ? format(new Date(log.time_out), "HH:mm") : '');
   const [attendanceDate, setAttendanceDate] = useState(log.date || '');
   const [dayType, setDayType] = useState(log.day_type || 'regular');
-  const [workSchedule, setWorkSchedule] = useState(log.work_schedule || defaultWorkSchedule || 'day_shift');
+  const workSchedule = log.work_schedule || defaultWorkSchedule || 'day_shift';
+  const assignedShift = getShiftOption(shiftOptions, workSchedule, defaultWorkSchedule || 'day_shift');
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
   const [saving, setSaving] = useState(false);
@@ -464,10 +465,6 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     if (dayType !== (log.day_type || 'regular')) {
       updates.day_type = dayType;
     }
-    if (workSchedule !== (log.work_schedule || defaultWorkSchedule || 'day_shift')) {
-      updates.work_schedule = workSchedule;
-    }
-
     const pick = (key) => (key in updates ? updates[key] : log[key]);
     const effDate = pick('date');
     const effTimeIn = pick('time_in');
@@ -478,7 +475,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       .some((key) => key in updates);
 
     if (effTimeIn && effTimeOut) {
-      const selectedShift = getShiftOption(shiftOptions, workSchedule, defaultWorkSchedule || 'day_shift');
+      const selectedShift = assignedShift;
       const fallbackShift = legacyShiftTimes(selectedShift.value);
       const hrs = computeCreditedHoursWorked({
         ...log,
@@ -636,16 +633,12 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
 
             <div>
               <label className="text-sm font-medium text-foreground">Shift</label>
-              <Select value={workSchedule} onValueChange={setWorkSchedule}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select shift" />
-                </SelectTrigger>
-                <SelectContent>
-                  {shiftOptions.map(shift => (
-                    <SelectItem key={shift.value} value={shift.value}>{shift.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="mt-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
+                {assignedShift.label}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Shift assignments can only be changed on the Work Schedule page.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -780,79 +773,6 @@ function InlineLocationButton({ locationItem, log, onView }) {
   );
 }
 
-function ShiftPasscodeModal({ log, shift, currentUser, activeCompanyId, onClose, onConfirm }) {
-  const TODAY_STR = manilaDateString();
-  const [passcodeInput, setPasscodeInput] = useState('');
-  const [passcodeError, setPasscodeError] = useState('');
-  const [verifying, setVerifying] = useState(false);
-
-  const verifyPasscode = async () => {
-    if (!passcodeInput.trim()) {
-      setPasscodeError('Please enter the daily passcode.');
-      return;
-    }
-
-    setVerifying(true);
-    setPasscodeError('');
-    try {
-      const records = await entities.filter('DailyPasscode', { date: TODAY_STR, company_profile_id: activeCompanyId });
-      const match = records.find(r => r.passcode === passcodeInput.trim() || r.manager_passcode === passcodeInput.trim());
-      if (!match) {
-        setPasscodeError('Incorrect passcode. Please check with your administrator.');
-        return;
-      }
-
-      await onConfirm({
-        notes: `Shift changed to ${shift.label} by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
-      });
-    } finally {
-      setVerifying(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Enter Daily Passcode</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <KeyRound className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-            <p className="text-xs text-amber-800">
-              Changing the shift for {log.date} requires the administrator's daily passcode.
-            </p>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-foreground">Daily Passcode</label>
-            <Input
-              type="password"
-              placeholder="Enter 6-digit passcode"
-              value={passcodeInput}
-              onChange={e => setPasscodeInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && verifyPasscode()}
-              className="mt-1 font-mono text-center tracking-widest text-lg"
-              maxLength={6}
-            />
-            {passcodeError && <p className="text-xs text-destructive mt-1">{passcodeError}</p>}
-          </div>
-          <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
-            <p className="text-muted-foreground">New shift</p>
-            <p className="font-medium text-foreground">{shift.label}</p>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button onClick={verifyPasscode} disabled={verifying} className="gap-1.5">
-              <KeyRound className="w-3.5 h-3.5" />
-              {verifying ? 'Verifying...' : 'Save Shift'}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function RejectAttendanceModal({ log, currentUser, activeCompanyId, onClose, onConfirm }) {
   const TODAY_STR = manilaDateString();
   const [passcodeInput, setPasscodeInput] = useState('');
@@ -947,7 +867,6 @@ export default function Attendance() {
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [filterDept, setFilterDept] = useState('all');
   const [editingLog, setEditingLog] = useState(null);
-  const [pendingShiftEdit, setPendingShiftEdit] = useState(null);
   const [rejectingLog, setRejectingLog] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [locationLog, setLocationLog] = useState(null);
@@ -1055,14 +974,6 @@ export default function Attendance() {
     };
   };
 
-  const handleShiftSelect = (log, value) => {
-    if (value === getLogShiftValue(log)) return;
-    setPendingShiftEdit({
-      log,
-      shift: getShiftOption(shiftOptions, value, defaultShiftValue),
-    });
-  };
-
   const handleApproveLog = (log) => {
     const logShiftValue = getLogShiftValue(log);
     const logShift = getShiftOption(shiftOptions, logShiftValue, defaultShiftValue);
@@ -1075,38 +986,6 @@ export default function Attendance() {
     }
 
     approveMutation.mutate({ id: log.id, status: 'approved' });
-  };
-
-  const savePendingShiftEdit = async ({ notes }) => {
-    if (!pendingShiftEdit) return;
-    const previousNotes = pendingShiftEdit.log.notes ? `${pendingShiftEdit.log.notes}\n` : '';
-    const updates = {
-      work_schedule: pendingShiftEdit.shift.value,
-      notes: `${previousNotes}${notes}`,
-    };
-
-    if (pendingShiftEdit.log.time_in && pendingShiftEdit.log.time_out) {
-      const fallbackShift = legacyShiftTimes(pendingShiftEdit.shift.value);
-      const computationOptions = {
-        shiftStartTime: pendingShiftEdit.shift.shift_start_time || fallbackShift.shift_start_time,
-        overtimeStartTime: pendingShiftEdit.shift.overtime_start_time || fallbackShift.overtime_start_time,
-        timeInAllowanceMinutes: pendingShiftEdit.shift.time_in_allowance_minutes || 0,
-        breakInGraceMinutes: pendingShiftEdit.shift.grace_period_minutes || 0,
-        breakDurationMinutes: getBreakDurationMinutes(selectedEmployee),
-      };
-      const logForComputation = {
-        ...pendingShiftEdit.log,
-        work_schedule: pendingShiftEdit.shift.value,
-      };
-      const hoursWorked = computeCreditedHoursWorked(logForComputation, computationOptions);
-      updates.hours_worked = Number(hoursWorked.toFixed(2));
-      updates.overtime_hours = Number(computeOvertimeHours(logForComputation, hoursWorked, computationOptions).toFixed(2));
-    }
-
-    await updateLog(pendingShiftEdit.log.id, {
-      ...updates,
-    });
-    setPendingShiftEdit(null);
   };
 
   useEffect(() => {
@@ -1634,16 +1513,9 @@ export default function Attendance() {
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-2.5 py-3 text-muted-foreground text-xs">{log.date}</td>
                         <td className="px-2.5 py-3 hidden md:table-cell">
-                          <Select value={logWorkSchedule} onValueChange={value => handleShiftSelect(log, value)}>
-                            <SelectTrigger className="h-7 text-xs w-32 xl:w-36">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {shiftOptions.map(option => (
-                                <SelectItem key={option.value} value={option.value}>{option.shortLabel || option.label}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <span className="inline-flex min-h-7 items-center rounded-md border border-border bg-muted/30 px-2.5 text-xs text-foreground">
+                            {logShift.shortLabel || logShift.label}
+                          </span>
                         </td>
                         <td className="px-2.5 py-3">
                           <div className="inline-flex items-center gap-1.5">
@@ -1708,7 +1580,7 @@ export default function Attendance() {
                         <td className="px-2.5 py-3">
                           <div className="flex gap-1">
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-primary hover:bg-primary/10"
-                              title={canCorrectAttendance ? 'Correct attendance (recomputes hours & overtime)' : 'Edit shift or missing time'}
+                              title={canCorrectAttendance ? 'Correct attendance (recomputes hours & overtime)' : 'Edit missing attendance time'}
                               onClick={() => setEditingLog(log)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
@@ -1762,17 +1634,6 @@ export default function Attendance() {
             await updateLog(rejectingLog.id, updates);
             setRejectingLog(null);
           }}
-        />
-      )}
-
-      {pendingShiftEdit && (
-        <ShiftPasscodeModal
-          log={pendingShiftEdit.log}
-          shift={pendingShiftEdit.shift}
-          currentUser={currentUser}
-          activeCompanyId={activeCompanyId}
-          onClose={() => setPendingShiftEdit(null)}
-          onConfirm={savePendingShiftEdit}
         />
       )}
 

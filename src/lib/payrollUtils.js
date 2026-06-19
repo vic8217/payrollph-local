@@ -43,6 +43,7 @@
  * @property {number=} breakInGraceMinutes
  * @property {number=} breakDurationMinutes
  * @property {string=} overtimeStartTime
+ * @property {boolean=} applyStatutoryDeductions
  * @property {(log: PayrollLog, employee?: EmployeePayrollInfo) => HoursComputationOptions=} resolveLogOptions
  */
 
@@ -449,9 +450,10 @@ export function computeWeeklyPayroll(
 	const philHealth = computePhilHealth(monthlyRate);
 	const pagIbig = computePagIbig(monthlyRate);
 
-	const weeklySSS = parseFloat((sss.employee / 4.33).toFixed(2));
-	const weeklyPhilHealth = parseFloat((philHealth.employee / 4.33).toFixed(2));
-	const weeklyPagIbig = parseFloat((pagIbig.employee / 4.33).toFixed(2));
+	const applyStatutoryDeductions = options.applyStatutoryDeductions !== false;
+	const weeklySSS = applyStatutoryDeductions ? parseFloat((sss.employee / 4.33).toFixed(2)) : 0;
+	const weeklyPhilHealth = applyStatutoryDeductions ? parseFloat((philHealth.employee / 4.33).toFixed(2)) : 0;
+	const weeklyPagIbig = applyStatutoryDeductions ? parseFloat((pagIbig.employee / 4.33).toFixed(2)) : 0;
 
 	let basicPay = 0;
 	let overtimePay = 0;
