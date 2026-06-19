@@ -239,7 +239,11 @@ export function computeNightDiffPay(hourlyRate, nightDiffHours, dayType) {
 /** @param {string | Date | null | undefined} value */
 function toValidDate(value) {
 	const date = value ? new Date(value) : null;
-	return date && Number.isFinite(date.getTime()) ? date : null;
+	if (!date || !Number.isFinite(date.getTime())) return null;
+
+	const minutePrecisionDate = new Date(date);
+	minutePrecisionDate.setSeconds(0, 0);
+	return minutePrecisionDate;
 }
 
 /**

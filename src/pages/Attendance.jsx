@@ -1485,7 +1485,7 @@ export default function Attendance() {
 
   // ── ATTENDANCE LOG VIEW ──
   return (
-    <div className="p-6 space-y-5 max-w-7xl mx-auto">
+    <div className="p-6 space-y-5 w-full max-w-[1600px] mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setSelectedEmployee(null); setWeekOffset(0); }}>
@@ -1515,23 +1515,23 @@ export default function Attendance() {
         </div>
       ) : (
         <Card className="border border-border shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto xl:overflow-x-visible">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-muted/50 border-b border-border">
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Date</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Shift</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Time In(1)</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time Out(1)</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time In(2)</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Time Out(2)</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Hours</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">OT</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">ND</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Late</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Day Type</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Status</th>
-                  <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs">Actions</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Date</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Shift</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Time In(1)</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time Out(1)</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time In(2)</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Time Out(2)</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Hours</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">OT</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">ND</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Late</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Day Type</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Status</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1632,10 +1632,10 @@ export default function Attendance() {
 	                    const timeOutLocation = attendanceLocationItem(log, 'time_out');
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
-                        <td className="px-3 py-3 text-muted-foreground text-xs">{log.date}</td>
-                        <td className="px-3 py-3 hidden md:table-cell">
+                        <td className="px-2.5 py-3 text-muted-foreground text-xs">{log.date}</td>
+                        <td className="px-2.5 py-3 hidden md:table-cell">
                           <Select value={logWorkSchedule} onValueChange={value => handleShiftSelect(log, value)}>
-                            <SelectTrigger className="h-7 text-xs w-36">
+                            <SelectTrigger className="h-7 text-xs w-32 xl:w-36">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -1645,7 +1645,7 @@ export default function Attendance() {
                             </SelectContent>
                           </Select>
                         </td>
-                        <td className="px-3 py-3">
+                        <td className="px-2.5 py-3">
                           <div className="inline-flex items-center gap-1.5">
                             {log.time_in
                               ? <span className="text-green-600 text-xs">{format(new Date(log.time_in), 'hh:mm a')}</span>
@@ -1654,7 +1654,7 @@ export default function Attendance() {
                             <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
-                        <td className="px-3 py-3 hidden lg:table-cell">
+                        <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
                             {log.break_time_out
                               ? <span className="text-orange-500 text-xs">{format(new Date(log.break_time_out), 'hh:mm a')}</span>
@@ -1663,7 +1663,7 @@ export default function Attendance() {
                             <InlineLocationButton locationItem={breakOutLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
-                        <td className="px-3 py-3 hidden lg:table-cell">
+                        <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
                             {log.break_time_in
                               ? <span className="text-teal-600 text-xs">{format(new Date(log.break_time_in), 'hh:mm a')}</span>
@@ -1674,7 +1674,7 @@ export default function Attendance() {
                             <InlineLocationButton locationItem={breakInLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
-	                        <td className="px-3 py-3">
+	                        <td className="px-2.5 py-3">
 	                          <div className="inline-flex items-center gap-1.5">
 	                            {log.time_out
 	                              ? <span className="text-blue-600 text-xs">{format(new Date(log.time_out), 'hh:mm a')}</span>
@@ -1685,13 +1685,13 @@ export default function Attendance() {
                               <InlineLocationButton locationItem={timeOutLocation} log={log} onView={setLocationLog} />
                             </div>
 	                        </td>
-                        <td className="px-3 py-3 text-xs">{log.hours_worked || '—'}</td>
-                        <td className="px-3 py-3 text-xs hidden md:table-cell">{log.overtime_hours > 0 ? `${log.overtime_hours}h` : '—'}</td>
-                        <td className="px-3 py-3 text-xs hidden md:table-cell">{log.night_diff_hours > 0 ? `${log.night_diff_hours}h` : '—'}</td>
-                        <td className="px-3 py-3 text-xs hidden md:table-cell">{log.late_minutes > 0 ? `${log.late_minutes}m` : '—'}</td>
-                        <td className="px-3 py-3 hidden lg:table-cell">
+                        <td className="px-2.5 py-3 text-xs">{log.hours_worked || '—'}</td>
+                        <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.overtime_hours > 0 ? `${log.overtime_hours}h` : '—'}</td>
+                        <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.night_diff_hours > 0 ? `${log.night_diff_hours}h` : '—'}</td>
+                        <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.late_minutes > 0 ? `${log.late_minutes}m` : '—'}</td>
+                        <td className="px-2.5 py-3 hidden lg:table-cell">
                           <Select value={log.day_type || 'regular'} onValueChange={v => updateDayType.mutate({ id: log.id, day_type: v })}>
-                            <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="h-7 text-xs w-28 xl:w-32"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="regular">Regular</SelectItem>
                               <SelectItem value="half_day">Half Day</SelectItem>
@@ -1702,10 +1702,10 @@ export default function Attendance() {
                             </SelectContent>
                           </Select>
                         </td>
-                        <td className="px-3 py-3">
+                        <td className="px-2.5 py-3">
                           <Badge variant="outline" className={`text-xs capitalize ${statusColors[log.status] || ''}`}>{log.status}</Badge>
                         </td>
-                        <td className="px-3 py-3">
+                        <td className="px-2.5 py-3">
                           <div className="flex gap-1">
                             <Button size="icon" variant="ghost" className="h-7 w-7 text-primary hover:bg-primary/10"
                               title={canCorrectAttendance ? 'Correct attendance (recomputes hours & overtime)' : 'Edit shift or missing time'}
