@@ -1,12 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { appApi } from '@/lib/appApi';
-import { computeCreditedHoursWorked, computeOvertimeHours } from '@/lib/payrollUtils';
+import {
+  computeCreditedHoursWorked,
+  computeLateMinutes,
+  computeNightDifferentialHours,
+  computeOvertimeHours,
+} from '@/lib/payrollUtils';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { LogIn, LogOut, Camera, CameraOff, CheckCircle2, AlertTriangle, Shield, UserCheck, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { manilaDateString } from '@/lib/dateUtils';
+import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
 
 const LABOR_CODE_INFO = {
   time_in: {
@@ -86,10 +92,15 @@ function legacyShiftTimes(value) {
   return { shift_start_time: '08:00', shift_end_time: '17:00', overtime_start_time: '17:30' };
 }
 
-function resolveEmployeeShiftOptions(employee, shiftSettings) {
-  const defaultShift = shiftSettings.find(setting => setting.is_default) || shiftSettings[0] || {};
+function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) {
+  const effectiveShifts = shiftSettings
+    .map(setting => effectiveShiftSetting(setting, date))
+    .filter(setting => setting?.is_active !== false);
+  const defaultShift = effectiveShifts.find(setting => setting.is_default) || effectiveShifts[0] || {};
   const shiftValue = employee?.work_schedule || defaultShift.id || 'day_shift';
-  const shift = shiftSettings.find(setting => String(setting.id) === String(shiftValue)) || defaultShift;
+  const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
+  const matchedShift = shiftFromAttendanceSnapshot(log, effectiveShiftSetting(rawShift, date));
+  const shift = matchedShift || (employee?.work_schedule ? {} : defaultShift);
   const fallbackShift = legacyShiftTimes(shiftValue);
   const shiftStartTime = shift.shift_start_time || fallbackShift.shift_start_time;
   const shiftEndTime = shift.shift_end_time || fallbackShift.shift_end_time;
@@ -100,8 +111,15 @@ function resolveEmployeeShiftOptions(employee, shiftSettings) {
     overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+    lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
     isOvernightShift: shiftEndTime <= shiftStartTime,
   };
+}
+
+function scheduledShiftStart(logDate, shiftOptions) {
+  if (!logDate || !shiftOptions?.shiftStartTime) return null;
+  const start = new Date(`${logDate}T${shiftOptions.shiftStartTime}:00+08:00`);
+  return Number.isFinite(start.getTime()) ? start : null;
 }
 
 function getBreakDurationMinutes(employee) {
@@ -305,8 +323,18 @@ export default function ScanConfirm() {
       ...employee,
       work_schedule: todayLog?.work_schedule || employee.work_schedule,
     };
-    const shiftOptions = resolveEmployeeShiftOptions(shiftEmployee, shiftSettings);
     const logDate = todayLog?.date || today;
+    const shiftOptions = resolveEmployeeShiftOptions(shiftEmployee, shiftSettings, logDate, todayLog);
+    if (action === 'time_in' && shiftOptions.isOvernightShift) {
+      const shiftStart = scheduledShiftStart(today, shiftOptions);
+      if (shiftStart && new Date(now).getTime() < shiftStart.getTime()) {
+        setPhotoError(
+          `Time In is not available until the night shift starts at ${shiftOptions.shiftStartTime}.`
+        );
+        setConfirming(false);
+        return;
+      }
+    }
     let photoUpdates = {};
     try {
       photoUpdates = await uploadAttendancePhoto(capturedPhoto, action);
@@ -331,6 +359,11 @@ export default function ScanConfirm() {
         date: today,
         time_in: effectiveTimeIn,
         work_schedule: employee.work_schedule,
+        shift_start_time: shiftOptions.shiftStartTime,
+        shift_end_time: shiftOptions.shiftEndTime,
+        shift_overtime_start_time: shiftOptions.overtimeStartTime,
+        shift_grace_period_minutes: shiftOptions.lateGraceMinutes,
+        shift_time_in_allowance_minutes: shiftOptions.timeInAllowanceMinutes,
         ...(scheduledBreakAfterTimeIn(employee, today, effectiveTimeIn, shiftOptions.isOvernightShift) || {}),
         day_type: 'regular',
         status: 'pending',
@@ -392,15 +425,28 @@ export default function ScanConfirm() {
         ...shiftOptions,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
-      const timeIn = new Date(todayLog.time_in);
-      const workStart = new Date(`${logDate}T${shiftOptions.shiftStartTime}:00+08:00`);
-      const lateMinutes = Math.floor(Math.max(0, timeIn.getTime() - workStart.getTime()) / 60000);
+      const completedLog = {
+        ...todayLog,
+        ...breakUpdates,
+        time_out: now,
+        break_time_out: effectiveBreakOut,
+        break_time_in: effectiveBreakIn,
+      };
+      const nightDiffHours = computeNightDifferentialHours(completedLog, {
+        breakDurationMinutes: getBreakDurationMinutes(employee),
+      });
+      const lateMinutes = computeLateMinutes(completedLog, {
+        ...shiftOptions,
+      });
 
       await appApi.entities.AttendanceLog.update(todayLog.id, {
         ...breakUpdates,
         time_out: now,
         hours_worked: parseFloat(hoursWorked.toFixed(2)),
         overtime_hours: parseFloat(overtimeHours.toFixed(2)),
+        ot_requested_hours: parseFloat(overtimeHours.toFixed(2)),
+        ot_status: overtimeHours > 0 ? 'pending' : null,
+        night_diff_hours: parseFloat(nightDiffHours.toFixed(2)),
         late_minutes: lateMinutes,
         ...photoUpdates,
         notes: capturedPhoto ? 'Photo captured on time-out' : '',

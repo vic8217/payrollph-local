@@ -41,15 +41,11 @@ const S = {
 function employeeQrValue(employee) {
   if (!employee) return '';
 
-  const employeeId = employee.employee_id || employee.qr_code?.replace(/-PayrollPH$/i, '');
-  if (!employee.id && !employee.company_profile_id) return employeeId || '';
-
-  const params = new URLSearchParams();
-  if (employeeId) params.set('employee_id', employeeId);
-  if (employee.id) params.set('employee_record_id', employee.id);
-  if (employee.company_profile_id) params.set('company_profile_id', employee.company_profile_id);
-
-  return `payrollph://employee-attendance?${params.toString()}`;
+  // Keep the printed symbol intentionally short and low-density. The scanner
+  // already sends the active company to the backend lookup, so the employee ID
+  // is enough to identify the correct record and is much easier for fixed-focus
+  // laptop webcams to read than the previous long payrollph:// URL.
+  return employee.employee_id || employee.qr_code?.replace(/-PayrollPH$/i, '') || '';
 }
 
 export default function EmployeeIdCard({ employee, company }) {
@@ -65,7 +61,8 @@ export default function EmployeeIdCard({ employee, company }) {
     if (qrRef.current && qrValue) {
       QRCode.toCanvas(qrRef.current, qrValue, {
         width: 120,
-        margin: 1,
+        margin: 2,
+        errorCorrectionLevel: 'H',
         color: { dark: '#1e3a5f', light: '#ffffff' },
       });
     }

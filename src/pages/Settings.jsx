@@ -8,6 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Clock, Plus, Pencil, Trash2, Star } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
+import { requestJson } from '@/lib/appApi';
+import { manilaDateString } from '@/lib/dateUtils';
+import { effectiveShiftSetting, pendingShiftVersion } from '@/lib/shiftSettings';
+import { Textarea } from '@/components/ui/textarea';
 
 function ShiftForm({ shift, onSave, onClose }) {
   const [form, setForm] = useState({
@@ -124,11 +128,71 @@ function ShiftForm({ shift, onSave, onClose }) {
   );
 }
 
+function ShiftAuthorizationDialog({ action, onClose, onConfirm, saving }) {
+  const [hrPasscode, setHrPasscode] = useState('');
+  const [adminPasscode, setAdminPasscode] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async () => {
+    if (!hrPasscode.trim() || !adminPasscode.trim() || !reason.trim()) {
+      setError('HR Officer passcode, Admin passcode, and reason are required.');
+      return;
+    }
+    setError('');
+    try {
+      await onConfirm({
+        hr_passcode: hrPasscode.trim(),
+        admin_passcode: adminPasscode.trim(),
+        reason: reason.trim(),
+      });
+    } catch (submitError) {
+      setError(submitError?.message || 'Unable to authorize the shift change.');
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Authorize Shift Change</DialogTitle>
+          <DialogDescription>
+            {action.label}. The change will apply on the following business day and will not alter earlier attendance dates.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm font-medium">HR Officer passcode</label>
+            <Input type="password" value={hrPasscode} onChange={e => setHrPasscode(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Admin passcode</label>
+            <Input type="password" value={adminPasscode} onChange={e => setAdminPasscode(e.target.value)} className="mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Reason for changing</label>
+            <Textarea value={reason} onChange={e => setReason(e.target.value)} className="mt-1" rows={3} />
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button onClick={submit} disabled={saving}>
+              {saving ? 'Scheduling...' : 'Authorize & Schedule'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Settings() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingShift, setEditingShift] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null);
   const { activeCompanyId } = useCompany();
+  const today = manilaDateString();
 
   const { data: shifts = [], isLoading } = useQuery({
     queryKey: ['settings', activeCompanyId],
@@ -136,39 +200,32 @@ export default function Settings() {
     enabled: !!activeCompanyId,
   });
 
-  const createMutation = useMutation({
-    mutationFn: async (data) => {
-      // If new shift is default, unset all others first
-      if (data.is_default) {
-        await Promise.all(shifts.filter(s => s.is_default).map(s =>
-          appApi.entities.Settings.update(s.id, { is_default: false })
-        ));
-      }
-      return appApi.entities.Settings.create({ ...data, company_profile_id: activeCompanyId });
+  const changeMutation = useMutation({
+    mutationFn: payload => requestJson('/api/functions/changeShiftSetting', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, company_profile_id: activeCompanyId }),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings'] });
+      setPendingAction(null);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setShowForm(false); },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async ({ id, data }) => {
-      if (data.is_default) {
-        await Promise.all(shifts.filter(s => s.is_default && s.id !== id).map(s =>
-          appApi.entities.Settings.update(s.id, { is_default: false })
-        ));
-      }
-      return appApi.entities.Settings.update(id, data);
-    },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setEditingShift(null); },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id) => appApi.entities.Settings.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   });
 
   const setDefault = (shift) => {
-    updateMutation.mutate({ id: shift.id, data: { is_default: true } });
+    setPendingAction({
+      operation: 'set_default',
+      shift_id: shift.id,
+      label: `Set ${shift.setting_name} as the default shift`,
+    });
   };
+
+  const visibleShifts = shifts
+    .map(raw => ({
+      raw,
+      effective: effectiveShiftSetting(raw, today),
+      pending: pendingShiftVersion(raw, today),
+    }))
+    .filter(({ effective, pending }) => effective?.is_active !== false || pending?.is_active !== false);
 
   const formatTime = (t) => {
     if (!t) return '—';
@@ -194,7 +251,7 @@ export default function Settings() {
         <div className="flex justify-center py-16">
           <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
         </div>
-      ) : shifts.length === 0 ? (
+      ) : visibleShifts.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 gap-3 text-center">
             <Clock className="w-10 h-10 text-muted-foreground opacity-40" />
@@ -206,8 +263,8 @@ export default function Settings() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {shifts.map(shift => (
-            <Card key={shift.id} className={`border ${shift.is_default ? 'border-primary/40 bg-primary/5' : 'border-border'}`}>
+          {visibleShifts.map(({ raw, effective: shift, pending }) => (
+            <Card key={raw.id} className={`border ${shift.is_default ? 'border-primary/40 bg-primary/5' : 'border-border'}`}>
               <CardContent className="flex items-center justify-between p-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -232,6 +289,12 @@ export default function Settings() {
                         <span className="text-xs ml-2">• Time In(1) allowance: {shift.time_in_allowance_minutes}min</span>
                       )}
                     </p>
+                    {pending && (
+                      <p className="mt-1 text-xs text-amber-700">
+                        Change scheduled for {pending.effective_date}
+                        {pending.is_active === false ? ' (shift will be removed)' : ''}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -246,7 +309,11 @@ export default function Settings() {
                     <Pencil className="w-3.5 h-3.5" />
                   </Button>
                   <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                    onClick={() => deleteMutation.mutate(shift.id)}>
+                    onClick={() => setPendingAction({
+                      operation: 'delete',
+                      shift_id: raw.id,
+                      label: `Remove ${shift.setting_name}`,
+                    })}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -258,15 +325,37 @@ export default function Settings() {
 
       {showForm && (
         <ShiftForm
-          onSave={(data) => createMutation.mutate(data)}
+          onSave={(data) => {
+            setShowForm(false);
+            setPendingAction({ operation: 'create', data, label: `Add ${data.setting_name}` });
+          }}
           onClose={() => setShowForm(false)}
         />
       )}
       {editingShift && (
         <ShiftForm
           shift={editingShift}
-          onSave={(data) => updateMutation.mutate({ id: editingShift.id, data })}
+          onSave={(data) => {
+            setEditingShift(null);
+            setPendingAction({
+              operation: 'update',
+              shift_id: editingShift.id,
+              data,
+              label: `Update ${editingShift.setting_name}`,
+            });
+          }}
           onClose={() => setEditingShift(null)}
+        />
+      )}
+      {pendingAction && (
+        <ShiftAuthorizationDialog
+          action={pendingAction}
+          saving={changeMutation.isPending}
+          onClose={() => setPendingAction(null)}
+          onConfirm={authorization => changeMutation.mutateAsync({
+            ...pendingAction,
+            ...authorization,
+          })}
         />
       )}
     </div>

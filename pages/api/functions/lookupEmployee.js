@@ -123,6 +123,9 @@ export default async function handler(req, res) {
     const employeeCandidates = [
       ...codeCandidates(emp.employee_id),
       ...codeCandidates(emp.qr_code),
+      ...(Array.isArray(emp.employee_id_aliases)
+        ? emp.employee_id_aliases.flatMap((alias) => codeCandidates(alias))
+        : []),
     ];
     return scannedCandidates.some((candidate) => employeeCandidates.includes(candidate));
   });

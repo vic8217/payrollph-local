@@ -30,6 +30,7 @@ const actionLabels = {
   cash_advance_admin_approved: 'Cash Advance Admin Approved',
   cash_advance_rejected: 'Cash Advance Rejected',
   employee_incentives_updated: 'Incentives Updated',
+  employee_number_changed: 'Employee Number Changed',
 };
 
 const actionStyles = {

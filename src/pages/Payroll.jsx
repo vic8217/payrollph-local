@@ -14,6 +14,7 @@ import { computeWeeklyPayroll } from '@/lib/payrollUtils';
 import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
 import { manilaDateString } from '@/lib/dateUtils';
+import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
 import PayslipView from '@/components/payroll/PayslipView';
 import GrossBreakdownDialog from '@/components/payroll/GrossBreakdownDialog';
 
@@ -143,13 +144,17 @@ function legacyShiftTimes(value) {
 
 function resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift) {
   const shiftValue = log?.work_schedule || employee?.work_schedule || defaultShift?.id || 'day_shift';
-  const shift = shiftSettings.find(setting => String(setting.id) === String(shiftValue)) || defaultShift || {};
+  const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
+  const matchedShift = shiftFromAttendanceSnapshot(log, effectiveShiftSetting(rawShift, log?.date));
+  const hasExplicitShift = Boolean(log?.work_schedule || employee?.work_schedule);
+  const shift = matchedShift || (hasExplicitShift ? {} : defaultShift || {});
   const fallbackShift = legacyShiftTimes(shiftValue);
 
   return {
     shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
     overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
+    lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
   };
 }
@@ -459,7 +464,10 @@ export default function Payroll() {
           is_absent: false,
         }));
       const payrollLogs = [...usableLogs, ...regularHolidayLogs];
-      const defaultShift = shiftSettings.find(setting => setting.is_default) || shiftSettings[0] || {};
+      const effectiveShifts = shiftSettings
+        .map(setting => effectiveShiftSetting(setting, previewEndDate))
+        .filter(setting => setting?.is_active !== false);
+      const defaultShift = effectiveShifts.find(setting => setting.is_default) || effectiveShifts[0] || {};
       const gracePeriodMinutes = Number(defaultShift.grace_period_minutes) || 0;
       const computed = computeWeeklyPayroll(
         employee,
@@ -472,6 +480,7 @@ export default function Payroll() {
           shiftStartTime: defaultShift.shift_start_time || '08:00',
           overtimeStartTime: defaultShift.overtime_start_time || '17:30',
           timeInAllowanceMinutes: Number(defaultShift.time_in_allowance_minutes) || 0,
+          lateGraceMinutes: gracePeriodMinutes,
           breakInGraceMinutes: gracePeriodMinutes,
           breakDurationMinutes: [30, 60].includes(Number(employee.break_duration_minutes))
             ? Number(employee.break_duration_minutes)
@@ -618,7 +627,10 @@ export default function Payroll() {
     const regularHolidayDates = periodHolidays
       .filter(holiday => holiday.type === 'regular_holiday')
       .map(holiday => holiday.date);
-    const defaultShift = shiftSettings.find(setting => setting.is_default) || shiftSettings[0] || {};
+    const effectiveShifts = shiftSettings
+      .map(setting => effectiveShiftSetting(setting, endStr))
+      .filter(setting => setting?.is_active !== false);
+    const defaultShift = effectiveShifts.find(setting => setting.is_default) || effectiveShifts[0] || {};
     const gracePeriodMinutes = Number(defaultShift.grace_period_minutes) || 0;
     const timeInAllowanceMinutes = Number(defaultShift.time_in_allowance_minutes) || 0;
     const overtimeStartTime = defaultShift.overtime_start_time || '17:30';
@@ -699,6 +711,7 @@ export default function Payroll() {
           shiftStartTime: defaultShift.shift_start_time || '08:00',
           overtimeStartTime,
           timeInAllowanceMinutes,
+          lateGraceMinutes: gracePeriodMinutes,
           breakInGraceMinutes: gracePeriodMinutes,
           breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
           resolveLogOptions: (log) => ({

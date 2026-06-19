@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { ensureCashAdvanceBeginningLedger } from '@/lib/cashAdvanceLedger';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
-import { Plus, Search, Edit2, Archive, CreditCard, FileText, Upload, Download, UserMinus, RotateCcw, Gift, Trash2 } from 'lucide-react';
+import { Plus, Search, Edit2, Archive, CreditCard, FileText, Upload, Download, UserMinus, RotateCcw, Gift, Trash2, KeyRound } from 'lucide-react';
 import EmployeeIdCard from '@/components/employees/EmployeeIdCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,6 +77,104 @@ function normalizeIncentiveSettings(employee) {
   };
 }
 
+function generatedEmployeeNumber(employee) {
+  const currentPrefix = String(employee?.employee_id || '').split('-')[0].replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const prefix = currentPrefix.length >= 2 && currentPrefix.length <= 8 ? currentPrefix : 'EMP';
+  return `${prefix}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+}
+
+function RenumberEmployeeDialog({ employee, open, onClose, onSuccess }) {
+  const [newEmployeeId, setNewEmployeeId] = useState('');
+  const [hrPasscode, setHrPasscode] = useState('');
+  const [adminPasscode, setAdminPasscode] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open || !employee) return;
+    setNewEmployeeId(generatedEmployeeNumber(employee));
+    setHrPasscode('');
+    setAdminPasscode('');
+    setReason('');
+    setError('');
+  }, [open, employee]);
+
+  const submit = async () => {
+    if (!newEmployeeId.trim() || !hrPasscode.trim() || !adminPasscode.trim() || reason.trim().length < 3) {
+      setError('New employee number, both passcodes, and a reason are required.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const result = await appApi.functions.invoke('renumberEmployee', {
+        employee_record_id: employee.id,
+        new_employee_id: newEmployeeId.trim(),
+        hr_passcode: hrPasscode.trim(),
+        admin_passcode: adminPasscode.trim(),
+        reason: reason.trim(),
+      });
+      await onSuccess(result);
+      onClose();
+    } catch (submitError) {
+      setError(submitError?.message || 'Unable to change the employee number.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Change Employee Number</DialogTitle>
+        </DialogHeader>
+        {employee && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+              <p className="font-medium text-foreground">{employeeFullName(employee)}</p>
+              <p className="text-xs text-muted-foreground">Current number: <span className="font-mono">{employee.employee_id}</span></p>
+            </div>
+            <div>
+              <Label className="text-xs">New employee number</Label>
+              <div className="mt-1 flex gap-2">
+                <Input value={newEmployeeId} onChange={(event) => setNewEmployeeId(event.target.value.toUpperCase())} className="font-mono" />
+                <Button type="button" variant="outline" onClick={() => setNewEmployeeId(generatedEmployeeNumber(employee))}>Generate</Button>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">The old number remains valid as a QR/manual-entry alias.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">HR Officer passcode</Label>
+                <Input type="password" inputMode="numeric" maxLength={6} value={hrPasscode} onChange={(event) => setHrPasscode(event.target.value)} className="mt-1 text-center font-mono tracking-widest" />
+              </div>
+              <div>
+                <Label className="text-xs">Admin passcode</Label>
+                <Input type="password" inputMode="numeric" maxLength={6} value={adminPasscode} onChange={(event) => setAdminPasscode(event.target.value)} className="mt-1 text-center font-mono tracking-widest" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Reason for change</Label>
+              <Textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is the employee number being changed?" className="mt-1" />
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              Attendance, payroll, cash advances, leave, and 201-file records will be relinked.
+            </div>
+            {error && <p className="text-xs text-destructive">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button onClick={submit} disabled={saving} className="gap-1.5">
+                <KeyRound className="h-4 w-4" /> {saving ? 'Updating...' : 'Authorize Change'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Employees() {
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -84,6 +182,7 @@ export default function Employees() {
   const [idEmployee, setIdEmployee] = useState(null);
   const [file201Employee, setFile201Employee] = useState(null);
   const [incentiveEmployee, setIncentiveEmployee] = useState(null);
+  const [renumberEmployee, setRenumberEmployee] = useState(null);
   const [incentiveSettings, setIncentiveSettings] = useState(defaultIncentiveSettings);
   const [specialDraft, setSpecialDraft] = useState({ program_name: '', amount: '', reason: '' });
   const [editingSpecialId, setEditingSpecialId] = useState(null);
@@ -94,6 +193,7 @@ export default function Employees() {
   const qc = useQueryClient();
   const { activeCompanyId, activeCompany } = useCompany();
   const { user } = useAuth();
+  const canRenumberEmployees = ['super_admin', 'admin'].includes(user?.role);
 
   const downloadTemplate = () => {
     const headers = [
@@ -561,6 +661,11 @@ export default function Employees() {
                    <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => { setEditEmployee(emp); setShowForm(true); }}>
                      <Edit2 className="w-3.5 h-3.5" /> Edit
                    </Button>
+                   {canRenumberEmployees && status !== 'archived' && (
+                     <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => setRenumberEmployee(emp)}>
+                       <KeyRound className="w-3.5 h-3.5" /> Number
+                     </Button>
+                   )}
                    {status !== 'archived' && (
                      <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => openIncentiveDialog(emp)}>
                        <Gift className="w-3.5 h-3.5" /> Incentives
@@ -607,6 +712,23 @@ export default function Employees() {
           />
         </DialogContent>
       </Dialog>
+
+      <RenumberEmployeeDialog
+        employee={renumberEmployee}
+        open={!!renumberEmployee}
+        onClose={() => setRenumberEmployee(null)}
+        onSuccess={async () => {
+          await Promise.all([
+            qc.invalidateQueries({ queryKey: ['employees'] }),
+            qc.invalidateQueries({ queryKey: ['attendance'] }),
+            qc.invalidateQueries({ queryKey: ['cashAdvances'] }),
+            qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] }),
+            qc.invalidateQueries({ queryKey: ['payrollRecords'] }),
+            qc.invalidateQueries({ queryKey: ['personalLeaves'] }),
+            qc.invalidateQueries({ queryKey: ['passcodeAudit'] }),
+          ]);
+        }}
+      />
 
       {/* ID Card Dialog */}
       <Dialog open={!!idEmployee} onOpenChange={() => setIdEmployee(null)}>

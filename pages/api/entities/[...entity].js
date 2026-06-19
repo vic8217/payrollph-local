@@ -45,6 +45,11 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
+      if (entity === "Settings") {
+        return res.status(403).json({
+          error: "Shift settings must be changed through the protected shift-change workflow.",
+        });
+      }
       let data = req.body;
       if (entity === "CompanyProfile") {
         const session = await getServerSession(req, res, authOptions);
@@ -64,11 +69,21 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PATCH") {
+      if (entity === "Settings") {
+        return res.status(403).json({
+          error: "Shift settings must be changed through the protected shift-change workflow.",
+        });
+      }
       const record = await updateRecord(entity, req.body.id, req.body.data);
       return res.status(200).json(record);
     }
 
     if (req.method === "DELETE") {
+      if (entity === "Settings") {
+        return res.status(403).json({
+          error: "Shift settings must be changed through the protected shift-change workflow.",
+        });
+      }
       const result = await deleteRecord(entity, req.body.id);
       return res.status(200).json(result);
     }

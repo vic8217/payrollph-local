@@ -5,8 +5,14 @@ import { useCompany } from '@/lib/CompanyContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, format } from 'date-fns';
 import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
-import { computeCreditedHoursWorked, computeOvertimeHours } from '@/lib/payrollUtils';
+import {
+  computeCreditedHoursWorked,
+  computeLateMinutes,
+  computeNightDifferentialHours,
+  computeOvertimeHours,
+} from '@/lib/payrollUtils';
 import { manilaDateString } from '@/lib/dateUtils';
+import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -44,8 +50,10 @@ const legacyShiftOptions = [
   { value: 'night_shift', label: 'Night Shift', shortLabel: 'Night' },
 ];
 
-function buildShiftOptions(shiftSettings = [], employees = [], logs = []) {
-  const configuredOptions = [...shiftSettings]
+function buildShiftOptions(shiftSettings = [], employees = [], logs = [], date = manilaDateString()) {
+  const configuredOptions = shiftSettings
+    .map(shift => effectiveShiftSetting(shift, date))
+    .filter(shift => shift?.is_active !== false)
     .sort((a, b) => {
       const startCompare = String(a.shift_start_time || '').localeCompare(String(b.shift_start_time || ''));
       return startCompare || String(a.setting_name || '').localeCompare(String(b.setting_name || ''));
@@ -96,11 +104,18 @@ function addBreakDuration(time, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES
   };
 }
 
-function scheduledBreak(employee, date) {
+function isOvernightShift(shift) {
+  const fallback = legacyShiftTimes(shift?.value);
+  const shiftStart = shift?.shift_start_time || fallback.shift_start_time;
+  const shiftEnd = shift?.shift_end_time || fallback.shift_end_time;
+  return shiftEnd <= shiftStart;
+}
+
+function scheduledBreak(employee, date, shift) {
   if (!employee?.break_time) return null;
 
   const [breakHour] = employee.break_time.split(':').map(Number);
-  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12
+  const breakDate = isOvernightShift(shift) && breakHour < 12
     ? format(addDays(new Date(`${date}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
     : date;
   return {
@@ -108,8 +123,8 @@ function scheduledBreak(employee, date) {
   };
 }
 
-function scheduledBreakAfterTimeIn(employee, date, timeInValue) {
-  const autoBreak = scheduledBreak(employee, date);
+function scheduledBreakAfterTimeIn(employee, date, timeInValue, shift) {
+  const autoBreak = scheduledBreak(employee, date, shift);
   const timeIn = timeInValue ? new Date(timeInValue) : null;
   const breakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
 
@@ -120,8 +135,8 @@ function scheduledBreakAfterTimeIn(employee, date, timeInValue) {
   return breakOut.getTime() > timeIn.getTime() ? autoBreak : null;
 }
 
-function isPastAutoScheduledBreak(log, employee) {
-  const autoBreak = scheduledBreak(employee, log?.date);
+function isPastAutoScheduledBreak(log, employee, shift) {
+  const autoBreak = scheduledBreak(employee, log?.date, shift);
   const timeIn = log?.time_in ? new Date(log.time_in) : null;
   const breakOut = log?.break_time_out ? new Date(log.break_time_out) : null;
   const scheduledBreakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
@@ -129,14 +144,17 @@ function isPastAutoScheduledBreak(log, employee) {
   if (!timeIn || !breakOut || !scheduledBreakOut) return false;
   if (![timeIn, breakOut, scheduledBreakOut].every(date => Number.isFinite(date.getTime()))) return false;
 
-  return breakOut.getTime() === scheduledBreakOut.getTime() && breakOut.getTime() <= timeIn.getTime();
+  const matchesScheduledClockTime =
+    breakOut.getHours() === scheduledBreakOut.getHours() &&
+    breakOut.getMinutes() === scheduledBreakOut.getMinutes();
+  return matchesScheduledClockTime && breakOut.getTime() <= timeIn.getTime();
 }
 
-function scheduledBreakIn(employee, date) {
+function scheduledBreakIn(employee, date, shift) {
   if (!employee?.break_time) return null;
 
   const [breakHour] = employee.break_time.split(':').map(Number);
-  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12
+  const breakDate = isOvernightShift(shift) && breakHour < 12
     ? format(addDays(new Date(`${date}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
     : date;
   const breakIn = addBreakDuration(employee.break_time, getBreakDurationMinutes(employee));
@@ -147,11 +165,11 @@ function scheduledBreakIn(employee, date) {
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
 }
 
-function isBreakTimeInMissing(log, employee, now = new Date()) {
+function isBreakTimeInMissing(log, employee, shift, now = new Date()) {
   if (log?.day_type === 'half_day') return false;
   if (!log?.time_in || log.break_time_in || !employee?.break_time) return false;
 
-  const autoBreak = scheduledBreakAfterTimeIn(employee, log.date, log.time_in);
+  const autoBreak = scheduledBreakAfterTimeIn(employee, log.date, log.time_in, shift);
   if (!autoBreak?.break_time_out) return false;
 
   const missingAfter = new Date(autoBreak.break_time_out);
@@ -194,7 +212,7 @@ function isFinalTimeOutMissing(log, employee, shift, now = new Date()) {
 function missingAttendanceFields(log, employee, shift, now = new Date()) {
   const missing = [];
   if (!log?.time_in) missing.push('Time In(1)');
-  if (isBreakTimeInMissing(log, employee, now)) missing.push('Time In(2)');
+  if (isBreakTimeInMissing(log, employee, shift, now)) missing.push('Time In(2)');
   if (isFinalTimeOutMissing(log, employee, shift, now)) missing.push('Time Out(2)');
   return missing;
 }
@@ -334,7 +352,7 @@ async function uploadFile(file) {
 }
 
 // ── Edit Attendance Modal ──
-function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions, onClose, onSave, currentUser, activeCompanyId, canCorrectAttendance = false }) {
+function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions, resolvedShift, onClose, onSave, currentUser, activeCompanyId, canCorrectAttendance = false }) {
   const TODAY_STR = manilaDateString();
 
   // Step 1: passcode gate. Step 2: actual edit form.
@@ -351,7 +369,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const [attendanceDate, setAttendanceDate] = useState(log.date || '');
   const [dayType, setDayType] = useState(log.day_type || 'regular');
   const workSchedule = log.work_schedule || defaultWorkSchedule || 'day_shift';
-  const assignedShift = getShiftOption(shiftOptions, workSchedule, defaultWorkSchedule || 'day_shift');
+  const assignedShift = resolvedShift || getShiftOption(shiftOptions, workSchedule, defaultWorkSchedule || 'day_shift');
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const [photoStatus, setPhotoStatus] = useState('idle'); // idle | capturing | done | error
   const [saving, setSaving] = useState(false);
@@ -493,6 +511,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       }, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
         timeInAllowanceMinutes: selectedShift.time_in_allowance_minutes || 0,
+        lateGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
@@ -510,8 +529,24 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
+      const attendanceMetrics = {
+        ...log,
+        date: effDate,
+        time_in: effTimeIn,
+        break_time_out: effBreakOut,
+        break_time_in: effBreakIn,
+        time_out: effTimeOut,
+      };
       updates.overtime_hours = recomputedOvertime;
       updates.ot_requested_hours = recomputedOvertime;
+      updates.night_diff_hours = computeNightDifferentialHours(attendanceMetrics, {
+        breakDurationMinutes: getBreakDurationMinutes(employee),
+      });
+      updates.late_minutes = computeLateMinutes(attendanceMetrics, {
+        shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
+        timeInAllowanceMinutes: selectedShift.time_in_allowance_minutes || 0,
+        lateGraceMinutes: selectedShift.grace_period_minutes || 0,
+      });
       updates.ot_status = recomputedOvertime > 0 ? 'pending' : null;
       updates.ot_hr_approved = false;
       updates.ot_admin_approved = false;
@@ -523,6 +558,8 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       updates.hours_worked = 0;
       updates.overtime_hours = 0;
       updates.ot_requested_hours = 0;
+      updates.night_diff_hours = 0;
+      updates.late_minutes = 0;
       updates.ot_status = null;
       updates.ot_hr_approved = false;
       updates.ot_admin_approved = false;
@@ -620,7 +657,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
             <p className="text-xs text-muted-foreground">
               {canCorrectAttendance
                 ? 'Admins can correct the attendance date and any punch, including on approved records. Hours worked and overtime are recomputed automatically when saved. Clear a field to remove a punch.'
-                : 'Only missing time fields can be filled in. Shift can be corrected for this attendance record.'}
+                : 'Only missing time fields can be filled in. Shift assignments are read-only here and can only be changed on the Work Schedule page.'}
             </p>
 
             {canEditAttendanceDate && (
@@ -1168,9 +1205,22 @@ export default function Attendance() {
   };
 
   const shiftOptions = buildShiftOptions(shiftSettings, employees, logs);
-  const defaultShiftValue = shiftSettings.find(s => s.is_default)?.id || shiftSettings[0]?.id || selectedEmployee?.work_schedule || 'day_shift';
+  const currentShiftSettings = shiftSettings
+    .map(shift => effectiveShiftSetting(shift))
+    .filter(shift => shift?.is_active !== false);
+  const defaultShiftValue = currentShiftSettings.find(s => s.is_default)?.id || currentShiftSettings[0]?.id || selectedEmployee?.work_schedule || 'day_shift';
   const getLogShiftValue = (log) => log.work_schedule || selectedEmployee?.work_schedule || defaultShiftValue;
-  const getLogShift = (log) => getShiftOption(shiftOptions, getLogShiftValue(log), defaultShiftValue);
+  const getLogShift = (log) => {
+    const shiftValue = getLogShiftValue(log);
+    const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
+    const datedShift = effectiveShiftSetting(rawShift, log?.date || manilaDateString());
+    return shiftFromAttendanceSnapshot(
+      log,
+      datedShift
+        ? { ...datedShift, value: datedShift.id, label: datedShift.setting_name, shortLabel: datedShift.setting_name }
+        : getShiftOption(shiftOptions, shiftValue, defaultShiftValue),
+    );
+  };
   const getLogComputationOptions = (log) => {
     const shift = getLogShift(log);
     const fallbackShift = legacyShiftTimes(shift.value);
@@ -1178,6 +1228,7 @@ export default function Attendance() {
       shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
       overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
       timeInAllowanceMinutes: shift.time_in_allowance_minutes || 0,
+      lateGraceMinutes: shift.grace_period_minutes || 0,
       breakInGraceMinutes: shift.grace_period_minutes || 0,
       breakDurationMinutes: getBreakDurationMinutes(selectedEmployee),
     };
@@ -1185,7 +1236,7 @@ export default function Attendance() {
 
   const handleApproveLog = (log) => {
     const logShiftValue = getLogShiftValue(log);
-    const logShift = getShiftOption(shiftOptions, logShiftValue, defaultShiftValue);
+    const logShift = getLogShift(log);
     const logEmployee = { ...selectedEmployee, work_schedule: logShiftValue };
     const missing = missingAttendanceFields(log, logEmployee, logShift, currentTime);
 
@@ -1207,8 +1258,9 @@ export default function Attendance() {
     if (!selectedEmployee?.break_time || logs.length === 0) return;
 
     const logsNeedingBreak = logs.filter(log => {
-      const autoBreakOut = scheduledBreakAfterTimeIn(selectedEmployee, log.date, log.time_in);
-      const shouldClearPastBreakOut = isPastAutoScheduledBreak(log, selectedEmployee);
+      const logShift = getLogShift(log);
+      const autoBreakOut = scheduledBreakAfterTimeIn(selectedEmployee, log.date, log.time_in, logShift);
+      const shouldClearPastBreakOut = isPastAutoScheduledBreak(log, selectedEmployee, logShift);
       return log.time_in && ((autoBreakOut && !log.break_time_out) || shouldClearPastBreakOut);
     });
 
@@ -1217,8 +1269,9 @@ export default function Attendance() {
     let cancelled = false;
     const applyScheduledBreaks = async () => {
       await Promise.all(logsNeedingBreak.map(log => {
-        const autoBreak = scheduledBreakAfterTimeIn(selectedEmployee, log.date, log.time_in);
-        const shouldClearPastBreakOut = isPastAutoScheduledBreak(log, selectedEmployee);
+        const logShift = getLogShift(log);
+        const autoBreak = scheduledBreakAfterTimeIn(selectedEmployee, log.date, log.time_in, logShift);
+        const shouldClearPastBreakOut = isPastAutoScheduledBreak(log, selectedEmployee, logShift);
         const updates = {
           ...(!log.break_time_out && autoBreak ? { break_time_out: autoBreak.break_time_out } : {}),
           ...(shouldClearPastBreakOut ? { break_time_out: null } : {}),
@@ -1275,13 +1328,18 @@ export default function Attendance() {
         const computationOptions = getLogComputationOptions(log);
         const hoursWorked = computeCreditedHoursWorked(log, computationOptions);
         const overtimeHours = computeOvertimeHours(log, hoursWorked, computationOptions);
+        const nightDiffHours = computeNightDifferentialHours(log, computationOptions);
+        const lateMinutes = computeLateMinutes(log, computationOptions);
         const nextHours = Number(hoursWorked.toFixed(2));
         const nextOvertime = Number(overtimeHours.toFixed(2));
+        const nextNightDiff = Number(nightDiffHours.toFixed(2));
 
         if (
           Math.abs((Number(log.hours_worked) || 0) - nextHours) <= 0.005 &&
           Math.abs((Number(log.overtime_hours) || 0) - nextOvertime) <= 0.005 &&
-          Math.abs((Number(log.ot_requested_hours) || 0) - nextOvertime) <= 0.005
+          Math.abs((Number(log.ot_requested_hours) || 0) - nextOvertime) <= 0.005 &&
+          Math.abs((Number(log.night_diff_hours) || 0) - nextNightDiff) <= 0.005 &&
+          (Number(log.late_minutes) || 0) === lateMinutes
         ) {
           return null;
         }
@@ -1292,6 +1350,8 @@ export default function Attendance() {
             hours_worked: nextHours,
             overtime_hours: nextOvertime,
             ot_requested_hours: nextOvertime,
+            night_diff_hours: nextNightDiff,
+            late_minutes: lateMinutes,
             ot_status: nextOvertime > 0 ? 'pending' : null,
           },
         };
@@ -1723,7 +1783,7 @@ export default function Attendance() {
                 ) : (
 	                  sortedLogs.map(log => {
 	                    const logWorkSchedule = getLogShiftValue(log);
-	                    const logShift = getShiftOption(shiftOptions, logWorkSchedule, defaultShiftValue);
+	                    const logShift = getLogShift(log);
 	                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
 	                    const missingFields = missingAttendanceFields(log, logEmployee, logShift, currentTime);
 	                    const breakTimeInMissing = missingFields.includes('Time In(2)');
@@ -1861,6 +1921,7 @@ export default function Attendance() {
           employee={selectedEmployee}
           defaultWorkSchedule={getLogShiftValue(editingLog)}
           shiftOptions={shiftOptions}
+          resolvedShift={getLogShift(editingLog)}
           currentUser={currentUser}
           activeCompanyId={activeCompanyId}
           canCorrectAttendance={canCorrectAttendance}

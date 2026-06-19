@@ -95,8 +95,17 @@ function captureAttendanceLocation() {
  * @param {(info: AttendanceInfo) => void=} props.onAttendanceLogged
  * @param {string=} props.promptMessage
  * @param {string=} props.companyProfileId
+ * @param {string=} props.title
+ * @param {string=} props.description
  */
-export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, promptMessage, companyProfileId }) {
+export default function EmployeeQRGate({
+  onEmployeeScanned,
+  onAttendanceLogged,
+  promptMessage,
+  companyProfileId,
+  title = 'Attendance Logger',
+  description = 'Scan your QR code to record time in/out',
+}) {
   const [mode, setMode] = useState('camera');
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
@@ -138,7 +147,7 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
         throw new Error('Camera access is not available in this browser. Use manual entry or try another browser.');
       }
 
-      const { Html5Qrcode } = await import('html5-qrcode');
+      const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
       // Wait for the element to be in the DOM
       await new Promise(r => setTimeout(r, 100));
 
@@ -147,7 +156,10 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
       const readerEl = document.getElementById(readerId);
       if (!readerEl) return;
 
-      const scanner = new Html5Qrcode(readerId);
+      const scanner = new Html5Qrcode(readerId, {
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        useBarCodeDetectorIfSupported: true,
+      });
 
       if (token !== startTokenRef.current) {
         scanner.clear();
@@ -171,12 +183,13 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
    */
   const startScanner = async (scanner) => {
     const config = {
-      fps: 10,
+      fps: 15,
       qrbox: (/** @type {number} */ viewfinderWidth, /** @type {number} */ viewfinderHeight) => {
-        const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
-        return { width: Math.max(220, Math.min(size, 320)), height: Math.max(220, Math.min(size, 320)) };
+        const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.85);
+        return { width: Math.max(200, Math.min(size, 360)), height: Math.max(200, Math.min(size, 360)) };
       },
-      aspectRatio: 1,
+      aspectRatio: 4 / 3,
+      disableFlip: false,
     };
 
     const onSuccess = (/** @type {string} */ text) => processCode(text);
@@ -263,13 +276,26 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
 
     // Full attendance logging — use backend function (service role, works on public portal)
     const empName = [emp.first_name, emp.middle_name, emp.last_name].filter(Boolean).join(' ');
-    const location = await captureAttendanceLocation();
-    const logRes = await appApi.functions.invoke('logAttendance', {
-      employee_id: emp.employee_id,
-      employee_record_id: emp.id,
-      company_profile_id: emp.company_profile_id || companyProfileId,
-      location,
-    });
+    let logRes;
+    try {
+      const location = await captureAttendanceLocation();
+      logRes = await appApi.functions.invoke('logAttendance', {
+        employee_id: emp.employee_id,
+        employee_record_id: emp.id,
+        company_profile_id: emp.company_profile_id || companyProfileId,
+        location,
+      });
+    } catch (error) {
+      setResult({
+        success: false,
+        message: error?.message || 'Attendance could not be recorded. Please try again.',
+      });
+      setInput('');
+      setProcessing(false);
+      lockedRef.current = false;
+      setTimeout(() => { setResult(null); setMode('camera'); }, 4000);
+      return;
+    }
     const { action, log } = logRes;
     const now = new Date();
     if (logRes.duplicate) {
@@ -318,8 +344,8 @@ export default function EmployeeQRGate({ onEmployeeScanned, onAttendanceLogged, 
         </div>
       ) : (
         <div>
-          <h2 className="text-xl font-bold text-foreground">Attendance Logger</h2>
-          <p className="text-muted-foreground text-sm mt-0.5">Scan your QR code to record time in/out</p>
+          <h2 className="text-xl font-bold text-foreground">{title}</h2>
+          <p className="text-muted-foreground text-sm mt-0.5">{description}</p>
         </div>
       )}
 

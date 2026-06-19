@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
+import { manilaDateString } from '@/lib/dateUtils';
+import { effectiveShiftSetting } from '@/lib/shiftSettings';
 import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -132,7 +134,10 @@ export default function WorkSchedule() {
     updateMutation.mutate({ id: emp.id, data: { break_duration_minutes: Number(value) } });
   };
 
-  const sortedShiftSettings = [...shiftSettings].sort((a, b) => {
+  const effectiveShiftSettings = shiftSettings
+    .map(shift => effectiveShiftSetting(shift, manilaDateString()))
+    .filter(shift => shift?.is_active !== false);
+  const sortedShiftSettings = [...effectiveShiftSettings].sort((a, b) => {
     const startCompare = (a.shift_start_time || '').localeCompare(b.shift_start_time || '');
     return startCompare || (a.setting_name || '').localeCompare(b.setting_name || '');
   });

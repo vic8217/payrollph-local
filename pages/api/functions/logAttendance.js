@@ -1,7 +1,13 @@
 // @ts-nocheck
 import { createRecord, listRecords, updateRecord } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
-import { computeCreditedHoursWorked, computeOvertimeHours } from "@/lib/payrollUtils";
+import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from "@/lib/shiftSettings";
+import {
+  computeCreditedHoursWorked,
+  computeLateMinutes,
+  computeNightDifferentialHours,
+  computeOvertimeHours,
+} from "@/lib/payrollUtils";
 
 function todayInManila() {
   return manilaDateString();
@@ -132,10 +138,15 @@ function legacyShiftTimes(value) {
   };
 }
 
-function resolveEmployeeShiftOptions(employee, shiftSettings) {
-  const defaultShift = shiftSettings.find(setting => setting.is_default) || shiftSettings[0] || {};
+function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) {
+  const effectiveShifts = shiftSettings
+    .map(setting => effectiveShiftSetting(setting, date))
+    .filter(setting => setting?.is_active !== false);
+  const defaultShift = effectiveShifts.find(setting => setting.is_default) || effectiveShifts[0] || {};
   const shiftValue = employee?.work_schedule || defaultShift.id || "day_shift";
-  const shift = shiftSettings.find(setting => String(setting.id) === String(shiftValue)) || defaultShift;
+  const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
+  const matchedShift = shiftFromAttendanceSnapshot(log, effectiveShiftSetting(rawShift, date));
+  const shift = matchedShift || (employee?.work_schedule ? {} : defaultShift);
   const fallbackShift = legacyShiftTimes(shiftValue);
   const shiftStartTime = shift.shift_start_time || fallbackShift.shift_start_time;
   const shiftEndTime = shift.shift_end_time || fallbackShift.shift_end_time;
@@ -146,6 +157,7 @@ function resolveEmployeeShiftOptions(employee, shiftSettings) {
     overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+    lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
     isOvernightShift: shiftEndTime <= shiftStartTime,
   };
 }
@@ -212,12 +224,20 @@ function scheduledShiftEnd(logDate, shiftOptions) {
   return end;
 }
 
+function scheduledShiftStart(logDate, shiftOptions) {
+  if (!logDate || !shiftOptions?.shiftStartTime) return null;
+  const start = new Date(`${logDate}T${shiftOptions.shiftStartTime}:00+08:00`);
+  return Number.isFinite(start.getTime()) ? start : null;
+}
+
 function isActiveOvernightLog(log, employee, shiftSettings, date, nowDate) {
   if (!log || log.time_out || log.date !== addDays(date, -1)) return false;
 
   const shiftOptions = resolveEmployeeShiftOptions(
     { ...employee, work_schedule: log.work_schedule || employee.work_schedule },
     shiftSettings,
+    log.date,
+    log,
   );
   if (!shiftOptions.isOvernightShift) return false;
 
@@ -291,9 +311,25 @@ export default async function handler(req, res) {
   const currentShiftOptions = resolveEmployeeShiftOptions(
     { ...employee, work_schedule: lastLog?.work_schedule || employee.work_schedule },
     shiftSettings,
+    lastLog?.date || date,
+    lastLog,
   );
 
   if (!lastLog) {
+    const shiftStart = scheduledShiftStart(date, currentShiftOptions);
+    if (
+      currentShiftOptions.isOvernightShift &&
+      shiftStart &&
+      nowDate.getTime() < shiftStart.getTime()
+    ) {
+      return rejectRapidScan(
+        res,
+        null,
+        "time_in",
+        `Time In is not available until the night shift starts at ${currentShiftOptions.shiftStartTime}. No unfinished previous-night record was found.`,
+      );
+    }
+
     const autoBreak = scheduledBreakAfterTimeIn(
       employee,
       date,
@@ -308,6 +344,11 @@ export default async function handler(req, res) {
       date,
       time_in: now,
       work_schedule: employee.work_schedule,
+      shift_start_time: currentShiftOptions.shiftStartTime,
+      shift_end_time: currentShiftOptions.shiftEndTime,
+      shift_overtime_start_time: currentShiftOptions.overtimeStartTime,
+      shift_grace_period_minutes: currentShiftOptions.lateGraceMinutes,
+      shift_time_in_allowance_minutes: currentShiftOptions.timeInAllowanceMinutes,
       ...(autoBreak || {}),
       ...locationUpdateFor("time_in", location),
       status: "pending",
@@ -388,6 +429,8 @@ export default async function handler(req, res) {
     const shiftOptions = resolveEmployeeShiftOptions(
       { ...employee, work_schedule: currentLog.work_schedule || employee.work_schedule },
       shiftSettings,
+      currentLog.date,
+      currentLog,
     );
     const completedLog = { ...currentLog, time_out: now };
     const hoursWorked = computeCreditedHoursWorked(completedLog, {
@@ -398,11 +441,19 @@ export default async function handler(req, res) {
       ...shiftOptions,
       breakDurationMinutes: getBreakDurationMinutes(employee),
     });
+    const nightDiffHours = computeNightDifferentialHours(completedLog, {
+      breakDurationMinutes: getBreakDurationMinutes(employee),
+    });
+    const lateMinutes = computeLateMinutes(completedLog, shiftOptions);
     const log = await updateRecord("AttendanceLog", currentLog.id, {
       time_out: now,
       ...locationUpdateFor("time_out", location),
       hours_worked: Number(hoursWorked.toFixed(2)),
       overtime_hours: Number(overtimeHours.toFixed(2)),
+      ot_requested_hours: Number(overtimeHours.toFixed(2)),
+      ot_status: overtimeHours > 0 ? "pending" : null,
+      night_diff_hours: Number(nightDiffHours.toFixed(2)),
+      late_minutes: lateMinutes,
     });
     return res.status(200).json({ action: "time_out", log });
   }

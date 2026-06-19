@@ -158,6 +158,7 @@ export const authOptions = {
           token.active_session_valid =
             scheduleUser?.role === "super_admin" ||
             isWithinAccessSchedule(scheduleUser?.accessSchedule);
+          token.role = scheduleUser?.role || token.role || "user";
           const companyProfileIds = parseCompanyProfileIds(scheduleUser?.companyProfileId);
           token.company_profile_id = companyProfileIds[0] || null;
           token.company_profile_ids = companyProfileIds;

@@ -40,6 +40,7 @@
  * @typedef {object} HoursComputationOptions
  * @property {string=} shiftStartTime
  * @property {number=} timeInAllowanceMinutes
+ * @property {number=} lateGraceMinutes
  * @property {number=} breakInGraceMinutes
  * @property {number=} breakDurationMinutes
  * @property {string=} overtimeStartTime
@@ -292,22 +293,30 @@ export function computeCreditedHoursWorked(
 	}
 
 	const breakOut = toValidDate(log.break_time_out);
-	const breakIn = toValidDate(log.break_time_in);
-	let effectiveBreakIn = breakIn;
+	const recordedBreakIn = toValidDate(log.break_time_in);
+	let effectiveBreakIn = recordedBreakIn;
 
-	if (breakOut && breakIn) {
+	if (breakOut && recordedBreakIn) {
 		const expectedBreakIn = new Date(breakOut);
 		expectedBreakIn.setMinutes(
 			expectedBreakIn.getMinutes() + (Number(breakDurationMinutes) || 60),
 		);
 		const breakInMinutesAfterExpected =
-			(breakIn.getTime() - expectedBreakIn.getTime()) / 60000;
+			(recordedBreakIn.getTime() - expectedBreakIn.getTime()) / 60000;
 
 		if (
 			breakInMinutesAfterExpected <= 0 ||
 			breakInMinutesAfterExpected <= Math.max(0, Number(breakInGraceMinutes) || 0)
 		) {
 			effectiveBreakIn = expectedBreakIn;
+		}
+	} else if (breakOut) {
+		effectiveBreakIn = new Date(breakOut);
+		effectiveBreakIn.setMinutes(
+			effectiveBreakIn.getMinutes() + (Number(breakDurationMinutes) || 60),
+		);
+		if (effectiveBreakIn.getTime() > timeOut.getTime()) {
+			effectiveBreakIn = timeOut;
 		}
 	}
 
@@ -347,6 +356,84 @@ function overlapHours(startA, endA, startB, endB) {
 	const start = Math.max(startA.getTime(), startB.getTime());
 	const end = Math.min(endA.getTime(), endB.getTime());
 	return Math.max(0, (end - start) / 36e5);
+}
+
+function resolveBreakInterval(log, breakDurationMinutes = 60) {
+	const breakOut = toValidDate(log.break_time_out);
+	if (!breakOut) return { breakOut: null, breakIn: null };
+
+	const timeOut = toValidDate(log.time_out);
+	let breakIn = toValidDate(log.break_time_in);
+	if (!breakIn) {
+		breakIn = new Date(breakOut);
+		breakIn.setMinutes(
+			breakIn.getMinutes() + (Number(breakDurationMinutes) || 60),
+		);
+	}
+	if (timeOut && breakIn.getTime() > timeOut.getTime()) {
+		breakIn = timeOut;
+	}
+	if (breakIn.getTime() <= breakOut.getTime()) {
+		return { breakOut: null, breakIn: null };
+	}
+	return { breakOut, breakIn };
+}
+
+export function computeLateMinutes(
+	/** @type {PayrollLog} */
+	log,
+	/** @type {HoursComputationOptions} */
+	{
+		shiftStartTime = '08:00',
+		timeInAllowanceMinutes = 0,
+		lateGraceMinutes = 0,
+	} = {},
+) {
+	const timeIn = toValidDate(log.time_in);
+	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
+	if (!timeIn || !scheduledStart) return Number(log.late_minutes) || 0;
+
+	const allowedMinutes = Math.max(
+		0,
+		Number(timeInAllowanceMinutes) || 0,
+		Number(lateGraceMinutes) || 0,
+	);
+	const minutesAfterAllowance =
+		(timeIn.getTime() - scheduledStart.getTime()) / 60000 - allowedMinutes;
+	return Math.max(0, Math.floor(minutesAfterAllowance));
+}
+
+export function computeNightDifferentialHours(
+	/** @type {PayrollLog} */
+	log,
+	/** @type {HoursComputationOptions} */
+	{ breakDurationMinutes = 60 } = {},
+) {
+	const timeIn = toValidDate(log.time_in);
+	const timeOut = toValidDate(log.time_out);
+	if (!timeIn || !timeOut || timeOut.getTime() <= timeIn.getTime()) {
+		return Number(log.night_diff_hours) || 0;
+	}
+
+	const { breakOut, breakIn } = resolveBreakInterval(log, breakDurationMinutes);
+	const workIntervals = breakOut && breakIn
+		? [[timeIn, breakOut], [breakIn, timeOut]]
+		: [[timeIn, timeOut]];
+	const firstNightWindow = resolveScheduledTime(log.date, '22:00');
+	if (!firstNightWindow) return 0;
+
+	let totalHours = 0;
+	const durationDays = Math.ceil((timeOut.getTime() - timeIn.getTime()) / 864e5);
+	for (let dayOffset = -1; dayOffset <= durationDays + 1; dayOffset += 1) {
+		const nightStart = addDays(firstNightWindow, dayOffset);
+		const nightEnd = new Date(nightStart);
+		nightEnd.setHours(nightEnd.getHours() + 8);
+		for (const [workStart, workEnd] of workIntervals) {
+			totalHours += overlapHours(workStart, workEnd, nightStart, nightEnd);
+		}
+	}
+
+	return parseFloat(totalHours.toFixed(2));
 }
 
 export function computeOvertimeHours(
@@ -391,15 +478,15 @@ export function computeOvertimeHours(
 	);
 
 	const breakOut = toValidDate(log.break_time_out);
-	const breakIn = toValidDate(log.break_time_in);
-	let effectiveBreakIn = breakIn;
-	if (breakOut && breakIn) {
+	const recordedBreakIn = toValidDate(log.break_time_in);
+	let effectiveBreakIn = recordedBreakIn;
+	if (breakOut && recordedBreakIn) {
 		const expectedBreakIn = new Date(breakOut);
 		expectedBreakIn.setMinutes(
 			expectedBreakIn.getMinutes() + (Number(breakDurationMinutes) || 60),
 		);
 		const breakInMinutesAfterExpected =
-			(breakIn.getTime() - expectedBreakIn.getTime()) / 60000;
+			(recordedBreakIn.getTime() - expectedBreakIn.getTime()) / 60000;
 
 		if (
 			breakInMinutesAfterExpected <= 0 ||
@@ -407,6 +494,14 @@ export function computeOvertimeHours(
 				Math.max(0, Number(breakInGraceMinutes) || 0)
 		) {
 			effectiveBreakIn = expectedBreakIn;
+		}
+	} else if (breakOut) {
+		effectiveBreakIn = new Date(breakOut);
+		effectiveBreakIn.setMinutes(
+			effectiveBreakIn.getMinutes() + (Number(breakDurationMinutes) || 60),
+		);
+		if (effectiveBreakIn.getTime() > timeOut.getTime()) {
+			effectiveBreakIn = timeOut;
 		}
 	}
 	overtimeHours -= overlapHours(
@@ -566,7 +661,7 @@ export function computeWeeklyPayroll(
 		}
 
 		// Night differential (10% premium per ND hour)
-		const nightDiffHours = Number(log.night_diff_hours) || 0;
+		const nightDiffHours = computeNightDifferentialHours(log, logOptions);
 		if (nightDiffHours > 0) {
 			totalNightDiffHours += nightDiffHours;
 			nightDiffPay += computeNightDiffPay(
@@ -576,11 +671,8 @@ export function computeWeeklyPayroll(
 			);
 		}
 
-		// Late deduction (per minute = hourly rate / 60), minus grace period
-		const lateMinutesAfterGrace = Math.max(
-			0,
-			(Number(log.late_minutes) || 0) - gracePeriodMinutes,
-		);
+		// Late deduction after the configured HR/admin allowance.
+		const lateMinutesAfterGrace = computeLateMinutes(log, logOptions);
 		if (lateMinutesAfterGrace > 0) {
 			lateDeduction += (hourlyRate / 60) * lateMinutesAfterGrace;
 		}
