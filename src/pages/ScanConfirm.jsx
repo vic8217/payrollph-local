@@ -44,19 +44,19 @@ function addOneDay(date) {
   return format(d, 'yyyy-MM-dd');
 }
 
-function scheduledBreak(employee, date) {
+function scheduledBreak(employee, date, isOvernightShift = false) {
   if (!employee?.break_time) return null;
 
   const [breakHour] = employee.break_time.split(':').map(Number);
-  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12 ? addOneDay(date) : date;
+  const breakDate = isOvernightShift && breakHour < 12 ? addOneDay(date) : date;
 
   return {
     break_time_out: new Date(`${breakDate}T${employee.break_time}:00+08:00`).toISOString(),
   };
 }
 
-function scheduledBreakAfterTimeIn(employee, date, timeInValue) {
-  const autoBreak = scheduledBreak(employee, date);
+function scheduledBreakAfterTimeIn(employee, date, timeInValue, isOvernightShift = false) {
+  const autoBreak = scheduledBreak(employee, date, isOvernightShift);
   const timeIn = timeInValue ? new Date(timeInValue) : null;
   const breakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
 
@@ -67,8 +67,8 @@ function scheduledBreakAfterTimeIn(employee, date, timeInValue) {
   return breakOut.getTime() > timeIn.getTime() ? autoBreak : null;
 }
 
-function isPastAutoScheduledBreak(log, employee) {
-  const autoBreak = scheduledBreak(employee, log?.date);
+function isPastAutoScheduledBreak(log, employee, isOvernightShift = false) {
+  const autoBreak = scheduledBreak(employee, log?.date, isOvernightShift);
   const timeIn = log?.time_in ? new Date(log.time_in) : null;
   const breakOut = log?.break_time_out ? new Date(log.break_time_out) : null;
   const scheduledBreakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
@@ -80,8 +80,10 @@ function isPastAutoScheduledBreak(log, employee) {
 }
 
 function legacyShiftTimes(value) {
-  if (value === 'night_shift') return { shift_start_time: '20:00', overtime_start_time: '05:30' };
-  return { shift_start_time: '08:00', overtime_start_time: '17:30' };
+  if (value === 'night_shift') {
+    return { shift_start_time: '20:00', shift_end_time: '05:00', overtime_start_time: '05:30' };
+  }
+  return { shift_start_time: '08:00', shift_end_time: '17:00', overtime_start_time: '17:30' };
 }
 
 function resolveEmployeeShiftOptions(employee, shiftSettings) {
@@ -89,12 +91,16 @@ function resolveEmployeeShiftOptions(employee, shiftSettings) {
   const shiftValue = employee?.work_schedule || defaultShift.id || 'day_shift';
   const shift = shiftSettings.find(setting => String(setting.id) === String(shiftValue)) || defaultShift;
   const fallbackShift = legacyShiftTimes(shiftValue);
+  const shiftStartTime = shift.shift_start_time || fallbackShift.shift_start_time;
+  const shiftEndTime = shift.shift_end_time || fallbackShift.shift_end_time;
 
   return {
-    shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
+    shiftStartTime,
+    shiftEndTime,
     overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+    isOvernightShift: shiftEndTime <= shiftStartTime,
   };
 }
 
@@ -113,11 +119,11 @@ function addBreakDuration(time, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES
   };
 }
 
-function scheduledBreakIn(employee, date) {
+function scheduledBreakIn(employee, date, isOvernightShift = false) {
   if (!employee?.break_time) return null;
 
   const [breakHour] = employee.break_time.split(':').map(Number);
-  const breakDate = employee.work_schedule === 'night_shift' && breakHour < 12 ? addOneDay(date) : date;
+  const breakDate = isOvernightShift && breakHour < 12 ? addOneDay(date) : date;
   const breakIn = addBreakDuration(employee.break_time, getBreakDurationMinutes(employee));
   const breakInDate = breakIn.crossesMidnight ? addOneDay(breakDate) : breakDate;
 
@@ -294,6 +300,13 @@ export default function ScanConfirm() {
     setConfirming(true);
     const today = manilaDateString();
     const now = new Date().toISOString();
+    const shiftSettings = await appApi.entities.Settings.filter({ company_profile_id: employee.company_profile_id });
+    const shiftEmployee = {
+      ...employee,
+      work_schedule: todayLog?.work_schedule || employee.work_schedule,
+    };
+    const shiftOptions = resolveEmployeeShiftOptions(shiftEmployee, shiftSettings);
+    const logDate = todayLog?.date || today;
     let photoUpdates = {};
     try {
       photoUpdates = await uploadAttendancePhoto(capturedPhoto, action);
@@ -318,7 +331,7 @@ export default function ScanConfirm() {
         date: today,
         time_in: effectiveTimeIn,
         work_schedule: employee.work_schedule,
-        ...(scheduledBreakAfterTimeIn(employee, today, effectiveTimeIn) || {}),
+        ...(scheduledBreakAfterTimeIn(employee, today, effectiveTimeIn, shiftOptions.isOvernightShift) || {}),
         day_type: 'regular',
         status: 'pending',
         ...photoUpdates,
@@ -326,7 +339,12 @@ export default function ScanConfirm() {
       });
       setDone({ action: 'time_in', employee, lunchSnapped: isLunchWindow });
     } else if (action === 'break_time_in' && todayLog) {
-      const autoBreak = scheduledBreakAfterTimeIn(employee, today, todayLog.time_in);
+      const autoBreak = scheduledBreakAfterTimeIn(
+        employee,
+        logDate,
+        todayLog.time_in,
+        shiftOptions.isOvernightShift,
+      );
       await appApi.entities.AttendanceLog.update(todayLog.id, {
         ...(!todayLog.break_time_out && autoBreak ? { break_time_out: autoBreak.break_time_out } : {}),
         break_time_in: now,
@@ -335,8 +353,17 @@ export default function ScanConfirm() {
       });
       setDone({ action: 'break_time_in', employee });
     } else if (action === 'time_out' && todayLog) {
-      const autoBreak = scheduledBreakAfterTimeIn(employee, today, todayLog.time_in);
-      const shouldClearPastBreakOut = isPastAutoScheduledBreak(todayLog, employee);
+      const autoBreak = scheduledBreakAfterTimeIn(
+        employee,
+        logDate,
+        todayLog.time_in,
+        shiftOptions.isOvernightShift,
+      );
+      const shouldClearPastBreakOut = isPastAutoScheduledBreak(
+        todayLog,
+        employee,
+        shiftOptions.isOvernightShift,
+      );
       const breakUpdates = autoBreak ? {
         ...(!todayLog.break_time_out ? { break_time_out: autoBreak.break_time_out } : {}),
       } : shouldClearPastBreakOut ? {
@@ -345,8 +372,6 @@ export default function ScanConfirm() {
       } : {};
       const effectiveBreakOut = breakUpdates.break_time_out === null ? null : breakUpdates.break_time_out || todayLog.break_time_out;
       const effectiveBreakIn = breakUpdates.break_time_in === null ? null : todayLog.break_time_in;
-      const shiftSettings = await appApi.entities.Settings.filter({ company_profile_id: employee.company_profile_id });
-      const shiftOptions = resolveEmployeeShiftOptions(employee, shiftSettings);
       const hoursWorked = computeCreditedHoursWorked({
         ...todayLog,
         ...breakUpdates,
@@ -368,9 +393,8 @@ export default function ScanConfirm() {
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       const timeIn = new Date(todayLog.time_in);
-      const workStart = new Date(timeIn);
-      workStart.setHours(8, 0, 0, 0);
-      const lateMinutes = Math.floor(Math.max(0, timeIn - workStart) / 60000);
+      const workStart = new Date(`${logDate}T${shiftOptions.shiftStartTime}:00+08:00`);
+      const lateMinutes = Math.floor(Math.max(0, timeIn.getTime() - workStart.getTime()) / 60000);
 
       await appApi.entities.AttendanceLog.update(todayLog.id, {
         ...breakUpdates,
