@@ -3,6 +3,7 @@ import { appApi } from '@/lib/appApi';
 import { ensureCashAdvanceBeginningLedger } from '@/lib/cashAdvanceLedger';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
+import { useAuth } from '@/lib/AuthContext';
 import { Plus, Search, Edit2, Archive, CreditCard, FileText, Upload, Download, UserMinus, RotateCcw, Gift, Trash2 } from 'lucide-react';
 import EmployeeIdCard from '@/components/employees/EmployeeIdCard';
 import { Button } from '@/components/ui/button';
@@ -92,6 +93,7 @@ export default function Employees() {
   const [statusFilter, setStatusFilter] = useState('current');
   const qc = useQueryClient();
   const { activeCompanyId, activeCompany } = useCompany();
+  const { user } = useAuth();
 
   const downloadTemplate = () => {
     const headers = [
@@ -238,7 +240,31 @@ export default function Employees() {
   });
 
   const saveIncentivesMutation = useMutation({
-    mutationFn: ({ id, settings }) => appApi.entities.Employee.update(id, { incentive_settings: settings }),
+    mutationFn: async ({ id, settings }) => {
+      const auditAt = new Date().toISOString();
+      const auditBy = user?.full_name || user?.email || 'unknown';
+      const updated = await appApi.entities.Employee.update(id, {
+        incentive_settings: settings,
+        passcode_audit_action: 'employee_incentives_updated',
+        passcode_audit_at: auditAt,
+        passcode_audit_by: auditBy,
+        passcode_audit_reason: 'HR Officer and Admin passcodes verified',
+        passcode_audit_summary: 'Employee incentive settings updated',
+      });
+      await appApi.entities.PasscodeAuditLog.create({
+        company_profile_id: activeCompanyId,
+        source_entity: 'Employee',
+        source_record_id: id,
+        action: 'employee_incentives_updated',
+        occurred_at: auditAt,
+        authorized_by: auditBy,
+        reason: 'HR Officer and Admin passcodes verified',
+        summary: 'Employee incentive settings updated',
+        employee_id: updated.employee_id,
+        employee_name: employeeFullName(updated),
+      });
+      return updated;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['employees'] });
       setIncentiveEmployee(null);

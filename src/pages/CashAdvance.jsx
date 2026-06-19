@@ -206,6 +206,22 @@ export default function CashAdvance() {
   const updateMutation = useMutation({
     mutationFn: async ({ id, data, createAdditionLedger = false }) => {
       const updated = await entities.update('CashAdvance', id, data);
+      if (data.passcode_audit_action) {
+        await entities.create('PasscodeAuditLog', {
+          company_profile_id: activeCompanyId,
+          source_entity: 'CashAdvance',
+          source_record_id: id,
+          action: data.passcode_audit_action,
+          occurred_at: data.passcode_audit_at,
+          authorized_by: data.passcode_audit_by,
+          reason: data.passcode_audit_reason,
+          summary: data.passcode_audit_summary,
+          employee_id: updated.employee_id,
+          employee_name: updated.employee_name,
+          amount: updated.amount_approved || updated.amount_requested,
+          record_date: updated.request_date,
+        });
+      }
       if (createAdditionLedger) await ensureCashAdvanceAdditionLedger(updated);
       return updated;
     },
@@ -258,8 +274,19 @@ export default function CashAdvance() {
 
   const approve = (id, type) => {
     if (!verifyPasscode(type)) return;
+    const auditBase = {
+      passcode_audit_at: new Date().toISOString(),
+      passcode_audit_by: user?.full_name || user?.email || 'unknown',
+      passcode_audit_reason: notesText || null,
+    };
     if (type === 'hr') {
-      updateMutation.mutate({ id, data: { status: 'approved_by_hr', ...(notesText ? { hr_notes: notesText } : {}) } });
+      updateMutation.mutate({ id, data: {
+        status: 'approved_by_hr',
+        ...auditBase,
+        passcode_audit_action: 'cash_advance_hr_approved',
+        passcode_audit_summary: 'Cash advance approved by HR',
+        ...(notesText ? { hr_notes: notesText } : {}),
+      } });
     } else if (type === 'manager') {
       const periods = parseInt(deductionPeriods) || 1;
       const approved = parseFloat(amountApproved) || 0;
@@ -277,6 +304,9 @@ export default function CashAdvance() {
           deduction_payroll_periods: periods,
           deduction_amount_per_payroll: perPayroll,
           deduction_periods_remaining: periods,
+          ...auditBase,
+          passcode_audit_action: 'cash_advance_admin_approved',
+          passcode_audit_summary: `Cash advance approved for ₱${approved.toFixed(2)}`,
           ...(notesText ? { manager_notes: notesText } : {}),
         },
       });
@@ -285,7 +315,15 @@ export default function CashAdvance() {
 
   const reject = (id) => {
     if (!verifyPasscode('hr')) return;
-    updateMutation.mutate({ id, data: { status: 'rejected', ...(notesText ? { hr_notes: notesText } : {}) } });
+    updateMutation.mutate({ id, data: {
+      status: 'rejected',
+      passcode_audit_action: 'cash_advance_rejected',
+      passcode_audit_at: new Date().toISOString(),
+      passcode_audit_by: user?.full_name || user?.email || 'unknown',
+      passcode_audit_reason: notesText || null,
+      passcode_audit_summary: 'Cash advance rejected',
+      ...(notesText ? { hr_notes: notesText } : {}),
+    } });
   };
 
   const filtered = (filterStatus === 'all' ? cashAdvances : cashAdvances.filter(ca => ca.status === filterStatus))

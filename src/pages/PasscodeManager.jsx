@@ -77,7 +77,8 @@ export default function PasscodeManager() {
         <h1 className="text-2xl font-bold text-foreground">Daily Passcode</h1>
         <p className="text-muted-foreground text-sm mt-0.5">
           Generate daily passcodes for manual attendance edits and for approving or declining personal
-          leave. Share the HR code with HR officers and the manager code with admins as needed.
+          leave and overtime. OT approval, denial, or reduction requires both the HR Officer code and
+          the Manager/Admin code.
         </p>
       </div>
 

@@ -18,6 +18,7 @@ const ENTITY_NAMES = new Set([
   "PayrollIncentive",
   "PayrollPeriod",
   "PayrollRecord",
+  "PasscodeAuditLog",
   "PersonalLeave",
   "SeparationPay",
   "Settings",

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { appApi } from '@/lib/appApi';
 import { useCompany } from '@/lib/CompanyContext';
+import { useAuth } from '@/lib/AuthContext';
 import { Palmtree, CheckCircle2, XCircle, Loader2, KeyRound } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,7 @@ export default function PersonalLeave() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { activeCompanyId } = useCompany();
+  const { user } = useAuth();
   const [actionDialog, setActionDialog] = useState(null); // { row, status: 'approved' | 'declined' }
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState('');
@@ -64,7 +66,25 @@ export default function PersonalLeave() {
   );
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => appApi.entities.PersonalLeave.update(id, data),
+    mutationFn: async ({ id, data }) => {
+      const updated = await appApi.entities.PersonalLeave.update(id, data);
+      if (data.passcode_audit_action) {
+        await appApi.entities.PasscodeAuditLog.create({
+          company_profile_id: activeCompanyId,
+          source_entity: 'PersonalLeave',
+          source_record_id: id,
+          action: data.passcode_audit_action,
+          occurred_at: data.passcode_audit_at,
+          authorized_by: data.passcode_audit_by,
+          reason: data.passcode_audit_reason,
+          summary: data.passcode_audit_summary,
+          employee_id: updated.employee_id,
+          employee_name: updated.employee_name,
+          record_date: updated.start_date,
+        });
+      }
+      return updated;
+    },
     onSuccess: (_, { data }) => {
       qc.invalidateQueries({ queryKey: ['personalLeavesAdmin'] });
       qc.invalidateQueries({ queryKey: ['personalLeaves'] });
@@ -121,6 +141,11 @@ export default function PersonalLeave() {
         status,
         decided_at: new Date().toISOString(),
         hr_notes: notes || null,
+        passcode_audit_action: status === 'approved' ? 'leave_approved' : 'leave_declined',
+        passcode_audit_at: new Date().toISOString(),
+        passcode_audit_by: user?.full_name || user?.email || 'unknown',
+        passcode_audit_reason: notes || null,
+        passcode_audit_summary: `${status === 'approved' ? 'Leave approved' : 'Leave declined'} for ${row.employee_name || row.employee_id || 'employee'}`,
       },
     });
   };

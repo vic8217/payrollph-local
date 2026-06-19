@@ -22,6 +22,12 @@ const statusColors = {
   rejected: 'bg-red-100 text-red-600',
 };
 
+const overtimeStatusColors = {
+  pending: 'bg-amber-100 text-amber-700',
+  approved: 'bg-green-100 text-green-700',
+  denied: 'bg-red-100 text-red-600',
+};
+
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 const normalizeAttendanceKey = (value) => String(value || '').trim().toLowerCase();
@@ -491,7 +497,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       updates.hours_worked = parseFloat(hrs.toFixed(2));
-      updates.overtime_hours = computeOvertimeHours({
+      const recomputedOvertime = computeOvertimeHours({
         ...log,
         date: effDate,
         time_in: effTimeIn,
@@ -504,10 +510,25 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
+      updates.overtime_hours = recomputedOvertime;
+      updates.ot_requested_hours = recomputedOvertime;
+      updates.ot_status = recomputedOvertime > 0 ? 'pending' : null;
+      updates.ot_hr_approved = false;
+      updates.ot_admin_approved = false;
+      updates.ot_reviewed_at = null;
+      updates.ot_reviewed_by = null;
+      updates.ot_review_reason = null;
     } else if (timesChanged) {
       // Can no longer compute a full day (e.g. a punch was cleared) — zero it out.
       updates.hours_worked = 0;
       updates.overtime_hours = 0;
+      updates.ot_requested_hours = 0;
+      updates.ot_status = null;
+      updates.ot_hr_approved = false;
+      updates.ot_admin_approved = false;
+      updates.ot_reviewed_at = null;
+      updates.ot_reviewed_by = null;
+      updates.ot_review_reason = null;
     }
 
     let photoUrl = '';
@@ -521,6 +542,11 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     }
 
     const editKind = canCorrectAttendance ? 'Attendance correction' : 'Manual edit';
+    updates.passcode_audit_action = canCorrectAttendance ? 'attendance_correction' : 'attendance_manual_edit';
+    updates.passcode_audit_at = new Date().toISOString();
+    updates.passcode_audit_by = currentUser?.full_name || currentUser?.email || 'unknown';
+    updates.passcode_audit_reason = reason.trim();
+    updates.passcode_audit_summary = `${editKind} for ${log.date}`;
     const dateCorrectionNote = updates.date
       ? ` | Date corrected: ${log.date || 'none'} to ${updates.date}`
       : '';
@@ -803,6 +829,11 @@ function RejectAttendanceModal({ log, currentUser, activeCompanyId, onClose, onC
       const previousNotes = log.notes ? `${log.notes}\n` : '';
       await onConfirm({
         status: 'rejected',
+        passcode_audit_action: 'attendance_rejected',
+        passcode_audit_at: new Date().toISOString(),
+        passcode_audit_by: currentUser?.full_name || currentUser?.email || 'unknown',
+        passcode_audit_reason: reason.trim(),
+        passcode_audit_summary: `Attendance rejected for ${log.date}`,
         notes: `${previousNotes}Attendance rejected by ${currentUser?.full_name || currentUser?.email || 'unknown'} on ${format(new Date(), 'yyyy-MM-dd HH:mm')} | Reason: ${reason.trim()}`,
       });
     } finally {
@@ -861,12 +892,175 @@ function RejectAttendanceModal({ log, currentUser, activeCompanyId, onClose, onC
   );
 }
 
+function OvertimeReviewModal({ log, currentUser, activeCompanyId, onClose, onConfirm }) {
+  const TODAY_STR = manilaDateString();
+  const requestedHours = Number(log.ot_requested_hours ?? log.overtime_hours) || 0;
+  const [approvedHours, setApprovedHours] = useState(
+    String(Number(log.ot_status === 'approved' ? log.overtime_hours : requestedHours) || 0)
+  );
+  const [hrPasscode, setHrPasscode] = useState('');
+  const [adminPasscode, setAdminPasscode] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const verifyCodes = async () => {
+    const records = await entities.filter('DailyPasscode', {
+      date: TODAY_STR,
+      company_profile_id: activeCompanyId,
+    });
+    const todayCode = records[0];
+    if (!todayCode) {
+      throw new Error('No daily HR/Admin passcodes have been generated for today.');
+    }
+    if (todayCode.passcode !== hrPasscode.trim()) {
+      throw new Error('Incorrect HR Officer passcode.');
+    }
+    if (todayCode.manager_passcode !== adminPasscode.trim()) {
+      throw new Error('Incorrect Admin passcode.');
+    }
+  };
+
+  const submitDecision = async (decision) => {
+    const nextHours = decision === 'denied' ? 0 : Number(approvedHours);
+    if (!hrPasscode.trim() || !adminPasscode.trim()) {
+      setError('Both the HR Officer and Admin passcodes are required.');
+      return;
+    }
+    if (decision === 'approved' && (!Number.isFinite(nextHours) || nextHours < 0 || nextHours > requestedHours)) {
+      setError(`Approved OT must be between 0 and ${requestedHours} hours.`);
+      return;
+    }
+    if ((decision === 'denied' || nextHours < requestedHours) && !reason.trim()) {
+      setError('A reason is required when OT is denied or reduced.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try {
+      await verifyCodes();
+      const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
+      const reviewedAt = new Date().toISOString();
+      const previousNotes = log.notes ? `${log.notes}\n` : '';
+      const decisionLabel = decision === 'denied'
+        ? 'denied'
+        : nextHours < requestedHours
+          ? `reduced from ${requestedHours}h to ${nextHours}h`
+          : `approved at ${nextHours}h`;
+      await onConfirm({
+        overtime_hours: Number(nextHours.toFixed(2)),
+        ot_requested_hours: Number(requestedHours.toFixed(2)),
+        ot_status: decision,
+        ot_hr_approved: true,
+        ot_admin_approved: true,
+        ot_reviewed_at: reviewedAt,
+        ot_reviewed_by: reviewer,
+        ot_review_reason: reason.trim() || null,
+        passcode_audit_action: decision === 'denied' ? 'overtime_denied' : nextHours < requestedHours ? 'overtime_reduced' : 'overtime_approved',
+        passcode_audit_at: reviewedAt,
+        passcode_audit_by: reviewer,
+        passcode_audit_reason: reason.trim() || null,
+        passcode_audit_summary: `OT ${decisionLabel} for ${log.date}`,
+        notes: `${previousNotes}OT ${decisionLabel} with HR Officer and Admin passcodes by ${reviewer} on ${format(new Date(), 'yyyy-MM-dd HH:mm')}${reason.trim() ? ` | Reason: ${reason.trim()}` : ''}`,
+      });
+      onClose();
+    } catch (reviewError) {
+      setError(reviewError?.message || 'Unable to review overtime.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Review Overtime — {log.date}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Computed OT</span>
+              <span className="font-semibold">{requestedHours.toFixed(2)} hours</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-foreground">Approved OT Hours</label>
+            <Input
+              type="number"
+              min="0"
+              max={requestedHours}
+              step="0.01"
+              value={approvedHours}
+              onChange={event => setApprovedHours(event.target.value)}
+              className="mt-1"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">OT may be reduced, but cannot exceed the computed hours.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium text-foreground">HR Officer Passcode</label>
+              <Input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={hrPasscode}
+                onChange={event => setHrPasscode(event.target.value)}
+                className="mt-1 text-center font-mono tracking-widest"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-foreground">Admin Passcode</label>
+              <Input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={adminPasscode}
+                onChange={event => setAdminPasscode(event.target.value)}
+                className="mt-1 text-center font-mono tracking-widest"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-foreground">
+              Reason <span className="text-muted-foreground">(required for reduction/denial)</span>
+            </label>
+            <Textarea
+              value={reason}
+              onChange={event => setReason(event.target.value)}
+              placeholder="Explain any OT reduction or denial"
+              className="mt-1"
+            />
+          </div>
+
+          {error && <p className="text-xs text-destructive">{error}</p>}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button variant="destructive" onClick={() => submitDecision('denied')} disabled={saving}>
+              Deny OT
+            </Button>
+            <Button onClick={() => submitDecision('approved')} disabled={saving}>
+              {saving ? 'Verifying...' : 'Approve OT'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Attendance() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [filterDept, setFilterDept] = useState('all');
   const [editingLog, setEditingLog] = useState(null);
+  const [reviewingOvertimeLog, setReviewingOvertimeLog] = useState(null);
   const [rejectingLog, setRejectingLog] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [locationLog, setLocationLog] = useState(null);
@@ -955,6 +1149,21 @@ export default function Attendance() {
 
   const updateLog = async (id, updates) => {
     await entities.update('AttendanceLog', id, updates);
+    if (updates.passcode_audit_action) {
+      await entities.create('PasscodeAuditLog', {
+        company_profile_id: activeCompanyId,
+        source_entity: 'AttendanceLog',
+        source_record_id: id,
+        action: updates.passcode_audit_action,
+        occurred_at: updates.passcode_audit_at,
+        authorized_by: updates.passcode_audit_by,
+        reason: updates.passcode_audit_reason,
+        summary: updates.passcode_audit_summary,
+        employee_id: selectedEmployee?.employee_id,
+        employee_name: employeeFullName(selectedEmployee),
+        record_date: updates.date || logs.find(log => log.id === id)?.date,
+      });
+    }
     qc.invalidateQueries({ queryKey: ['attendance'] });
   };
 
@@ -982,6 +1191,12 @@ export default function Attendance() {
 
     if (missing.length > 0) {
       alert(`Cannot approve this attendance while ${missing.join(', ')} is still marked Missing. Please edit the missing field first.`);
+      return;
+    }
+
+    const requestedOvertime = Number(log.ot_requested_hours ?? log.overtime_hours) || 0;
+    if (requestedOvertime > 0 && !['approved', 'denied'].includes(log.ot_status)) {
+      setReviewingOvertimeLog(log);
       return;
     }
 
@@ -1021,12 +1236,17 @@ export default function Attendance() {
             break_time_in: effectiveBreakIn,
           }, computationOptions);
           updates.hours_worked = Number(hoursWorked.toFixed(2));
-          updates.overtime_hours = computeOvertimeHours({
+          const recomputedOvertime = computeOvertimeHours({
             ...log,
             ...updates,
             break_time_out: effectiveBreakOut,
             break_time_in: effectiveBreakIn,
           }, hoursWorked, computationOptions);
+          if (!['approved', 'denied'].includes(log.ot_status)) {
+            updates.overtime_hours = recomputedOvertime;
+            updates.ot_requested_hours = recomputedOvertime;
+            updates.ot_status = recomputedOvertime > 0 ? 'pending' : null;
+          }
         }
 
         return entities.update('AttendanceLog', log.id, updates);
@@ -1045,7 +1265,12 @@ export default function Attendance() {
     if (!selectedEmployee || logs.length === 0 || shiftOptions.length === 0) return;
 
     const logsNeedingRecompute = logs
-      .filter(log => log.status === 'pending' && log.time_in && log.time_out)
+      .filter(log =>
+        log.status === 'pending' &&
+        log.time_in &&
+        log.time_out &&
+        !['approved', 'denied'].includes(log.ot_status)
+      )
       .map(log => {
         const computationOptions = getLogComputationOptions(log);
         const hoursWorked = computeCreditedHoursWorked(log, computationOptions);
@@ -1055,7 +1280,8 @@ export default function Attendance() {
 
         if (
           Math.abs((Number(log.hours_worked) || 0) - nextHours) <= 0.005 &&
-          Math.abs((Number(log.overtime_hours) || 0) - nextOvertime) <= 0.005
+          Math.abs((Number(log.overtime_hours) || 0) - nextOvertime) <= 0.005 &&
+          Math.abs((Number(log.ot_requested_hours) || 0) - nextOvertime) <= 0.005
         ) {
           return null;
         }
@@ -1065,6 +1291,8 @@ export default function Attendance() {
           updates: {
             hours_worked: nextHours,
             overtime_hours: nextOvertime,
+            ot_requested_hours: nextOvertime,
+            ot_status: nextOvertime > 0 ? 'pending' : null,
           },
         };
       })
@@ -1558,7 +1786,24 @@ export default function Attendance() {
                             </div>
 	                        </td>
                         <td className="px-2.5 py-3 text-xs">{log.hours_worked || '—'}</td>
-                        <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.overtime_hours > 0 ? `${log.overtime_hours}h` : '—'}</td>
+                        <td className="px-2.5 py-3 text-xs hidden md:table-cell">
+                          {(Number(log.ot_requested_hours ?? log.overtime_hours) || 0) > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setReviewingOvertimeLog(log)}
+                              className="inline-flex items-center gap-1 rounded-md hover:underline"
+                              title="Review overtime hours"
+                            >
+                              <span>{Number(log.overtime_hours || 0).toFixed(2)}h</span>
+                              <Badge
+                                variant="outline"
+                                className={`px-1 py-0 text-[9px] ${overtimeStatusColors[log.ot_status || 'pending']}`}
+                              >
+                                {log.ot_status || 'pending'}
+                              </Badge>
+                            </button>
+                          ) : '—'}
+                        </td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.night_diff_hours > 0 ? `${log.night_diff_hours}h` : '—'}</td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.late_minutes > 0 ? `${log.late_minutes}m` : '—'}</td>
                         <td className="px-2.5 py-3 hidden lg:table-cell">
@@ -1634,6 +1879,16 @@ export default function Attendance() {
             await updateLog(rejectingLog.id, updates);
             setRejectingLog(null);
           }}
+        />
+      )}
+
+      {reviewingOvertimeLog && (
+        <OvertimeReviewModal
+          log={reviewingOvertimeLog}
+          currentUser={currentUser}
+          activeCompanyId={activeCompanyId}
+          onClose={() => setReviewingOvertimeLog(null)}
+          onConfirm={updates => updateLog(reviewingOvertimeLog.id, updates)}
         />
       )}
 

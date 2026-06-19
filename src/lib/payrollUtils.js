@@ -555,9 +555,11 @@ export function computeWeeklyPayroll(
 		}
 
 		// Overtime
-		const overtimeHours = logOptions.overtimeStartTime
-			? computeOvertimeHours(log, hoursWorked, logOptions)
-			: Number(log.overtime_hours) || 0;
+		const overtimeHours = ['approved', 'denied'].includes(log.ot_status)
+			? Number(log.overtime_hours) || 0
+			: logOptions.overtimeStartTime
+				? computeOvertimeHours(log, hoursWorked, logOptions)
+				: Number(log.overtime_hours) || 0;
 		if (overtimeHours > 0) {
 			totalOvertimeHours += overtimeHours;
 			overtimePay += computeOvertimePay(hourlyRate, overtimeHours, dayType);
