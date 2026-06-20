@@ -41,6 +41,17 @@ const normalizeAttendanceCode = (value) =>
   normalizeAttendanceKey(value)
     .replace(/-payrollph$/i, '')
     .replace(/[^a-z0-9]/g, '');
+const normalizeDailyPasscode = (value) => String(value ?? '').trim();
+const matchesDailyPasscode = (record, input) => {
+  const normalizedInput = normalizeDailyPasscode(input);
+  return Boolean(
+    normalizedInput &&
+    (
+      normalizeDailyPasscode(record?.passcode) === normalizedInput ||
+      normalizeDailyPasscode(record?.manager_passcode) === normalizedInput
+    )
+  );
+};
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
@@ -319,6 +330,12 @@ const entities = {
   filter(entity, filter = {}, sort, limit) {
     return requestJson(entityUrl(entity, { filter, sort, limit }));
   },
+  create(entity, data) {
+    return requestJson(entityUrl(entity), {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    });
+  },
   update(entity, id, data) {
     return requestJson(entityUrl(entity), {
       method: 'PATCH',
@@ -443,11 +460,11 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     setVerifying(true);
     setPasscodeError('');
     const records = await entities.filter('DailyPasscode', { date: TODAY_STR, company_profile_id: activeCompanyId });
-    const match = records.find(r => r.passcode === passcodeInput.trim() || r.manager_passcode === passcodeInput.trim());
+    const match = records.find(record => matchesDailyPasscode(record, passcodeInput));
     if (match) {
       setStep('edit');
     } else {
-      setPasscodeError('Incorrect passcode. Please check with your administrator.');
+      setPasscodeError('Incorrect HR Officer or Admin passcode. Confirm today’s code and selected company.');
     }
     setVerifying(false);
   };
@@ -617,7 +634,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
             <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
               <KeyRound className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
               <p className="text-xs text-amber-800">
-                Manual attendance edits require the administrator's daily passcode. This ensures all modifications are authorized and auditable.
+                Manual attendance edits accept today&apos;s HR Officer or Admin passcode for the selected company. All modifications are authorized and auditable.
               </p>
             </div>
             <div>
@@ -857,9 +874,9 @@ function RejectAttendanceModal({ log, currentUser, activeCompanyId, onClose, onC
     setError('');
     try {
       const records = await entities.filter('DailyPasscode', { date: TODAY_STR, company_profile_id: activeCompanyId });
-      const match = records.find(r => r.passcode === passcodeInput.trim() || r.manager_passcode === passcodeInput.trim());
+      const match = records.find(record => matchesDailyPasscode(record, passcodeInput));
       if (!match) {
-        setError('Incorrect passcode. Please check with your administrator.');
+        setError('Incorrect HR Officer or Admin passcode. Confirm today’s code and selected company.');
         return;
       }
 
@@ -946,15 +963,15 @@ function OvertimeReviewModal({ log, currentUser, activeCompanyId, onClose, onCon
       date: TODAY_STR,
       company_profile_id: activeCompanyId,
     });
-    const todayCode = records[0];
+    const todayCode = records.find(record =>
+      normalizeDailyPasscode(record.passcode) === normalizeDailyPasscode(hrPasscode) &&
+      normalizeDailyPasscode(record.manager_passcode) === normalizeDailyPasscode(adminPasscode)
+    );
     if (!todayCode) {
-      throw new Error('No daily HR/Admin passcodes have been generated for today.');
-    }
-    if (todayCode.passcode !== hrPasscode.trim()) {
-      throw new Error('Incorrect HR Officer passcode.');
-    }
-    if (todayCode.manager_passcode !== adminPasscode.trim()) {
-      throw new Error('Incorrect Admin passcode.');
+      if (records.length === 0) {
+        throw new Error('No daily HR/Admin passcodes have been generated for today and the selected company.');
+      }
+      throw new Error('Incorrect HR Officer or Admin passcode. Use the matching pair generated today for the selected company.');
     }
   };
 

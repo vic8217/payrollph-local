@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { FileText, Lock } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CheckCircle2, FileText, KeyRound, Lock } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,8 @@ import {
   isReleasedPayslip,
   payslipReleaseStatus,
 } from '@/lib/payslipRecords';
+import { Button } from '@/components/ui/button';
+import PayslipAcknowledgementDialog from './PayslipAcknowledgementDialog';
 
 const releaseStatusLabels = {
   released: 'Released',
@@ -36,7 +38,9 @@ const releaseStatusColors = {
 
 export default function EmployeePayslipPanel({ employee }) {
   const [selectedRecordId, setSelectedRecordId] = useState('');
+  const [acknowledgementOpen, setAcknowledgementOpen] = useState(false);
   const { activeCompanyId } = useCompany();
+  const queryClient = useQueryClient();
   const companyId = employee?.company_profile_id || activeCompanyId;
 
   const { data: payslipData, isLoading } = useQuery({
@@ -140,11 +144,42 @@ export default function EmployeePayslipPanel({ employee }) {
               </div>
 
               {selectedIsReleased ? (
-                <Card className="border border-border shadow-sm">
-                  <CardContent className="p-4">
-                    <PayslipView record={selectedRecord} />
-                  </CardContent>
-                </Card>
+                <>
+                  <Card className="border border-border shadow-sm">
+                    <CardContent className="p-4">
+                      <PayslipView record={selectedRecord} />
+                    </CardContent>
+                  </Card>
+                  {selectedRecord.payslip_acknowledged_at ? (
+                    <Card className="border border-emerald-200 bg-emerald-50">
+                      <CardContent className="p-4 flex items-start gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-emerald-900">Payslip receipt acknowledged</p>
+                          <p className="text-xs text-emerald-800">
+                            Confirmed on {new Date(selectedRecord.payslip_acknowledged_at).toLocaleString('en-PH')}
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : employee.payslip_passkey_set_at ? (
+                    <Button className="w-full gap-2" onClick={() => setAcknowledgementOpen(true)}>
+                      <CheckCircle2 className="w-4 h-4" /> Acknowledge Receipt of Payslip
+                    </Button>
+                  ) : (
+                    <Card className="border border-amber-200 bg-amber-50">
+                      <CardContent className="p-4 flex items-start gap-3">
+                        <KeyRound className="w-5 h-5 text-amber-600 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-amber-900">Set your passkey first</p>
+                          <p className="text-xs text-amber-800">
+                            Return to My Profile and create a four-digit payslip receipt passkey before acknowledging this payslip.
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
               ) : (
                 <Card className="border border-amber-200 bg-amber-50">
                   <CardContent className="p-6 text-center space-y-2">
@@ -162,6 +197,18 @@ export default function EmployeePayslipPanel({ employee }) {
             </>
           )}
         </div>
+      )}
+
+      {selectedRecord && (
+        <PayslipAcknowledgementDialog
+          employee={employee}
+          record={selectedRecord}
+          open={acknowledgementOpen}
+          onClose={() => setAcknowledgementOpen(false)}
+          onAcknowledged={() => {
+            queryClient.invalidateQueries({ queryKey: ['myPayrollRecords', employee?.employee_id, companyId] });
+          }}
+        />
       )}
     </div>
   );

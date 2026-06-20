@@ -58,6 +58,10 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
               <span className="text-muted-foreground">Overtime Hours</span>
               <span className="text-right font-mono">{record.overtime_hours}h</span>
             </>}
+            {record.night_diff_hours > 0 && <>
+              <span className="text-muted-foreground">Night Differential Hours</span>
+              <span className="text-right font-mono">{record.night_diff_hours}h</span>
+            </>}
             {record.rest_day_worked > 0 && <>
               <span className="text-muted-foreground">Rest Day Worked</span>
               <span className="text-right font-mono">{record.rest_day_worked} day(s)</span>
@@ -85,6 +89,7 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
             </p>
           )}
           {record.overtime_pay > 0 && <Row label="Overtime Pay" value={record.overtime_pay} />}
+          {record.night_diff_pay > 0 && <Row label="Night Differential Pay" value={record.night_diff_pay} />}
           {record.holiday_pay > 0 && <Row label="Holiday Pay" value={record.holiday_pay} />}
           {record.incentive_pay > 0 && <Row label="Incentives" value={record.incentive_pay} />}
           {incentiveDetails.length > 0 && (

@@ -34,6 +34,9 @@ export default async function handler(req, res) {
   }
 
   try {
+    if (entity === "EmployeePasskey") {
+      return res.status(403).json({ error: "Employee passkeys are available only through the protected passkey workflow." });
+    }
     if (req.method === "GET") {
       const filter = req.query.filter ? JSON.parse(req.query.filter) : {};
       const records = await listRecords(entity, {

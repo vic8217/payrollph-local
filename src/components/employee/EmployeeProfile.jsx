@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { appApi } from '@/lib/appApi';
-import { User, Clock, FileText, CalendarClock, Bell, QrCode, Keyboard } from 'lucide-react';
+import { User, Clock, FileText, CalendarClock, Bell, QrCode, Keyboard, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import EmployeeAttendance from './EmployeeAttendance';
 import EmployeePayslips from './EmployeePayslips';
 import DeductionScheduleView from '@/components/cashadvance/DeductionScheduleView';
+import { requestJson } from '@/lib/appApi';
 
 const getCashAdvanceBalance = (ca) => ca.remaining_balance != null
   ? ca.remaining_balance
@@ -27,7 +28,92 @@ export default function EmployeeProfile({ employee }) {
   const [signCode, setSignCode] = useState('');
   const [signError, setSignError] = useState('');
   const [verifyingSign, setVerifyingSign] = useState(false);
+  const [passkeyDialogOpen, setPasskeyDialogOpen] = useState(false);
+  const [passkey, setPasskey] = useState('');
+  const [confirmPasskey, setConfirmPasskey] = useState('');
+  const [passkeyError, setPasskeyError] = useState('');
+  const [passkeySaving, setPasskeySaving] = useState(false);
+  const [passkeySetAt, setPasskeySetAt] = useState(employee?.payslip_passkey_set_at || null);
+  const [revealedPasskey, setRevealedPasskey] = useState('');
+  const [revealSeconds, setRevealSeconds] = useState(0);
+  const revealTimerRef = useRef(null);
   const qc = useQueryClient();
+
+  useEffect(() => {
+    setPasskeySetAt(employee?.payslip_passkey_set_at || null);
+  }, [employee?.id, employee?.payslip_passkey_set_at]);
+
+  useEffect(() => () => {
+    if (revealTimerRef.current) clearInterval(revealTimerRef.current);
+  }, []);
+
+  const closePasskeyDialog = () => {
+    setPasskeyDialogOpen(false);
+    setPasskey('');
+    setConfirmPasskey('');
+    setPasskeyError('');
+  };
+
+  const savePasskey = async () => {
+    if (!/^\d{4}$/.test(passkey)) {
+      setPasskeyError('Enter exactly four numeric digits.');
+      return;
+    }
+    if (passkey !== confirmPasskey) {
+      setPasskeyError('Passkeys do not match.');
+      return;
+    }
+    setPasskeySaving(true);
+    setPasskeyError('');
+    try {
+      const result = await requestJson('/api/functions/employeePasskey', {
+        method: 'POST',
+        body: JSON.stringify({
+          operation: 'setup',
+          employee_record_id: employee.id,
+          identity_code: employee.qr_code || employee.employee_id,
+          passkey,
+        }),
+      });
+      setPasskeySetAt(result.set_at);
+      qc.invalidateQueries({ queryKey: ['employees'] });
+      closePasskeyDialog();
+    } catch (error) {
+      setPasskeyError(error?.message || 'Unable to save passkey.');
+    } finally {
+      setPasskeySaving(false);
+    }
+  };
+
+  const revealPasskeyForFiveSeconds = async () => {
+    setPasskeyError('');
+    try {
+      const result = await requestJson('/api/functions/employeePasskey', {
+        method: 'POST',
+        body: JSON.stringify({
+          operation: 'reveal',
+          employee_record_id: employee.id,
+          identity_code: employee.qr_code || employee.employee_id,
+        }),
+      });
+      setRevealedPasskey(result.passkey);
+      setRevealSeconds(5);
+      if (revealTimerRef.current) clearInterval(revealTimerRef.current);
+      revealTimerRef.current = setInterval(() => {
+        setRevealSeconds(seconds => {
+          if (seconds <= 1) {
+            clearInterval(revealTimerRef.current);
+            revealTimerRef.current = null;
+            setRevealedPasskey('');
+            return 0;
+          }
+          return seconds - 1;
+        });
+      }, 1000);
+    } catch (error) {
+      setPasskeyError(error?.message || 'Unable to reveal passkey.');
+    }
+  };
 
   const { data: cashAdvances = [] } = useQuery({
     queryKey: ['myCashAdvances', employee?.employee_id],
@@ -423,6 +509,41 @@ export default function EmployeeProfile({ employee }) {
           </Dialog>
 
           {/* Employee Info */}
+          <Card className="border border-primary/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-primary" /> Payslip Receipt Passkey
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Your four-digit passkey is required together with your employee QR code and photo when acknowledging a released payslip.
+              </p>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-3">
+                <div>
+                  <p className="font-mono text-lg tracking-[0.35em] text-foreground">
+                    {revealedPasskey || (passkeySetAt ? '••••' : 'Not set')}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {revealedPasskey ? `Masks again in ${revealSeconds}s` : passkeySetAt ? 'Passkey configured' : 'Setup required'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {passkeySetAt && (
+                    <Button variant="outline" size="sm" onClick={revealPasskeyForFiveSeconds} disabled={revealSeconds > 0}>
+                      {revealedPasskey ? <EyeOff className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />}
+                      {revealedPasskey ? `${revealSeconds}s` : 'View'}
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={() => setPasskeyDialogOpen(true)}>
+                    {passkeySetAt ? 'Change' : 'Set Passkey'}
+                  </Button>
+                </div>
+              </div>
+              {passkeyError && <p className="text-xs text-destructive">{passkeyError}</p>}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader className="pb-3"><CardTitle className="text-base">Employee Information</CardTitle></CardHeader>
             <CardContent>
@@ -434,11 +555,53 @@ export default function EmployeeProfile({ employee }) {
               ))}
             </CardContent>
           </Card>
+
+          <Dialog open={passkeyDialogOpen} onOpenChange={(open) => { if (!open) closePasskeyDialog(); }}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>{passkeySetAt ? 'Change' : 'Set'} Payslip Passkey</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">Choose exactly four numbers. Do not share this passkey.</p>
+                <div>
+                  <label className="text-sm font-medium">4-digit passkey</label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={passkey}
+                    onChange={e => setPasskey(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="mt-1 text-center font-mono tracking-[0.5em]"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Confirm passkey</label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={confirmPasskey}
+                    onChange={e => setConfirmPasskey(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="mt-1 text-center font-mono tracking-[0.5em]"
+                  />
+                </div>
+                {passkeyError && <p className="text-xs text-destructive">{passkeyError}</p>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={closePasskeyDialog}>Cancel</Button>
+                  <Button onClick={savePasskey} disabled={passkeySaving}>
+                    {passkeySaving ? 'Saving...' : 'Save Passkey'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
 
       {subTab === 'attendance' && <EmployeeAttendance employee={employee} />}
-      {subTab === 'payslips' && <EmployeePayslips employee={employee} />}
+      {subTab === 'payslips' && (
+        <EmployeePayslips employee={{ ...employee, payslip_passkey_set_at: passkeySetAt }} />
+      )}
     </div>
   );
 }

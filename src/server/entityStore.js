@@ -9,6 +9,7 @@ const ENTITY_NAMES = new Set([
   "CompanyProfile",
   "DailyPasscode",
   "Employee",
+  "EmployeePasskey",
   "EmployeeMemo",
   "EmployeePromissoryNote",
   "EmployeeSuspension",

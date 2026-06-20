@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
 		  LayoutDashboard, Users, Clock, CreditCard,
 		  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck
+		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText
 		} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -42,6 +42,7 @@ const navItems = [
   { label: 'User Management', icon: Users,             path: '/user-management',    roles: ['super_admin', 'admin'] },
   { label: 'Users Log',       icon: Activity,          path: '/users-log',          roles: ['super_admin'] },
   { label: 'Passcode Audit',  icon: ShieldCheck,       path: '/passcode-audit',     roles: ['super_admin', 'admin'] },
+  { label: 'Payslip Receipts', icon: ReceiptText,       path: '/payslip-acknowledgements', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Company Profile', icon: Building2,         path: '/company-profile',    roles: ['super_admin', 'admin', 'user'] },
   { label: 'Archived Companies', icon: Archive,         path: '/archived-companies', roles: ['super_admin'] },
   { label: 'Shift Settings',  icon: Settings,          path: '/settings',           roles: ['super_admin', 'admin'] },

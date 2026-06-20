@@ -34,6 +34,7 @@ import UserManagement from '@/pages/UserManagement';
 import UsersLog from '@/pages/UsersLog';
 import PasscodeAudit from '@/pages/PasscodeAudit';
 import Landing from '@/pages/Landing';
+import PayslipAcknowledgements from '@/pages/PayslipAcknowledgements';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
@@ -101,6 +102,7 @@ const AuthenticatedApp = () => {
         <Route path="/user-management" element={<UserManagement />} />
         <Route path="/users-log" element={<UsersLog />} />
         <Route path="/passcode-audit" element={<PasscodeAudit />} />
+        <Route path="/payslip-acknowledgements" element={<PayslipAcknowledgements />} />
       </Route>
       <Route path="/scan/confirm" element={<ScanConfirm />} />
       <Route path="/employee-portal-qr" element={<EmployeePortalQR />} />
