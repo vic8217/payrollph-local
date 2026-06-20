@@ -610,23 +610,35 @@ export function computeWeeklyPayroll(
 
 		const worked = !!log.time_in;
 		const multiplier = getHolidayMultiplier(dayType, worked);
-		if (worked) workedDays++;
 
 		const hoursWorked = computeCreditedHoursWorked(log, logOptions);
 		totalHoursWorked += hoursWorked;
 		const effectivePay = dailyRate * multiplier;
+		const isHalfDay = (log.day_type || '') === 'half_day';
+		const lateMinutesAfterGrace = isHalfDay ? 0 : computeLateMinutes(log, logOptions);
 
-		// Auto-compute undertime from hours_worked if not manually set
-		const undertimeFromHours =
+		// Automatic missing-time minutes already include a late arrival because
+		// credited hours start from the actual Time In. Remove separately charged
+		// late minutes so the same minutes are not deducted twice.
+		const missingMinutesFromHours =
 			hoursWorked > 0 && hoursWorked < 8 ? (8 - hoursWorked) * 60 : 0;
 		const manualUndertimeMinutes = Number(log.undertime_minutes) || 0;
-		const undertimeMins =
-			manualUndertimeMinutes > 0 ? manualUndertimeMinutes : undertimeFromHours;
+		const undertimeMins = isHalfDay
+			? 0
+			: manualUndertimeMinutes > 0
+				? manualUndertimeMinutes
+				: Math.max(0, missingMinutesFromHours - lateMinutesAfterGrace);
 
-		if (dayType === 'regular' || dayType === 'special_working_holiday') {
+		if (isHalfDay) {
+			workedDays += 0.5;
+			regularDays += 0.5;
+			basicPay += dailyRate * 0.5;
+		} else if (dayType === 'regular' || dayType === 'special_working_holiday') {
+			workedDays++;
 			regularDays++;
 			basicPay += effectivePay;
 		} else if (dayType === 'rest_day') {
+			workedDays++;
 			restDayWorked++;
 			basicPay += effectivePay;
 		} else if (
@@ -635,6 +647,7 @@ export function computeWeeklyPayroll(
 			dayType === 'double_holiday' ||
 			dayType === 'double_holiday_rest_day'
 		) {
+			workedDays++;
 			regularHolidayWorked++;
 			if (dayType.endsWith('_rest_day')) restDayWorked++;
 			holidayPay += effectivePay;
@@ -644,6 +657,7 @@ export function computeWeeklyPayroll(
 			dayType === 'double_special_holiday' ||
 			dayType === 'double_special_holiday_rest_day'
 		) {
+			workedDays++;
 			specialHolidayWorked++;
 			if (dayType.endsWith('_rest_day')) restDayWorked++;
 			holidayPay += effectivePay;
@@ -672,7 +686,6 @@ export function computeWeeklyPayroll(
 		}
 
 		// Late deduction after the configured HR/admin allowance.
-		const lateMinutesAfterGrace = computeLateMinutes(log, logOptions);
 		if (lateMinutesAfterGrace > 0) {
 			lateDeduction += (hourlyRate / 60) * lateMinutesAfterGrace;
 		}
