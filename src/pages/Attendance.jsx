@@ -620,7 +620,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>
             {step === 'passcode'
@@ -778,7 +778,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
               )}
             </div>
 
-            <div className="flex justify-end gap-2 pt-1">
+            <div className="sticky bottom-0 z-10 -mx-2 flex justify-end gap-2 border-t border-border bg-background/95 px-2 py-3 backdrop-blur">
               <Button variant="outline" onClick={onClose}>Cancel</Button>
               <Button onClick={handleSave} disabled={saving || !reason.trim() || photoStatus === 'capturing'}>
                 {saving ? 'Saving...' : 'Save Changes'}
