@@ -3,7 +3,7 @@ import { appApi } from '@/lib/appApi';
 import { QrCode, CheckCircle2, Scan, Camera, CameraOff, Keyboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { format } from 'date-fns';
+import { formatManilaTime } from '@/lib/dateUtils';
 
 function captureAttendanceLocation() {
   const capturedAt = new Date().toISOString();
@@ -297,7 +297,6 @@ export default function EmployeeQRGate({
       return;
     }
     const { action, log } = logRes;
-    const now = new Date();
     if (logRes.duplicate) {
       setResult({ success: false, message: logRes.message || 'Scan already recorded. Please wait before scanning again.' });
       setInput('');
@@ -316,9 +315,17 @@ export default function EmployeeQRGate({
       duplicate_scan: 'Duplicate Scan',
     };
     const actionLabel = actionLabels[/** @type {AttendanceAction} */ (action)] || 'Attendance';
+    const actionTimeFields = {
+      time_in: 'time_in',
+      break_time_out: 'break_time_out',
+      break_time_in: 'break_time_in',
+      time_out: 'time_out',
+    };
+    const recordedAt = log?.[actionTimeFields[action]] || new Date();
+    const recordedTime = formatManilaTime(recordedAt);
 
-    setResult({ success: true, message: `${actionLabel} recorded`, name: empName, time: format(now, 'h:mm a') });
-    onAttendanceLogged?.({ name: empName, action: actionLabel, attendanceAction: action, time: format(now, 'h:mm a'), logId: log?.id });
+    setResult({ success: true, message: `${actionLabel} recorded`, name: empName, time: recordedTime });
+    onAttendanceLogged?.({ name: empName, action: actionLabel, attendanceAction: action, time: recordedTime, logId: log?.id });
 
     setInput('');
     setProcessing(false);

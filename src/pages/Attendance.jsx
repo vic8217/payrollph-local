@@ -11,7 +11,11 @@ import {
   computeNightDifferentialHours,
   computeOvertimeHours,
 } from '@/lib/payrollUtils';
-import { manilaDateString } from '@/lib/dateUtils';
+import {
+  formatManilaDateTime,
+  formatManilaTime,
+  manilaDateString,
+} from '@/lib/dateUtils';
 import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -379,10 +383,10 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   const [verifying, setVerifying] = useState(false);
 
   const [reason, setReason] = useState('');
-  const [timeIn, setTimeIn] = useState(log.time_in ? format(new Date(log.time_in), "HH:mm") : '');
-  const [breakOut, setBreakOut] = useState(log.break_time_out ? format(new Date(log.break_time_out), "HH:mm") : '');
-  const [breakIn, setBreakIn] = useState(log.break_time_in ? format(new Date(log.break_time_in), "HH:mm") : '');
-  const [timeOut, setTimeOut] = useState(log.time_out ? format(new Date(log.time_out), "HH:mm") : '');
+  const [timeIn, setTimeIn] = useState(log.time_in ? formatManilaTime(log.time_in, { hour12: false }) : '');
+  const [breakOut, setBreakOut] = useState(log.break_time_out ? formatManilaTime(log.break_time_out, { hour12: false }) : '');
+  const [breakIn, setBreakIn] = useState(log.break_time_in ? formatManilaTime(log.break_time_in, { hour12: false }) : '');
+  const [timeOut, setTimeOut] = useState(log.time_out ? formatManilaTime(log.time_out, { hour12: false }) : '');
   const [attendanceDate, setAttendanceDate] = useState(log.date || '');
   const [dayType, setDayType] = useState(log.day_type || 'regular');
   const workSchedule = log.work_schedule || defaultWorkSchedule || 'day_shift';
@@ -478,10 +482,8 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     // cross midnight) and only override the time-of-day; fall back to the log date
     // when filling a previously-missing punch.
     const toISO = (timeStr, existingISO) => {
-      const [h, m] = timeStr.split(':');
-      const dt = existingISO ? new Date(existingISO) : new Date(log.date);
-      dt.setHours(parseInt(h), parseInt(m), 0, 0);
-      return dt.toISOString();
+      const punchDate = existingISO ? manilaDateString(existingISO) : log.date;
+      return new Date(`${punchDate}T${timeStr}:00+08:00`).toISOString();
     };
 
     // Apply a time field: admins may also change or clear already-recorded punches.
@@ -1746,7 +1748,7 @@ export default function Attendance() {
                                     <td className="py-1 pr-3">{log.employee_id || '—'}</td>
                                     <td className="py-1 pr-3">{log.employee_name || '—'}</td>
                                     <td className="py-1 pr-3">{log.company_profile_id || '—'}</td>
-                                    <td className="py-1 pr-3">{log.time_in ? format(new Date(log.time_in), 'hh:mm a') : '—'}</td>
+                                    <td className="py-1 pr-3">{log.time_in ? formatManilaTime(log.time_in) : '—'}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -1782,7 +1784,7 @@ export default function Attendance() {
                                       <td className="py-1 pr-3">{log.employee_id || '—'}</td>
                                       <td className="py-1 pr-3">{log.employee_name || '—'}</td>
                                       <td className="py-1 pr-3">{log.company_profile_id || '—'}</td>
-                                      <td className="py-1 pr-3">{log.time_in ? format(new Date(log.time_in), 'hh:mm a') : '—'}</td>
+                                      <td className="py-1 pr-3">{log.time_in ? formatManilaTime(log.time_in) : '—'}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -1825,7 +1827,7 @@ export default function Attendance() {
                         <td className="px-2.5 py-3">
                           <div className="inline-flex items-center gap-1.5">
                             {log.time_in
-                              ? <span className="text-green-600 text-xs">{format(new Date(log.time_in), 'hh:mm a')}</span>
+                              ? <span className="text-green-600 text-xs">{formatManilaTime(log.time_in)}</span>
                               : <span className="text-amber-500 font-medium text-xs">Missing</span>}
                             <InlinePhotoButton photoItem={timeInPhoto} log={log} onView={setPhotoLog} />
                             <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
@@ -1834,7 +1836,7 @@ export default function Attendance() {
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
                             {log.break_time_out
-                              ? <span className="text-orange-500 text-xs">{format(new Date(log.break_time_out), 'hh:mm a')}</span>
+                              ? <span className="text-orange-500 text-xs">{formatManilaTime(log.break_time_out)}</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
                             <InlinePhotoButton photoItem={breakOutPhoto} log={log} onView={setPhotoLog} />
                             <InlineLocationButton locationItem={breakOutLocation} log={log} onView={setLocationLog} />
@@ -1843,7 +1845,7 @@ export default function Attendance() {
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
                             {log.break_time_in
-                              ? <span className="text-teal-600 text-xs">{format(new Date(log.break_time_in), 'hh:mm a')}</span>
+                              ? <span className="text-teal-600 text-xs">{formatManilaTime(log.break_time_in)}</span>
                               : breakTimeInMissing
                                 ? <span className="text-amber-500 font-medium text-xs">Missing</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
@@ -1854,7 +1856,7 @@ export default function Attendance() {
 	                        <td className="px-2.5 py-3">
 	                          <div className="inline-flex items-center gap-1.5">
 	                            {log.time_out
-	                              ? <span className="text-blue-600 text-xs">{format(new Date(log.time_out), 'hh:mm a')}</span>
+	                              ? <span className="text-blue-600 text-xs">{formatManilaTime(log.time_out)}</span>
 	                              : finalTimeOutMissing
 	                                ? <span className="text-amber-500 font-medium text-xs">Missing</span>
 	                                : <span className="text-muted-foreground text-xs">—</span>}
@@ -1995,7 +1997,7 @@ export default function Attendance() {
                 </div>
                 <div>
                   <p className="font-medium text-foreground">Time</p>
-                  <p>{photoLog.timeValue ? format(new Date(photoLog.timeValue), 'hh:mm a') : '—'}</p>
+                  <p>{photoLog.timeValue ? formatManilaTime(photoLog.timeValue) : '—'}</p>
                 </div>
               </div>
               <Button variant="outline" className="w-full" onClick={() => window.open(photoLog.photoUrl, '_blank', 'noopener,noreferrer')}>
@@ -2042,7 +2044,7 @@ export default function Attendance() {
                 </div>
                 <div>
                   <p className="font-medium text-foreground">Time</p>
-                  <p>{locationLog.timeValue ? format(new Date(locationLog.timeValue), 'hh:mm a') : '—'}</p>
+                  <p>{locationLog.timeValue ? formatManilaTime(locationLog.timeValue) : '—'}</p>
                 </div>
                 {hasCoordinates(locationLog.location) && (
                   <>
@@ -2062,7 +2064,7 @@ export default function Attendance() {
                 )}
                 <div>
                   <p className="font-medium text-foreground">Captured</p>
-                  <p>{locationLog.location?.captured_at ? format(new Date(locationLog.location.captured_at), 'MMM d, yyyy h:mm a') : '—'}</p>
+                  <p>{locationLog.location?.captured_at ? formatManilaDateTime(locationLog.location.captured_at) : '—'}</p>
                 </div>
               </div>
 
