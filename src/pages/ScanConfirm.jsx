@@ -433,6 +433,7 @@ export default function ScanConfirm() {
         break_time_in: effectiveBreakIn,
       };
       const nightDiffHours = computeNightDifferentialHours(completedLog, {
+        shiftStartTime: shiftOptions.shiftStartTime,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       const lateMinutes = computeLateMinutes(completedLog, {

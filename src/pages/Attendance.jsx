@@ -604,6 +604,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       updates.overtime_hours = recomputedOvertime;
       updates.ot_requested_hours = recomputedOvertime;
       updates.night_diff_hours = computeNightDifferentialHours(attendanceMetrics, {
+        shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
         breakDurationMinutes: getBreakDurationMinutes(employee),
       });
       updates.late_minutes = computeLateMinutes(attendanceMetrics, {

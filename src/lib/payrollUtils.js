@@ -407,7 +407,7 @@ export function computeNightDifferentialHours(
 	/** @type {PayrollLog} */
 	log,
 	/** @type {HoursComputationOptions} */
-	{ breakDurationMinutes = 60 } = {},
+	{ shiftStartTime, breakDurationMinutes = 60 } = {},
 ) {
 	const timeIn = toValidDate(log.time_in);
 	const timeOut = toValidDate(log.time_out);
@@ -415,15 +415,21 @@ export function computeNightDifferentialHours(
 		return Number(log.night_diff_hours) || 0;
 	}
 
+	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
+	const effectiveTimeIn = scheduledStart && timeIn.getTime() < scheduledStart.getTime()
+		? scheduledStart
+		: timeIn;
+	if (timeOut.getTime() <= effectiveTimeIn.getTime()) return 0;
+
 	const { breakOut, breakIn } = resolveBreakInterval(log, breakDurationMinutes);
 	const workIntervals = breakOut && breakIn
-		? [[timeIn, breakOut], [breakIn, timeOut]]
-		: [[timeIn, timeOut]];
+		? [[effectiveTimeIn, breakOut], [breakIn, timeOut]]
+		: [[effectiveTimeIn, timeOut]];
 	const firstNightWindow = resolveScheduledTime(log.date, '22:00');
 	if (!firstNightWindow) return 0;
 
 	let totalHours = 0;
-	const durationDays = Math.ceil((timeOut.getTime() - timeIn.getTime()) / 864e5);
+	const durationDays = Math.ceil((timeOut.getTime() - effectiveTimeIn.getTime()) / 864e5);
 	for (let dayOffset = -1; dayOffset <= durationDays + 1; dayOffset += 1) {
 		const nightStart = addDays(firstNightWindow, dayOffset);
 		const nightEnd = new Date(nightStart);

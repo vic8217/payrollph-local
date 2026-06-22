@@ -442,6 +442,7 @@ export default async function handler(req, res) {
       breakDurationMinutes: getBreakDurationMinutes(employee),
     });
     const nightDiffHours = computeNightDifferentialHours(completedLog, {
+      shiftStartTime: shiftOptions.shiftStartTime,
       breakDurationMinutes: getBreakDurationMinutes(employee),
     });
     const lateMinutes = computeLateMinutes(completedLog, shiftOptions);
