@@ -198,6 +198,51 @@ function legacyShiftTimes(value) {
   return { shift_start_time: '08:00', shift_end_time: '17:00', overtime_start_time: '17:30' };
 }
 
+function normalizeOvernightTimeInForDisplay(log, shift) {
+  if (!log?.time_in || !log?.date || !isOvernightShift(shift)) return log;
+
+  const fallback = legacyShiftTimes(shift?.value);
+  const shiftStart = shift?.shift_start_time || fallback.shift_start_time;
+  const [shiftStartHour, shiftStartMinute] = String(shiftStart).split(':').map(Number);
+  const timeInClock = formatManilaTime(log.time_in, { hour12: false });
+  const [timeInHour, timeInMinute] = String(timeInClock).split(':').map(Number);
+
+  if (
+    ![shiftStartHour, shiftStartMinute, timeInHour, timeInMinute].every(Number.isFinite)
+    || shiftStartHour < 12
+    || timeInHour >= 12
+    || manilaDateString(log.time_in) !== log.date
+  ) {
+    return log;
+  }
+
+  const correctedHour = timeInHour + 12;
+  const correctedMinutes = correctedHour * 60 + timeInMinute;
+  const shiftStartMinutes = shiftStartHour * 60 + shiftStartMinute;
+  if (correctedMinutes < shiftStartMinutes) return log;
+
+  const correctedTimeIn = new Date(
+    `${log.date}T${String(correctedHour).padStart(2, '0')}:${String(timeInMinute).padStart(2, '0')}:00+08:00`,
+  );
+  const laterPunches = [log.break_time_out, log.break_time_in, log.time_out]
+    .filter(Boolean)
+    .map(value => new Date(value))
+    .filter(value => Number.isFinite(value.getTime()));
+
+  if (
+    !Number.isFinite(correctedTimeIn.getTime())
+    || laterPunches.length === 0
+    || laterPunches.some(value => value.getTime() <= correctedTimeIn.getTime())
+  ) {
+    return log;
+  }
+
+  return {
+    ...log,
+    time_in: correctedTimeIn.toISOString(),
+  };
+}
+
 function scheduledShiftEnd(log, shift) {
   if (!log?.date) return null;
 
@@ -1803,19 +1848,20 @@ export default function Attendance() {
 	                  sortedLogs.map(log => {
 	                    const logWorkSchedule = getLogShiftValue(log);
 	                    const logShift = getLogShift(log);
+	                    const displayLog = normalizeOvernightTimeInForDisplay(log, logShift);
 	                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
 	                    const missingFields = missingAttendanceFields(log, logEmployee, logShift, currentTime);
 	                    const breakTimeInMissing = missingFields.includes('Time In(2)');
 	                    const finalTimeOutMissing = missingFields.includes('Time Out(2)');
                       const approvalBlocked = missingFields.length > 0;
-	                    const timeInPhoto = attendancePhotoItem(log, 'time_in');
-	                    const breakOutPhoto = attendancePhotoItem(log, 'break_time_out');
-	                    const breakInPhoto = attendancePhotoItem(log, 'break_time_in');
-	                    const timeOutPhoto = attendancePhotoItem(log, 'time_out');
-	                    const timeInLocation = attendanceLocationItem(log, 'time_in');
-	                    const breakOutLocation = attendanceLocationItem(log, 'break_time_out');
-	                    const breakInLocation = attendanceLocationItem(log, 'break_time_in');
-	                    const timeOutLocation = attendanceLocationItem(log, 'time_out');
+	                    const timeInPhoto = attendancePhotoItem(displayLog, 'time_in');
+	                    const breakOutPhoto = attendancePhotoItem(displayLog, 'break_time_out');
+	                    const breakInPhoto = attendancePhotoItem(displayLog, 'break_time_in');
+	                    const timeOutPhoto = attendancePhotoItem(displayLog, 'time_out');
+	                    const timeInLocation = attendanceLocationItem(displayLog, 'time_in');
+	                    const breakOutLocation = attendanceLocationItem(displayLog, 'break_time_out');
+	                    const breakInLocation = attendanceLocationItem(displayLog, 'break_time_in');
+	                    const timeOutLocation = attendanceLocationItem(displayLog, 'time_out');
                     return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-2.5 py-3 text-muted-foreground text-xs">{log.date}</td>
@@ -1826,8 +1872,8 @@ export default function Attendance() {
                         </td>
                         <td className="px-2.5 py-3">
                           <div className="inline-flex items-center gap-1.5">
-                            {log.time_in
-                              ? <span className="text-green-600 text-xs">{formatManilaTime(log.time_in)}</span>
+                            {displayLog.time_in
+                              ? <span className="text-green-600 text-xs">{formatManilaTime(displayLog.time_in)}</span>
                               : <span className="text-amber-500 font-medium text-xs">Missing</span>}
                             <InlinePhotoButton photoItem={timeInPhoto} log={log} onView={setPhotoLog} />
                             <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
