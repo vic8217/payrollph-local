@@ -16,6 +16,7 @@ const ENTITY_NAMES = new Set([
   "EmployeeTermination",
   "Holiday",
   "NoWorkDay",
+  "OvertimeRequest",
   "PayrollIncentive",
   "PayrollPeriod",
   "PayrollRecord",

@@ -3,11 +3,19 @@ import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
 import { manilaDateString } from '@/lib/dateUtils';
-import { effectiveShiftSetting } from '@/lib/shiftSettings';
-import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
+import {
+  buildShiftAssignmentUpdate,
+  effectiveShiftSetting,
+  nextEmployeeShiftAssignment,
+  resolveEmployeeWorkSchedule,
+  sortedShiftAssignments,
+} from '@/lib/shiftSettings';
+import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle, CalendarDays } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
@@ -92,9 +100,10 @@ export default function WorkSchedule() {
   const [search, setSearch] = useState('');
   const [filterShift, setFilterShift] = useState('all');
   const [savingId, setSavingId] = useState(null);
+  const [effectiveDate, setEffectiveDate] = useState(manilaDateString());
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { activeCompanyId } = useCompany();
+  const { activeCompanyId, activeCompany } = useCompany();
 
   const { data: employees = [], isLoading } = useQuery({
     queryKey: ['employees', activeCompanyId, 'work-schedule'],
@@ -116,11 +125,25 @@ export default function WorkSchedule() {
       setSavingId(null);
       toast({ title: 'Work schedule updated', description: 'Schedule settings saved successfully.' });
     },
+    onError: (error) => {
+      setSavingId(null);
+      toast({
+        title: 'Unable to save schedule',
+        description: error?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    },
   });
 
   const handleShiftChange = (emp, value) => {
     setSavingId(emp.id);
-    updateMutation.mutate({ id: emp.id, data: { work_schedule: value } });
+    updateMutation.mutate({
+      id: emp.id,
+      data: buildShiftAssignmentUpdate(emp, value, effectiveDate, {
+        today: manilaDateString(),
+        fallbackValue: defaultShiftValue,
+      }),
+    });
   };
 
   const handleBreakTimeChange = (emp, value) => {
@@ -149,7 +172,9 @@ export default function WorkSchedule() {
   }));
 
   const usedLegacyShiftValues = new Set(
-    employees.map(e => e.work_schedule).filter(value => value === 'day_shift' || value === 'night_shift')
+    employees
+      .flatMap(e => [e.work_schedule, ...sortedShiftAssignments(e).map(assignment => assignment.work_schedule)])
+      .filter(value => value === 'day_shift' || value === 'night_shift')
   );
 
   const shiftOptions = [
@@ -160,7 +185,8 @@ export default function WorkSchedule() {
   ];
 
   const defaultShiftValue = settingOptions.find(shift => shift.is_default)?.value || settingOptions[0]?.value || 'day_shift';
-  const getCurrentShiftValue = (emp) => emp.work_schedule || defaultShiftValue;
+  const getCurrentShiftValue = (emp, date = manilaDateString()) => resolveEmployeeWorkSchedule(emp, date, defaultShiftValue);
+  const nextPayrollPeriod = getPayrollPeriodForDate(new Date(), activeCompany, 1);
 
   const getShiftOption = (value) => {
     const resolvedValue = value || defaultShiftValue;
@@ -231,6 +257,24 @@ export default function WorkSchedule() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Search employees..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
+        <div className="flex items-center gap-2 border border-border rounded-md px-2 h-9 bg-background">
+          <CalendarDays className="w-4 h-4 text-muted-foreground" />
+          <Input
+            type="date"
+            value={effectiveDate}
+            onChange={e => setEffectiveDate(e.target.value || manilaDateString())}
+            className="h-7 w-36 border-0 p-0 text-xs focus-visible:ring-0"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 text-xs"
+          onClick={() => setEffectiveDate(nextPayrollPeriod.start_date)}
+        >
+          Next Payroll Period
+        </Button>
         <Select value={filterShift} onValueChange={setFilterShift}>
           <SelectTrigger className="w-44 h-9 text-sm"><SelectValue placeholder="All Shifts" /></SelectTrigger>
           <SelectContent>
@@ -262,7 +306,12 @@ export default function WorkSchedule() {
               {filtered.length === 0 ? (
                 <tr><td colSpan={5} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
               ) : (
-                filtered.map(emp => (
+                filtered.map(emp => {
+                  const currentShiftValue = getCurrentShiftValue(emp);
+                  const assignmentShiftValue = getCurrentShiftValue(emp, effectiveDate);
+                  const pendingAssignment = nextEmployeeShiftAssignment(emp);
+                  const pendingShift = pendingAssignment ? getShiftOption(pendingAssignment.work_schedule) : null;
+                  return (
 	                  <tr key={emp.id} className={`border-b border-border last:border-0 hover:bg-muted/20 transition-colors ${!emp.break_time ? 'bg-destructive/5' : ''}`}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -279,7 +328,14 @@ export default function WorkSchedule() {
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground hidden sm:table-cell">{emp.department || '—'}</td>
                     <td className="px-4 py-3">
-                      <ShiftBadge shift={getShiftOption(emp.work_schedule)} />
+                      <div className="space-y-1">
+                        <ShiftBadge shift={getShiftOption(currentShiftValue)} />
+                        {pendingAssignment && (
+                          <p className="text-[10px] text-muted-foreground">
+                            {pendingShift?.label} starts {pendingAssignment.effective_date}
+                          </p>
+                        )}
+                      </div>
                     </td>
 	                    <td className="px-4 py-3 text-xs text-muted-foreground">
 	                      {emp.break_time ? (
@@ -293,7 +349,7 @@ export default function WorkSchedule() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Select
-                          value={getCurrentShiftValue(emp)}
+                          value={assignmentShiftValue}
                           onValueChange={v => handleShiftChange(emp, v)}
                         >
                           <SelectTrigger className="h-8 text-xs w-36">
@@ -352,13 +408,13 @@ export default function WorkSchedule() {
                         {savingId === emp.id && (
                           <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         )}
-                        {savingId !== emp.id && emp.work_schedule && (
+                        {savingId !== emp.id && sortedShiftAssignments(emp).length > 0 && (
                           <CheckCircle2 className="w-4 h-4 text-green-500 opacity-60" />
                         )}
                       </div>
                     </td>
                   </tr>
-                ))
+                )})
               )}
             </tbody>
           </table>

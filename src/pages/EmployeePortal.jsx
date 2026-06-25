@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { appApi } from '@/lib/appApi';
-import { QrCode, CreditCard, User, LogOut, Building2, Scan, CheckCircle2, Camera, BookOpen, Car, Palmtree } from 'lucide-react';
+import { QrCode, CreditCard, User, LogOut, Building2, Scan, CheckCircle2, Camera, BookOpen, Car, Palmtree, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import EmployeeQRGate from '@/components/employee/EmployeeQRGate';
 import EmployeeCashAdvance from '@/components/employee/EmployeeCashAdvance';
@@ -8,18 +8,20 @@ import EmployeeProfile from '@/components/employee/EmployeeProfile';
 import EmployeePolicies from '@/components/employee/EmployeePolicies';
 import EmployeeVehicleTripReport from '@/components/employee/EmployeeVehicleTripReport';
 import EmployeePersonalLeave from '@/components/employee/EmployeePersonalLeave';
+import EmployeeOvertimeRequest from '@/components/employee/EmployeeOvertimeRequest';
 import { useCompany } from '@/lib/CompanyContext';
 
 const tabs = [
   { id: 'scan', label: 'Attendance Logger', icon: QrCode },
   { id: 'cash-advance', label: 'Cash Advance', icon: CreditCard },
   { id: 'personal-leave', label: 'Personal Leave', icon: Palmtree },
+  { id: 'overtime-request', label: 'Overtime Request', icon: Clock },
   { id: 'profile', label: 'My Profile', icon: User },
   { id: 'policies', label: 'Policies & Procedures', icon: BookOpen },
   { id: 'trip-report', label: 'Vehicle Trip Report', icon: Car },
 ];
 
-const protectedTabs = new Set(['cash-advance', 'personal-leave', 'profile', 'trip-report']);
+const protectedTabs = new Set(['cash-advance', 'personal-leave', 'overtime-request', 'profile', 'trip-report']);
 
 const attendancePhotoFields = {
   time_in: 'time_in_photo_url',
@@ -199,6 +201,7 @@ export default function EmployeePortal() {
         )}
         {!showGate && activeTab === 'cash-advance' && <EmployeeCashAdvance employee={scannedEmployee} />}
         {!showGate && activeTab === 'personal-leave' && <EmployeePersonalLeave employee={scannedEmployee} />}
+        {!showGate && activeTab === 'overtime-request' && <EmployeeOvertimeRequest employee={scannedEmployee} />}
         {!showGate && activeTab === 'profile' && <EmployeeProfile employee={scannedEmployee} />}
         {activeTab === 'policies' && <EmployeePolicies />}
         {activeTab === 'trip-report' && <EmployeeVehicleTripReport employee={scannedEmployee} />}

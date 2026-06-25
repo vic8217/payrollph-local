@@ -61,3 +61,53 @@ export function shiftFromAttendanceSnapshot(log, fallbackShift) {
     time_in_allowance_minutes: log.shift_time_in_allowance_minutes,
   };
 }
+
+export function sortedShiftAssignments(employee) {
+  return (Array.isArray(employee?.shift_assignments) ? employee.shift_assignments : [])
+    .filter(assignment => assignment?.effective_date && assignment?.work_schedule)
+    .sort((a, b) => String(a.effective_date).localeCompare(String(b.effective_date)));
+}
+
+export function resolveEmployeeWorkSchedule(employee, date = manilaDateString(), fallbackValue = null) {
+  const assignments = sortedShiftAssignments(employee)
+    .filter(assignment => assignment.effective_date <= date);
+  return assignments.at(-1)?.work_schedule || employee?.work_schedule || fallbackValue;
+}
+
+export function nextEmployeeShiftAssignment(employee, date = manilaDateString()) {
+  return sortedShiftAssignments(employee)
+    .find(assignment => assignment.effective_date > date) || null;
+}
+
+export function buildShiftAssignmentUpdate(employee, workSchedule, effectiveDate = manilaDateString(), options = {}) {
+  const today = options.today || manilaDateString();
+  const fallbackValue = options.fallbackValue || employee?.work_schedule || workSchedule;
+  const assignments = sortedShiftAssignments(employee);
+
+  if (employee?.work_schedule && !assignments.some(assignment => assignment.effective_date <= today)) {
+    assignments.unshift({
+      effective_date: SHIFT_VERSION_BASE_DATE,
+      work_schedule: employee.work_schedule,
+    });
+  }
+
+  const nextAssignments = assignments
+    .filter(assignment => assignment.effective_date !== effectiveDate);
+  nextAssignments.push({
+    effective_date: effectiveDate,
+    work_schedule: workSchedule,
+    assigned_at: options.assignedAt || new Date().toISOString(),
+  });
+  nextAssignments.sort((a, b) => String(a.effective_date).localeCompare(String(b.effective_date)));
+
+  const effectiveToday = resolveEmployeeWorkSchedule(
+    { ...employee, shift_assignments: nextAssignments, work_schedule: employee?.work_schedule || fallbackValue },
+    today,
+    fallbackValue,
+  );
+
+  return {
+    shift_assignments: nextAssignments,
+    work_schedule: effectiveToday,
+  };
+}

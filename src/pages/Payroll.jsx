@@ -14,7 +14,7 @@ import { computeWeeklyPayroll } from '@/lib/payrollUtils';
 import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
 import { manilaDateString } from '@/lib/dateUtils';
-import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
+import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
 import PayslipView from '@/components/payroll/PayslipView';
 import GrossBreakdownDialog from '@/components/payroll/GrossBreakdownDialog';
 
@@ -143,10 +143,10 @@ function legacyShiftTimes(value) {
 }
 
 function resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift) {
-  const shiftValue = log?.work_schedule || employee?.work_schedule || defaultShift?.id || 'day_shift';
+  const shiftValue = log?.work_schedule || resolveEmployeeWorkSchedule(employee, log?.date, defaultShift?.id || 'day_shift');
   const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
   const matchedShift = shiftFromAttendanceSnapshot(log, effectiveShiftSetting(rawShift, log?.date));
-  const hasExplicitShift = Boolean(log?.work_schedule || employee?.work_schedule);
+  const hasExplicitShift = Boolean(shiftValue);
   const shift = matchedShift || (hasExplicitShift ? {} : defaultShift || {});
   const fallbackShift = legacyShiftTimes(shiftValue);
 

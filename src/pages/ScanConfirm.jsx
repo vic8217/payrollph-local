@@ -12,7 +12,12 @@ import { LogIn, LogOut, Camera, CameraOff, CheckCircle2, AlertTriangle, Shield, 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { manilaDateString } from '@/lib/dateUtils';
-import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
+import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
+import {
+  approvedOvertimeRequestForLog,
+  capOvertimeByApprovedRequest,
+  overtimeStatusForComputedHours,
+} from '@/lib/overtimeRequests';
 
 const LABOR_CODE_INFO = {
   time_in: {
@@ -97,10 +102,10 @@ function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) 
     .map(setting => effectiveShiftSetting(setting, date))
     .filter(setting => setting?.is_active !== false);
   const defaultShift = effectiveShifts.find(setting => setting.is_default) || effectiveShifts[0] || {};
-  const shiftValue = employee?.work_schedule || defaultShift.id || 'day_shift';
+  const shiftValue = log?.work_schedule || resolveEmployeeWorkSchedule(employee, date, defaultShift.id || 'day_shift');
   const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
   const matchedShift = shiftFromAttendanceSnapshot(log, effectiveShiftSetting(rawShift, date));
-  const shift = matchedShift || (employee?.work_schedule ? {} : defaultShift);
+  const shift = matchedShift || (shiftValue ? {} : defaultShift);
   const fallbackShift = legacyShiftTimes(shiftValue);
   const shiftStartTime = shift.shift_start_time || fallbackShift.shift_start_time;
   const shiftEndTime = shift.shift_end_time || fallbackShift.shift_end_time;
@@ -319,11 +324,13 @@ export default function ScanConfirm() {
     const today = manilaDateString();
     const now = new Date().toISOString();
     const shiftSettings = await appApi.entities.Settings.filter({ company_profile_id: employee.company_profile_id });
+    const overtimeRequests = await appApi.entities.OvertimeRequest.filter({ company_profile_id: employee.company_profile_id });
+    const logDate = todayLog?.date || today;
+    const effectiveWorkSchedule = todayLog?.work_schedule || resolveEmployeeWorkSchedule(employee, logDate);
     const shiftEmployee = {
       ...employee,
-      work_schedule: todayLog?.work_schedule || employee.work_schedule,
+      work_schedule: effectiveWorkSchedule,
     };
-    const logDate = todayLog?.date || today;
     const shiftOptions = resolveEmployeeShiftOptions(shiftEmployee, shiftSettings, logDate, todayLog);
     if (action === 'time_in' && shiftOptions.isOvernightShift) {
       const shiftStart = scheduledShiftStart(today, shiftOptions);
@@ -358,7 +365,7 @@ export default function ScanConfirm() {
         employee_name: `${employee.first_name} ${employee.last_name}`,
         date: today,
         time_in: effectiveTimeIn,
-        work_schedule: employee.work_schedule,
+        work_schedule: effectiveWorkSchedule,
         shift_start_time: shiftOptions.shiftStartTime,
         shift_end_time: shiftOptions.shiftEndTime,
         shift_overtime_start_time: shiftOptions.overtimeStartTime,
@@ -432,6 +439,8 @@ export default function ScanConfirm() {
         break_time_out: effectiveBreakOut,
         break_time_in: effectiveBreakIn,
       };
+      const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, employee);
+      const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
       const nightDiffHours = computeNightDifferentialHours(completedLog, {
         shiftStartTime: shiftOptions.shiftStartTime,
         breakDurationMinutes: getBreakDurationMinutes(employee),
@@ -444,9 +453,11 @@ export default function ScanConfirm() {
         ...breakUpdates,
         time_out: now,
         hours_worked: parseFloat(hoursWorked.toFixed(2)),
-        overtime_hours: parseFloat(overtimeHours.toFixed(2)),
-        ot_requested_hours: parseFloat(overtimeHours.toFixed(2)),
-        ot_status: overtimeHours > 0 ? 'pending' : null,
+        ot_actual_hours: parseFloat(overtimeHours.toFixed(2)),
+        overtime_hours: cappedOvertimeHours,
+        ot_requested_hours: approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0,
+        ot_status: overtimeStatusForComputedHours(overtimeHours, cappedOvertimeHours, approvedOtRequest),
+        overtime_request_id: approvedOtRequest?.id || null,
         night_diff_hours: parseFloat(nightDiffHours.toFixed(2)),
         late_minutes: lateMinutes,
         ...photoUpdates,

@@ -12,12 +12,17 @@ import {
   computeOvertimeHours,
 } from '@/lib/payrollUtils';
 import {
+  approvedOvertimeRequestForLog,
+  capOvertimeByApprovedRequest,
+  overtimeStatusForComputedHours,
+} from '@/lib/overtimeRequests';
+import {
   formatManilaDateTime,
   formatManilaTime,
   manilaDateString,
 } from '@/lib/dateUtils';
-import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin } from 'lucide-react';
+import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot, sortedShiftAssignments } from '@/lib/shiftSettings';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -83,6 +88,7 @@ function buildShiftOptions(shiftSettings = [], employees = [], logs = [], date =
   const configuredValues = new Set(configuredOptions.map(option => option.value));
   const usedValues = new Set([
     ...employees.map(emp => emp.work_schedule),
+    ...employees.flatMap(emp => sortedShiftAssignments(emp).map(assignment => assignment.work_schedule)),
     ...logs.map(log => log.work_schedule),
   ].filter(Boolean));
 
@@ -418,7 +424,7 @@ async function uploadFile(file) {
 }
 
 // ── Edit Attendance Modal ──
-function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions, resolvedShift, onClose, onSave, currentUser, activeCompanyId, canCorrectAttendance = false }) {
+function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions, resolvedShift, overtimeRequests = [], onClose, onSave, currentUser, activeCompanyId, canCorrectAttendance = false }) {
   const TODAY_STR = manilaDateString();
 
   // Step 1: passcode gate. Step 2: actual edit form.
@@ -601,8 +607,11 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         break_time_in: effBreakIn,
         time_out: effTimeOut,
       };
-      updates.overtime_hours = recomputedOvertime;
-      updates.ot_requested_hours = recomputedOvertime;
+      const approvedOtRequest = approvedOvertimeRequestForLog(attendanceMetrics, overtimeRequests, employee);
+      const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest);
+      updates.ot_actual_hours = Number(recomputedOvertime.toFixed(2));
+      updates.overtime_hours = cappedOvertime;
+      updates.ot_requested_hours = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
       updates.night_diff_hours = computeNightDifferentialHours(attendanceMetrics, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
         breakDurationMinutes: getBreakDurationMinutes(employee),
@@ -612,15 +621,17 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         timeInAllowanceMinutes: selectedShift.time_in_allowance_minutes || 0,
         lateGraceMinutes: selectedShift.grace_period_minutes || 0,
       });
-      updates.ot_status = recomputedOvertime > 0 ? 'pending' : null;
-      updates.ot_hr_approved = false;
-      updates.ot_admin_approved = false;
+      updates.ot_status = overtimeStatusForComputedHours(recomputedOvertime, cappedOvertime, approvedOtRequest);
+      updates.overtime_request_id = approvedOtRequest?.id || null;
+      updates.ot_hr_approved = Boolean(approvedOtRequest);
+      updates.ot_admin_approved = Boolean(approvedOtRequest);
       updates.ot_reviewed_at = null;
       updates.ot_reviewed_by = null;
       updates.ot_review_reason = null;
     } else if (timesChanged) {
       // Can no longer compute a full day (e.g. a punch was cleared) — zero it out.
       updates.hours_worked = 0;
+      updates.ot_actual_hours = 0;
       updates.overtime_hours = 0;
       updates.ot_requested_hours = 0;
       updates.night_diff_hours = 0;
@@ -1156,6 +1167,166 @@ function OvertimeReviewModal({ log, currentUser, activeCompanyId, onClose, onCon
   );
 }
 
+function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onClose, onConfirm }) {
+  const TODAY_STR = manilaDateString();
+  const requestedHours = Number(request.requested_hours) || 0;
+  const [approvedHours, setApprovedHours] = useState(String(request.approved_hours || requestedHours));
+  const [hrPasscode, setHrPasscode] = useState('');
+  const [adminPasscode, setAdminPasscode] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const verifyCodes = async () => {
+    const records = await entities.filter('DailyPasscode', {
+      date: TODAY_STR,
+      company_profile_id: activeCompanyId,
+    });
+    const todayCode = records.find(record =>
+      normalizeDailyPasscode(record.passcode) === normalizeDailyPasscode(hrPasscode) &&
+      normalizeDailyPasscode(record.manager_passcode) === normalizeDailyPasscode(adminPasscode)
+    );
+    if (!todayCode) {
+      if (records.length === 0) {
+        throw new Error('No daily HR/Admin passcodes have been generated for today and the selected company.');
+      }
+      throw new Error('Incorrect HR Officer or Admin passcode. Use today’s matching HR/Admin pair.');
+    }
+  };
+
+  const submitDecision = async (decision) => {
+    const nextHours = decision === 'denied' ? 0 : Number(approvedHours);
+    if (!hrPasscode.trim() || !adminPasscode.trim()) {
+      setError('Both the HR Officer and Admin passcodes are required.');
+      return;
+    }
+    if (decision === 'approved' && (!Number.isFinite(nextHours) || nextHours <= 0 || nextHours > requestedHours)) {
+      setError(`Approved OT must be greater than 0 and not more than ${requestedHours} hours.`);
+      return;
+    }
+    if ((decision === 'denied' || nextHours < requestedHours) && !reason.trim()) {
+      setError('A reason is required when OT is denied or reduced.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try {
+      await verifyCodes();
+      const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
+      const reviewedAt = new Date().toISOString();
+      await onConfirm({
+        status: decision,
+        approved_hours: Number(nextHours.toFixed(2)),
+        reviewed_at: reviewedAt,
+        reviewed_by: reviewer,
+        review_reason: reason.trim() || null,
+        hr_approved: decision === 'approved',
+        admin_approved: decision === 'approved',
+        passcode_audit_action: decision === 'denied' ? 'overtime_request_denied' : 'overtime_request_approved',
+        passcode_audit_at: reviewedAt,
+        passcode_audit_by: reviewer,
+        passcode_audit_reason: reason.trim() || null,
+        passcode_audit_summary: `OT request ${decision} for ${request.employee_name || request.employee_id} on ${request.date}`,
+      });
+      onClose();
+    } catch (reviewError) {
+      setError(reviewError?.message || 'Unable to review OT request.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Review OT Request</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Employee</span>
+              <span className="font-semibold text-right">{request.employee_name || request.employee_id}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Date</span>
+              <span className="font-semibold">{request.date}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Requested</span>
+              <span className="font-semibold">{requestedHours.toFixed(2)} hours</span>
+            </div>
+            <p className="text-xs text-muted-foreground border-t border-border pt-2">{request.reason}</p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-foreground">Approved OT Hours</label>
+            <Input
+              type="number"
+              min="0.25"
+              max={requestedHours}
+              step="0.25"
+              value={approvedHours}
+              onChange={event => setApprovedHours(event.target.value)}
+              className="mt-1"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium text-foreground">HR Officer Passcode</label>
+              <Input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={hrPasscode}
+                onChange={event => setHrPasscode(event.target.value)}
+                className="mt-1 text-center font-mono tracking-widest"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-foreground">Admin Passcode</label>
+              <Input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={adminPasscode}
+                onChange={event => setAdminPasscode(event.target.value)}
+                className="mt-1 text-center font-mono tracking-widest"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-foreground">
+              Reason <span className="text-muted-foreground">(required for reduction/denial)</span>
+            </label>
+            <Textarea
+              value={reason}
+              onChange={event => setReason(event.target.value)}
+              placeholder="Explain approval adjustment or denial"
+              className="mt-1"
+            />
+          </div>
+
+          {error && <p className="text-xs text-destructive">{error}</p>}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button variant="destructive" onClick={() => submitDecision('denied')} disabled={saving}>
+              Deny
+            </Button>
+            <Button onClick={() => submitDecision('approved')} disabled={saving}>
+              {saving ? 'Verifying...' : 'Approve'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Attendance() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -1163,6 +1334,7 @@ export default function Attendance() {
   const [filterDept, setFilterDept] = useState('all');
   const [editingLog, setEditingLog] = useState(null);
   const [reviewingOvertimeLog, setReviewingOvertimeLog] = useState(null);
+  const [reviewingOvertimeRequest, setReviewingOvertimeRequest] = useState(null);
   const [rejectingLog, setRejectingLog] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [locationLog, setLocationLog] = useState(null);
@@ -1239,6 +1411,21 @@ export default function Attendance() {
     enabled: !!activeCompanyId,
   });
 
+  const { data: overtimeRequests = [] } = useQuery({
+    queryKey: ['overtimeRequests', activeCompanyId],
+    queryFn: () => entities.filter('OvertimeRequest', { company_profile_id: activeCompanyId }, '-date', 500),
+    enabled: !!activeCompanyId,
+  });
+  const pendingOvertimeRequests = overtimeRequests
+    .filter(request => request.status === 'pending')
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.employee_name || '').localeCompare(String(b.employee_name || '')));
+  const selectedEmployeeOvertimeRequests = selectedEmployee
+    ? overtimeRequests.filter(request =>
+      String(request.employee_record_id || '') === String(selectedEmployee.id || '') ||
+      String(request.employee_id || '').toLowerCase() === String(selectedEmployee.employee_id || '').toLowerCase()
+    )
+    : [];
+
   const approveMutation = useMutation({
     mutationFn: ({ id, status }) => entities.update('AttendanceLog', id, { status }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['attendance'] }),
@@ -1269,12 +1456,34 @@ export default function Attendance() {
     qc.invalidateQueries({ queryKey: ['attendance'] });
   };
 
+  const updateOvertimeRequest = async (id, updates) => {
+    await entities.update('OvertimeRequest', id, updates);
+    if (updates.passcode_audit_action) {
+      const request = overtimeRequests.find(item => item.id === id);
+      await entities.create('PasscodeAuditLog', {
+        company_profile_id: activeCompanyId,
+        source_entity: 'OvertimeRequest',
+        source_record_id: id,
+        action: updates.passcode_audit_action,
+        occurred_at: updates.passcode_audit_at,
+        authorized_by: updates.passcode_audit_by,
+        reason: updates.passcode_audit_reason,
+        summary: updates.passcode_audit_summary,
+        employee_id: request?.employee_id,
+        employee_name: request?.employee_name,
+        record_date: request?.date,
+      });
+    }
+    qc.invalidateQueries({ queryKey: ['overtimeRequests'] });
+    qc.invalidateQueries({ queryKey: ['attendance'] });
+  };
+
   const shiftOptions = buildShiftOptions(shiftSettings, employees, logs);
   const currentShiftSettings = shiftSettings
     .map(shift => effectiveShiftSetting(shift))
     .filter(shift => shift?.is_active !== false);
   const defaultShiftValue = currentShiftSettings.find(s => s.is_default)?.id || currentShiftSettings[0]?.id || selectedEmployee?.work_schedule || 'day_shift';
-  const getLogShiftValue = (log) => log.work_schedule || selectedEmployee?.work_schedule || defaultShiftValue;
+  const getLogShiftValue = (log) => log.work_schedule || resolveEmployeeWorkSchedule(selectedEmployee, log?.date || manilaDateString(), defaultShiftValue);
   const getLogShift = (log) => {
     const shiftValue = getLogShiftValue(log);
     const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
@@ -1307,12 +1516,6 @@ export default function Attendance() {
 
     if (missing.length > 0) {
       alert(`Cannot approve this attendance while ${missing.join(', ')} is still marked Missing. Please edit the missing field first.`);
-      return;
-    }
-
-    const requestedOvertime = Number(log.ot_requested_hours ?? log.overtime_hours) || 0;
-    if (requestedOvertime > 0 && !['approved', 'denied'].includes(log.ot_status)) {
-      setReviewingOvertimeLog(log);
       return;
     }
 
@@ -1360,11 +1563,19 @@ export default function Attendance() {
             break_time_out: effectiveBreakOut,
             break_time_in: effectiveBreakIn,
           }, hoursWorked, computationOptions);
-          if (!['approved', 'denied'].includes(log.ot_status)) {
-            updates.overtime_hours = recomputedOvertime;
-            updates.ot_requested_hours = recomputedOvertime;
-            updates.ot_status = recomputedOvertime > 0 ? 'pending' : null;
-          }
+          const completedLog = {
+            ...log,
+            ...updates,
+            break_time_out: effectiveBreakOut,
+            break_time_in: effectiveBreakIn,
+          };
+          const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, selectedEmployee);
+          const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest);
+          updates.ot_actual_hours = Number(recomputedOvertime.toFixed(2));
+          updates.overtime_hours = cappedOvertime;
+          updates.ot_requested_hours = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
+          updates.ot_status = overtimeStatusForComputedHours(recomputedOvertime, cappedOvertime, approvedOtRequest);
+          updates.overtime_request_id = approvedOtRequest?.id || null;
         }
 
         return entities.update('AttendanceLog', log.id, updates);
@@ -1377,7 +1588,7 @@ export default function Attendance() {
 
     applyScheduledBreaks().catch(console.error);
     return () => { cancelled = true; };
-  }, [selectedEmployee?.id, selectedEmployee?.break_time, selectedEmployee?.break_duration_minutes, selectedEmployee?.work_schedule, logs, shiftSettings, qc]);
+  }, [selectedEmployee?.id, selectedEmployee?.break_time, selectedEmployee?.break_duration_minutes, selectedEmployee?.work_schedule, selectedEmployee?.shift_assignments, logs, shiftSettings, overtimeRequests, qc]);
 
   useEffect(() => {
     if (!selectedEmployee || logs.length === 0 || shiftOptions.length === 0) return;
@@ -1386,25 +1597,32 @@ export default function Attendance() {
       .filter(log =>
         log.status === 'pending' &&
         log.time_in &&
-        log.time_out &&
-        !['approved', 'denied'].includes(log.ot_status)
+        log.time_out
       )
       .map(log => {
         const computationOptions = getLogComputationOptions(log);
         const hoursWorked = computeCreditedHoursWorked(log, computationOptions);
         const overtimeHours = computeOvertimeHours(log, hoursWorked, computationOptions);
+        const approvedOtRequest = approvedOvertimeRequestForLog(log, overtimeRequests, selectedEmployee);
+        const cappedOvertime = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
         const nightDiffHours = computeNightDifferentialHours(log, computationOptions);
         const lateMinutes = computeLateMinutes(log, computationOptions);
         const nextHours = Number(hoursWorked.toFixed(2));
-        const nextOvertime = Number(overtimeHours.toFixed(2));
+        const nextActualOvertime = Number(overtimeHours.toFixed(2));
+        const nextOvertime = cappedOvertime;
+        const nextRequestedOvertime = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
         const nextNightDiff = Number(nightDiffHours.toFixed(2));
+        const nextOtStatus = overtimeStatusForComputedHours(overtimeHours, cappedOvertime, approvedOtRequest);
 
         if (
           Math.abs((Number(log.hours_worked) || 0) - nextHours) <= 0.005 &&
+          Math.abs((Number(log.ot_actual_hours) || 0) - nextActualOvertime) <= 0.005 &&
           Math.abs((Number(log.overtime_hours) || 0) - nextOvertime) <= 0.005 &&
-          Math.abs((Number(log.ot_requested_hours) || 0) - nextOvertime) <= 0.005 &&
+          Math.abs((Number(log.ot_requested_hours) || 0) - nextRequestedOvertime) <= 0.005 &&
           Math.abs((Number(log.night_diff_hours) || 0) - nextNightDiff) <= 0.005 &&
-          (Number(log.late_minutes) || 0) === lateMinutes
+          (Number(log.late_minutes) || 0) === lateMinutes &&
+          (log.ot_status || null) === nextOtStatus &&
+          String(log.overtime_request_id || '') === String(approvedOtRequest?.id || '')
         ) {
           return null;
         }
@@ -1413,11 +1631,13 @@ export default function Attendance() {
           id: log.id,
           updates: {
             hours_worked: nextHours,
+            ot_actual_hours: nextActualOvertime,
             overtime_hours: nextOvertime,
-            ot_requested_hours: nextOvertime,
+            ot_requested_hours: nextRequestedOvertime,
             night_diff_hours: nextNightDiff,
             late_minutes: lateMinutes,
-            ot_status: nextOvertime > 0 ? 'pending' : null,
+            ot_status: nextOtStatus,
+            overtime_request_id: approvedOtRequest?.id || null,
           },
         };
       })
@@ -1433,7 +1653,7 @@ export default function Attendance() {
       .catch(console.error);
 
     return () => { cancelled = true; };
-  }, [selectedEmployee?.id, selectedEmployee?.break_duration_minutes, selectedEmployee?.work_schedule, logs, shiftSettings, qc]);
+  }, [selectedEmployee?.id, selectedEmployee?.break_duration_minutes, selectedEmployee?.work_schedule, selectedEmployee?.shift_assignments, logs, shiftSettings, overtimeRequests, qc]);
 
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
@@ -1591,28 +1811,59 @@ export default function Attendance() {
             <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {filteredEmployees.map(emp => (
-              <button
-                key={emp.id}
-                onClick={() => setSelectedEmployee(emp)}
-                className="flex items-center gap-3 p-4 bg-card border border-border rounded-xl hover:border-primary hover:shadow-sm transition-all text-left"
-              >
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                  {emp.photo_url
-                    ? <img src={emp.photo_url} alt="" className="w-10 h-10 rounded-full object-cover" />
-                    : <User className="w-5 h-5 text-primary" />}
+          <>
+            {pendingOvertimeRequests.length > 0 && (
+              <Card className="border border-amber-200 bg-amber-50/50 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-amber-200 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-700" />
+                    <p className="font-semibold text-sm text-amber-900">Open OT Requests</p>
+                  </div>
+                  <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
+                    {pendingOvertimeRequests.length}
+                  </Badge>
                 </div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-foreground text-sm truncate">{employeeFullName(emp)}</p>
-                  <p className="text-xs text-muted-foreground truncate">{emp.position || emp.department || emp.employee_id}</p>
+                <div className="divide-y divide-amber-200">
+                  {pendingOvertimeRequests.slice(0, 8).map(request => (
+                    <div key={request.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate">
+                          {request.employee_name || request.employee_id}
+                          <span className="font-normal text-muted-foreground"> · {request.date} · {Number(request.requested_hours || 0).toFixed(2)}h</span>
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">{request.reason}</p>
+                      </div>
+                      <Button size="sm" className="h-8" onClick={() => setReviewingOvertimeRequest(request)}>
+                        Review
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-              </button>
-            ))}
-            {filteredEmployees.length === 0 && (
-              <p className="col-span-3 text-center py-10 text-muted-foreground text-sm">No employees found.</p>
+              </Card>
             )}
-          </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredEmployees.map(emp => (
+                <button
+                  key={emp.id}
+                  onClick={() => setSelectedEmployee(emp)}
+                  className="flex items-center gap-3 p-4 bg-card border border-border rounded-xl hover:border-primary hover:shadow-sm transition-all text-left"
+                >
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {emp.photo_url
+                      ? <img src={emp.photo_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                      : <User className="w-5 h-5 text-primary" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground text-sm truncate">{employeeFullName(emp)}</p>
+                    <p className="text-xs text-muted-foreground truncate">{emp.position || emp.department || emp.employee_id}</p>
+                  </div>
+                </button>
+              ))}
+              {filteredEmployees.length === 0 && (
+                <p className="col-span-3 text-center py-10 text-muted-foreground text-sm">No employees found.</p>
+              )}
+            </div>
+          </>
         )}
 
         <Dialog open={showQuickView} onOpenChange={setShowQuickView}>
@@ -1711,6 +1962,15 @@ export default function Attendance() {
             </div>
           </DialogContent>
         </Dialog>
+        {reviewingOvertimeRequest && (
+          <OvertimeRequestReviewModal
+            request={reviewingOvertimeRequest}
+            currentUser={currentUser}
+            activeCompanyId={activeCompanyId}
+            onClose={() => setReviewingOvertimeRequest(null)}
+            onConfirm={updates => updateOvertimeRequest(reviewingOvertimeRequest.id, updates)}
+          />
+        )}
       </div>
     );
   }
@@ -1746,8 +2006,55 @@ export default function Attendance() {
           <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
         </div>
       ) : (
-        <Card className="border border-border shadow-sm overflow-hidden">
-          <div className="overflow-x-auto xl:overflow-x-visible">
+        <div className="space-y-3">
+          {selectedEmployeeOvertimeRequests.length > 0 && (
+            <Card className="border border-border shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary" />
+                <p className="font-semibold text-sm text-foreground">OT Requests</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-muted/40 border-b border-border">
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground text-xs">Date</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground text-xs">Requested</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground text-xs">Approved</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground text-xs">Status</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground text-xs">Reason</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground text-xs">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedEmployeeOvertimeRequests
+                      .filter(request => request.date >= startStr && request.date <= endStr)
+                      .map(request => (
+                        <tr key={request.id} className="border-b border-border last:border-0">
+                          <td className="px-3 py-2 text-xs">{request.date}</td>
+                          <td className="px-3 py-2 text-xs text-right">{Number(request.requested_hours || 0).toFixed(2)}h</td>
+                          <td className="px-3 py-2 text-xs text-right">{request.status === 'approved' ? `${Number((request.approved_hours ?? request.requested_hours) || 0).toFixed(2)}h` : '—'}</td>
+                          <td className="px-3 py-2">
+                            <Badge variant="outline" className={`text-xs capitalize ${overtimeStatusColors[request.status] || 'bg-amber-100 text-amber-700'}`}>
+                              {request.status}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2 text-xs text-muted-foreground max-w-md truncate">{request.reason}</td>
+                          <td className="px-3 py-2 text-right">
+                            {request.status === 'pending' ? (
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setReviewingOvertimeRequest(request)}>
+                                Review
+                              </Button>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+          <Card className="border border-border shadow-sm overflow-hidden">
+            <div className="overflow-x-auto xl:overflow-x-visible">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-muted/50 border-b border-border">
@@ -1914,11 +2221,9 @@ export default function Attendance() {
                         <td className="px-2.5 py-3 text-xs">{log.hours_worked || '—'}</td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">
                           {(Number(log.ot_requested_hours ?? log.overtime_hours) || 0) > 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => setReviewingOvertimeLog(log)}
-                              className="inline-flex items-center gap-1 rounded-md hover:underline"
-                              title="Review overtime hours"
+                            <span
+                              className="inline-flex items-center gap-1 rounded-md"
+                              title={`Actual OT: ${Number(log.ot_actual_hours || log.overtime_hours || 0).toFixed(2)}h`}
                             >
                               <span>{Number(log.overtime_hours || 0).toFixed(2)}h</span>
                               <Badge
@@ -1927,7 +2232,7 @@ export default function Attendance() {
                               >
                                 {log.ot_status || 'pending'}
                               </Badge>
-                            </button>
+                            </span>
                           ) : '—'}
                         </td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.night_diff_hours > 0 ? `${log.night_diff_hours}h` : '—'}</td>
@@ -1977,8 +2282,9 @@ export default function Attendance() {
                 )}
               </tbody>
             </table>
-          </div>
-        </Card>
+            </div>
+          </Card>
+        </div>
       )}
 
       {editingLog && (
@@ -1988,6 +2294,7 @@ export default function Attendance() {
           defaultWorkSchedule={getLogShiftValue(editingLog)}
           shiftOptions={shiftOptions}
           resolvedShift={getLogShift(editingLog)}
+          overtimeRequests={overtimeRequests}
           currentUser={currentUser}
           activeCompanyId={activeCompanyId}
           canCorrectAttendance={canCorrectAttendance}
@@ -2016,6 +2323,16 @@ export default function Attendance() {
           activeCompanyId={activeCompanyId}
           onClose={() => setReviewingOvertimeLog(null)}
           onConfirm={updates => updateLog(reviewingOvertimeLog.id, updates)}
+        />
+      )}
+
+      {reviewingOvertimeRequest && (
+        <OvertimeRequestReviewModal
+          request={reviewingOvertimeRequest}
+          currentUser={currentUser}
+          activeCompanyId={activeCompanyId}
+          onClose={() => setReviewingOvertimeRequest(null)}
+          onConfirm={updates => updateOvertimeRequest(reviewingOvertimeRequest.id, updates)}
         />
       )}
 

@@ -15,6 +15,7 @@ const entityLabels = {
   PersonalLeave: 'Personal Leave',
   CashAdvance: 'Cash Advance',
   Employee: 'Employee Setup',
+  OvertimeRequest: 'OT Request',
 };
 
 const actionLabels = {
@@ -24,6 +25,8 @@ const actionLabels = {
   overtime_approved: 'OT Approved',
   overtime_reduced: 'OT Reduced',
   overtime_denied: 'OT Denied',
+  overtime_request_approved: 'OT Request Approved',
+  overtime_request_denied: 'OT Request Denied',
   leave_approved: 'Leave Approved',
   leave_declined: 'Leave Declined',
   cash_advance_hr_approved: 'Cash Advance HR Approved',
@@ -36,9 +39,11 @@ const actionLabels = {
 const actionStyles = {
   attendance_rejected: 'bg-red-100 text-red-700',
   overtime_denied: 'bg-red-100 text-red-700',
+  overtime_request_denied: 'bg-red-100 text-red-700',
   leave_declined: 'bg-red-100 text-red-700',
   cash_advance_rejected: 'bg-red-100 text-red-700',
   overtime_reduced: 'bg-amber-100 text-amber-700',
+  overtime_request_approved: 'bg-green-100 text-green-700',
   attendance_correction: 'bg-blue-100 text-blue-700',
   attendance_manual_edit: 'bg-blue-100 text-blue-700',
 };
@@ -49,6 +54,7 @@ function subjectFor(entity, record) {
     if (entity === 'AttendanceLog') return `${employee} · ${record.record_date || record.date || 'No date'}`;
     if (entity === 'PersonalLeave') return `${employee} · ${record.record_date || record.start_date || 'No date'}`;
     if (entity === 'CashAdvance') return `${employee} · ₱${Number(record.amount || record.amount_requested || record.amount_approved || 0).toLocaleString('en-PH')}`;
+    if (entity === 'OvertimeRequest') return `${employee} · ${record.record_date || record.date || 'No date'}`;
     if (entity === 'Employee') return employee;
   }
   if (entity === 'AttendanceLog') {

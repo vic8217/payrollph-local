@@ -1,13 +1,18 @@
 // @ts-nocheck
 import { createRecord, listRecords, updateRecord } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
-import { effectiveShiftSetting, shiftFromAttendanceSnapshot } from "@/lib/shiftSettings";
+import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot } from "@/lib/shiftSettings";
 import {
   computeCreditedHoursWorked,
   computeLateMinutes,
   computeNightDifferentialHours,
   computeOvertimeHours,
 } from "@/lib/payrollUtils";
+import {
+  approvedOvertimeRequestForLog,
+  capOvertimeByApprovedRequest,
+  overtimeStatusForComputedHours,
+} from "@/lib/overtimeRequests";
 
 function todayInManila() {
   return manilaDateString();
@@ -143,10 +148,10 @@ function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) 
     .map(setting => effectiveShiftSetting(setting, date))
     .filter(setting => setting?.is_active !== false);
   const defaultShift = effectiveShifts.find(setting => setting.is_default) || effectiveShifts[0] || {};
-  const shiftValue = employee?.work_schedule || defaultShift.id || "day_shift";
+  const shiftValue = log?.work_schedule || resolveEmployeeWorkSchedule(employee, date, defaultShift.id || "day_shift");
   const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
   const matchedShift = shiftFromAttendanceSnapshot(log, effectiveShiftSetting(rawShift, date));
-  const shift = matchedShift || (employee?.work_schedule ? {} : defaultShift);
+  const shift = matchedShift || (shiftValue ? {} : defaultShift);
   const fallbackShift = legacyShiftTimes(shiftValue);
   const shiftStartTime = shift.shift_start_time || fallbackShift.shift_start_time;
   const shiftEndTime = shift.shift_end_time || fallbackShift.shift_end_time;
@@ -301,6 +306,10 @@ export default async function handler(req, res) {
   const shiftSettings = await listRecords("Settings", {
     filter: { company_profile_id: employee.company_profile_id },
   });
+  const overtimeRequests = await listRecords("OvertimeRequest", {
+    filter: { company_profile_id: employee.company_profile_id },
+    limit: 1000,
+  });
   const todayLog = employeeLogs.find((log) =>
     log.date === date || attendanceLogManilaDate(log) === date
   );
@@ -308,8 +317,9 @@ export default async function handler(req, res) {
     isActiveOvernightLog(log, employee, shiftSettings, date, nowDate)
   );
   const lastLog = todayLog || overnightLog;
+  const effectiveWorkSchedule = resolveEmployeeWorkSchedule(employee, lastLog?.date || date);
   const currentShiftOptions = resolveEmployeeShiftOptions(
-    { ...employee, work_schedule: lastLog?.work_schedule || employee.work_schedule },
+    { ...employee, work_schedule: lastLog?.work_schedule || effectiveWorkSchedule },
     shiftSettings,
     lastLog?.date || date,
     lastLog,
@@ -343,7 +353,7 @@ export default async function handler(req, res) {
       employee_name: employeeName,
       date,
       time_in: now,
-      work_schedule: employee.work_schedule,
+      work_schedule: effectiveWorkSchedule,
       shift_start_time: currentShiftOptions.shiftStartTime,
       shift_end_time: currentShiftOptions.shiftEndTime,
       shift_overtime_start_time: currentShiftOptions.overtimeStartTime,
@@ -427,7 +437,7 @@ export default async function handler(req, res) {
     }
 
     const shiftOptions = resolveEmployeeShiftOptions(
-      { ...employee, work_schedule: currentLog.work_schedule || employee.work_schedule },
+      { ...employee, work_schedule: currentLog.work_schedule || resolveEmployeeWorkSchedule(employee, currentLog.date) },
       shiftSettings,
       currentLog.date,
       currentLog,
@@ -441,6 +451,8 @@ export default async function handler(req, res) {
       ...shiftOptions,
       breakDurationMinutes: getBreakDurationMinutes(employee),
     });
+    const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, employee);
+    const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
     const nightDiffHours = computeNightDifferentialHours(completedLog, {
       shiftStartTime: shiftOptions.shiftStartTime,
       breakDurationMinutes: getBreakDurationMinutes(employee),
@@ -450,9 +462,11 @@ export default async function handler(req, res) {
       time_out: now,
       ...locationUpdateFor("time_out", location),
       hours_worked: Number(hoursWorked.toFixed(2)),
-      overtime_hours: Number(overtimeHours.toFixed(2)),
-      ot_requested_hours: Number(overtimeHours.toFixed(2)),
-      ot_status: overtimeHours > 0 ? "pending" : null,
+      ot_actual_hours: Number(overtimeHours.toFixed(2)),
+      overtime_hours: cappedOvertimeHours,
+      ot_requested_hours: approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0,
+      ot_status: overtimeStatusForComputedHours(overtimeHours, cappedOvertimeHours, approvedOtRequest),
+      overtime_request_id: approvedOtRequest?.id || null,
       night_diff_hours: Number(nightDiffHours.toFixed(2)),
       late_minutes: lateMinutes,
     });

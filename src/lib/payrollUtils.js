@@ -670,7 +670,11 @@ export function computeWeeklyPayroll(
 		}
 
 		// Overtime
-		const overtimeHours = ['approved', 'denied'].includes(log.ot_status)
+		const hasRequestAwareOvertime =
+			log.ot_actual_hours != null ||
+			log.overtime_request_id != null ||
+			log.ot_requested_hours === 0;
+		const overtimeHours = hasRequestAwareOvertime || ['approved', 'denied'].includes(log.ot_status)
 			? Number(log.overtime_hours) || 0
 			: logOptions.overtimeStartTime
 				? computeOvertimeHours(log, hoursWorked, logOptions)
