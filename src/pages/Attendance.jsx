@@ -22,7 +22,7 @@ import {
   manilaDateString,
 } from '@/lib/dateUtils';
 import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot, sortedShiftAssignments } from '@/lib/shiftSettings';
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1766,6 +1766,22 @@ export default function Attendance() {
   };
 
   const sortedLogs = [...logs].sort((a, b) => b.date.localeCompare(a.date) || (b.time_in || '').localeCompare(a.time_in || ''));
+  const unapprovedOvertimeLogs = selectedEmployee
+    ? sortedLogs
+      .map(log => {
+        let actualOvertime = Number(log.ot_actual_hours) || 0;
+        if (!actualOvertime && log.time_in && log.time_out) {
+          const computationOptions = getLogComputationOptions(log);
+          const hoursWorked = Number(log.hours_worked) || computeCreditedHoursWorked(log, computationOptions);
+          actualOvertime = computeOvertimeHours(log, hoursWorked, computationOptions);
+        }
+        const approvedRequest = approvedOvertimeRequestForLog(log, overtimeRequests, selectedEmployee);
+        return actualOvertime > 0 && !approvedRequest
+          ? { ...log, actualOvertime: Number(actualOvertime.toFixed(2)) }
+          : null;
+      })
+      .filter(Boolean)
+    : [];
 
   // ── EMPLOYEE LIST VIEW ──
   if (!selectedEmployee) {
@@ -2007,6 +2023,33 @@ export default function Attendance() {
         </div>
       ) : (
         <div className="space-y-3">
+          {unapprovedOvertimeLogs.length > 0 && (
+            <Card className="border border-amber-200 bg-amber-50/60 shadow-sm">
+              <div className="px-4 py-3 flex items-start gap-3">
+                <TriangleAlert className="w-4 h-4 text-amber-700 mt-0.5 flex-shrink-0" />
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-semibold text-amber-900">
+                    OT detected without approved OT request
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    These OT hours are shown as 0.00h and are not included in payroll until HR Officer and Admin approval is recorded.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {unapprovedOvertimeLogs.slice(0, 6).map(log => (
+                      <Badge key={log.id} variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
+                        {log.date}: actual {log.actualOvertime.toFixed(2)}h
+                      </Badge>
+                    ))}
+                    {unapprovedOvertimeLogs.length > 6 && (
+                      <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
+                        +{unapprovedOvertimeLogs.length - 6} more
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
           {selectedEmployeeOvertimeRequests.length > 0 && (
             <Card className="border border-border shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-border flex items-center gap-2">
@@ -2170,7 +2213,10 @@ export default function Attendance() {
 	                    const breakOutLocation = attendanceLocationItem(displayLog, 'break_time_out');
 	                    const breakInLocation = attendanceLocationItem(displayLog, 'break_time_in');
 	                    const timeOutLocation = attendanceLocationItem(displayLog, 'time_out');
-                    return (
+	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || 0);
+	                    const creditedOvertimeHours = Number(log.overtime_hours || 0);
+	                    const hasUnapprovedOvertime = actualOvertimeHours > 0 && creditedOvertimeHours <= 0 && !log.overtime_request_id;
+	                    return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-2.5 py-3 text-muted-foreground text-xs">{log.date}</td>
                         <td className="px-2.5 py-3 hidden md:table-cell">
@@ -2220,18 +2266,28 @@ export default function Attendance() {
 	                        </td>
                         <td className="px-2.5 py-3 text-xs">{log.hours_worked || '—'}</td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">
-                          {(Number(log.ot_requested_hours ?? log.overtime_hours) || 0) > 0 ? (
+                          {actualOvertimeHours > 0 || creditedOvertimeHours > 0 ? (
                             <span
                               className="inline-flex items-center gap-1 rounded-md"
-                              title={`Actual OT: ${Number(log.ot_actual_hours || log.overtime_hours || 0).toFixed(2)}h`}
+                              title={`Actual OT: ${actualOvertimeHours.toFixed(2)}h`}
                             >
-                              <span>{Number(log.overtime_hours || 0).toFixed(2)}h</span>
-                              <Badge
-                                variant="outline"
-                                className={`px-1 py-0 text-[9px] ${overtimeStatusColors[log.ot_status || 'pending']}`}
-                              >
-                                {log.ot_status || 'pending'}
-                              </Badge>
+                              <span>{creditedOvertimeHours.toFixed(2)}h</span>
+                              {hasUnapprovedOvertime && (
+                                <Badge
+                                  variant="outline"
+                                  className="px-1 py-0 text-[9px] bg-amber-100 text-amber-800 border-amber-200"
+                                >
+                                  no approval
+                                </Badge>
+                              )}
+                              {log.ot_status && (
+                                <Badge
+                                  variant="outline"
+                                  className={`px-1 py-0 text-[9px] ${overtimeStatusColors[log.ot_status]}`}
+                                >
+                                  {log.ot_status}
+                                </Badge>
+                              )}
                             </span>
                           ) : '—'}
                         </td>
