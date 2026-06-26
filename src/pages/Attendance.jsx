@@ -14,6 +14,7 @@ import {
 import {
   approvedOvertimeRequestForLog,
   capOvertimeByApprovedRequest,
+  employeeRequestMatchesLog,
   overtimeStatusForComputedHours,
 } from '@/lib/overtimeRequests';
 import {
@@ -1457,9 +1458,10 @@ export default function Attendance() {
   };
 
   const updateOvertimeRequest = async (id, updates) => {
+    const request = overtimeRequests.find(item => item.id === id);
+    const reviewedRequest = { ...(request || {}), ...updates, id };
     await entities.update('OvertimeRequest', id, updates);
     if (updates.passcode_audit_action) {
-      const request = overtimeRequests.find(item => item.id === id);
       await entities.create('PasscodeAuditLog', {
         company_profile_id: activeCompanyId,
         source_entity: 'OvertimeRequest',
@@ -1474,29 +1476,73 @@ export default function Attendance() {
         record_date: request?.date,
       });
     }
+
+    const requestEmployee = employees.find(employee =>
+      String(employee.id || '') === String(reviewedRequest.employee_record_id || '') ||
+      String(employee.employee_id || '').toLowerCase() === String(reviewedRequest.employee_id || '').toLowerCase()
+    );
+    const matchingLogs = allAttendanceLogs.filter(log =>
+      log.time_in &&
+      log.time_out &&
+      employeeRequestMatchesLog(reviewedRequest, log, requestEmployee)
+    );
+
+    await Promise.all(matchingLogs.map(log => {
+      const computationOptions = getEmployeeLogComputationOptions(log, requestEmployee);
+      const hoursWorked = computeCreditedHoursWorked(log, computationOptions);
+      const actualOvertime = computeOvertimeHours(log, hoursWorked, computationOptions);
+      const requestForCredit = reviewedRequest.status === 'approved' || reviewedRequest.status === 'denied'
+        ? reviewedRequest
+        : null;
+      const creditedOvertime = capOvertimeByApprovedRequest(actualOvertime, requestForCredit);
+      const nightDiffHours = computeNightDifferentialHours(log, computationOptions);
+      const lateMinutes = computeLateMinutes(log, computationOptions);
+
+      return entities.update('AttendanceLog', log.id, {
+        hours_worked: Number(hoursWorked.toFixed(2)),
+        ot_actual_hours: Number(actualOvertime.toFixed(2)),
+        overtime_hours: creditedOvertime,
+        ot_requested_hours: Number((reviewedRequest.approved_hours ?? reviewedRequest.requested_hours) || 0),
+        ot_status: overtimeStatusForComputedHours(actualOvertime, creditedOvertime, requestForCredit),
+        overtime_request_id: reviewedRequest.status === 'approved' || reviewedRequest.status === 'denied'
+          ? reviewedRequest.id
+          : null,
+        ot_hr_approved: reviewedRequest.status === 'approved',
+        ot_admin_approved: reviewedRequest.status === 'approved',
+        ot_reviewed_at: reviewedRequest.reviewed_at || null,
+        ot_reviewed_by: reviewedRequest.reviewed_by || null,
+        ot_review_reason: reviewedRequest.review_reason || null,
+        night_diff_hours: Number(nightDiffHours.toFixed(2)),
+        late_minutes: lateMinutes,
+      });
+    }));
+
     qc.invalidateQueries({ queryKey: ['overtimeRequests'] });
     qc.invalidateQueries({ queryKey: ['attendance'] });
+    qc.invalidateQueries({ queryKey: ['attendanceSummary'] });
   };
 
   const shiftOptions = buildShiftOptions(shiftSettings, employees, logs);
   const currentShiftSettings = shiftSettings
     .map(shift => effectiveShiftSetting(shift))
     .filter(shift => shift?.is_active !== false);
-  const defaultShiftValue = currentShiftSettings.find(s => s.is_default)?.id || currentShiftSettings[0]?.id || selectedEmployee?.work_schedule || 'day_shift';
-  const getLogShiftValue = (log) => log.work_schedule || resolveEmployeeWorkSchedule(selectedEmployee, log?.date || manilaDateString(), defaultShiftValue);
-  const getLogShift = (log) => {
-    const shiftValue = getLogShiftValue(log);
+  const getDefaultShiftValue = (employee = selectedEmployee) =>
+    currentShiftSettings.find(s => s.is_default)?.id || currentShiftSettings[0]?.id || employee?.work_schedule || 'day_shift';
+  const getEmployeeLogShiftValue = (log, employee = selectedEmployee) =>
+    log.work_schedule || resolveEmployeeWorkSchedule(employee, log?.date || manilaDateString(), getDefaultShiftValue(employee));
+  const getEmployeeLogShift = (log, employee = selectedEmployee) => {
+    const shiftValue = getEmployeeLogShiftValue(log, employee);
     const rawShift = shiftSettings.find(setting => String(setting.id) === String(shiftValue));
     const datedShift = effectiveShiftSetting(rawShift, log?.date || manilaDateString());
     return shiftFromAttendanceSnapshot(
       log,
       datedShift
         ? { ...datedShift, value: datedShift.id, label: datedShift.setting_name, shortLabel: datedShift.setting_name }
-        : getShiftOption(shiftOptions, shiftValue, defaultShiftValue),
+        : getShiftOption(shiftOptions, shiftValue, getDefaultShiftValue(employee)),
     );
   };
-  const getLogComputationOptions = (log) => {
-    const shift = getLogShift(log);
+  const getEmployeeLogComputationOptions = (log, employee = selectedEmployee) => {
+    const shift = getEmployeeLogShift(log, employee);
     const fallbackShift = legacyShiftTimes(shift.value);
     return {
       shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
@@ -1504,9 +1550,13 @@ export default function Attendance() {
       timeInAllowanceMinutes: shift.time_in_allowance_minutes || 0,
       lateGraceMinutes: shift.grace_period_minutes || 0,
       breakInGraceMinutes: shift.grace_period_minutes || 0,
-      breakDurationMinutes: getBreakDurationMinutes(selectedEmployee),
+      breakDurationMinutes: getBreakDurationMinutes(employee),
     };
   };
+  const defaultShiftValue = getDefaultShiftValue();
+  const getLogShiftValue = (log) => getEmployeeLogShiftValue(log);
+  const getLogShift = (log) => getEmployeeLogShift(log);
+  const getLogComputationOptions = (log) => getEmployeeLogComputationOptions(log);
 
   const handleApproveLog = (log) => {
     const logShiftValue = getLogShiftValue(log);
