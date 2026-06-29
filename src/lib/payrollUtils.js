@@ -386,21 +386,20 @@ export function computeLateMinutes(
 	{
 		shiftStartTime = '08:00',
 		timeInAllowanceMinutes = 0,
-		lateGraceMinutes = 0,
 	} = {},
 ) {
 	const timeIn = toValidDate(log.time_in);
 	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
 	if (!timeIn || !scheduledStart) return Number(log.late_minutes) || 0;
 
-	const allowedMinutes = Math.max(
-		0,
-		Number(timeInAllowanceMinutes) || 0,
-		Number(lateGraceMinutes) || 0,
-	);
-	const minutesAfterAllowance =
-		(timeIn.getTime() - scheduledStart.getTime()) / 60000 - allowedMinutes;
-	return Math.max(0, Math.floor(minutesAfterAllowance));
+	const minutesAfterStart =
+		(timeIn.getTime() - scheduledStart.getTime()) / 60000;
+	if (minutesAfterStart <= 0) return 0;
+
+	const allowance = Math.max(0, Number(timeInAllowanceMinutes) || 0);
+	if (minutesAfterStart <= allowance) return 0;
+
+	return Math.floor(minutesAfterStart);
 }
 
 export function computeNightDifferentialHours(
@@ -524,7 +523,7 @@ export function computeOvertimeHours(
 // cashAdvanceDeduction: the fixed per-payroll deduction amount for this period
 // noWorkDays: array of NoWorkDay records { date, reason }
 // gracePeriodMinutes: number of minutes not to be considered late (default 0)
-// options.timeInAllowanceMinutes: Time In(1) allowance credited toward worked hours.
+// options.timeInAllowanceMinutes: Time In(1) allowance credited toward worked hours when within the configured window.
 export function computeWeeklyPayroll(
 	/** @type {EmployeePayrollInfo} */
 	employee,
