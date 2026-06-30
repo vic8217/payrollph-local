@@ -34,6 +34,8 @@ const actionLabels = {
   cash_advance_rejected: 'Cash Advance Rejected',
   employee_incentives_updated: 'Incentives Updated',
   employee_number_changed: 'Employee Number Changed',
+  employee_shift_changed: 'Shift Changed',
+  employee_shift_change_cancelled: 'Shift Change Cancelled',
 };
 
 const actionStyles = {
@@ -46,6 +48,8 @@ const actionStyles = {
   overtime_request_approved: 'bg-green-100 text-green-700',
   attendance_correction: 'bg-blue-100 text-blue-700',
   attendance_manual_edit: 'bg-blue-100 text-blue-700',
+  employee_shift_changed: 'bg-blue-100 text-blue-700',
+  employee_shift_change_cancelled: 'bg-amber-100 text-amber-700',
 };
 
 function subjectFor(entity, record) {

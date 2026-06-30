@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
+import { useAuth } from '@/lib/AuthContext';
 import { manilaDateString } from '@/lib/dateUtils';
 import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 import {
@@ -11,12 +12,13 @@ import {
   resolveEmployeeWorkSchedule,
   sortedShiftAssignments,
 } from '@/lib/shiftSettings';
-import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle, CalendarDays } from 'lucide-react';
+import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle, CalendarDays, XCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
 
@@ -96,14 +98,44 @@ function ShiftBadge({ shift }) {
   );
 }
 
+const normalizePasscode = (value) => String(value ?? '').trim();
+
+function defaultEffectiveDate() {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return manilaDateString(tomorrow);
+}
+
+function buildShiftAssignmentCancellationUpdate(employee, assignment, options = {}) {
+  const today = options.today || manilaDateString();
+  const fallbackValue = options.fallbackValue || employee?.work_schedule || null;
+  const nextAssignments = sortedShiftAssignments(employee)
+    .filter(item => item.effective_date !== assignment.effective_date);
+  const workSchedule = resolveEmployeeWorkSchedule(
+    { ...employee, shift_assignments: nextAssignments, work_schedule: employee?.work_schedule || fallbackValue },
+    today,
+    fallbackValue,
+  );
+
+  return {
+    shift_assignments: nextAssignments,
+    work_schedule: workSchedule,
+  };
+}
+
 export default function WorkSchedule() {
   const [search, setSearch] = useState('');
   const [filterShift, setFilterShift] = useState('all');
   const [savingId, setSavingId] = useState(null);
-  const [effectiveDate, setEffectiveDate] = useState(manilaDateString());
+  const [effectiveDate, setEffectiveDate] = useState(defaultEffectiveDate);
+  const [pendingShiftChange, setPendingShiftChange] = useState(null);
+  const [hrPasscode, setHrPasscode] = useState('');
+  const [adminPasscode, setAdminPasscode] = useState('');
+  const [passcodeError, setPasscodeError] = useState('');
   const qc = useQueryClient();
   const { toast } = useToast();
   const { activeCompanyId, activeCompany } = useCompany();
+  const { user } = useAuth();
 
   const { data: employees = [], isLoading } = useQuery({
     queryKey: ['employees', activeCompanyId, 'work-schedule'],
@@ -118,10 +150,17 @@ export default function WorkSchedule() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => appApi.entities.Employee.update(id, data),
+    mutationFn: async ({ id, data, auditLog }) => {
+      const updated = await appApi.entities.Employee.update(id, data);
+      if (auditLog) {
+        await appApi.entities.PasscodeAuditLog.create(auditLog);
+      }
+      return updated;
+    },
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['employees', activeCompanyId] });
       qc.invalidateQueries({ queryKey: ['employees', activeCompanyId, 'work-schedule'] });
+      qc.invalidateQueries({ queryKey: ['passcodeAudit'] });
       setSavingId(null);
       toast({ title: 'Work schedule updated', description: 'Schedule settings saved successfully.' });
     },
@@ -136,14 +175,99 @@ export default function WorkSchedule() {
   });
 
   const handleShiftChange = (emp, value) => {
-    setSavingId(emp.id);
-    updateMutation.mutate({
-      id: emp.id,
-      data: buildShiftAssignmentUpdate(emp, value, effectiveDate, {
-        today: manilaDateString(),
-        fallbackValue: defaultShiftValue,
-      }),
+    setPendingShiftChange({ type: 'change', employee: emp, shiftValue: value, effectiveDate });
+    setHrPasscode('');
+    setAdminPasscode('');
+    setPasscodeError('');
+  };
+
+  const handleCancelScheduledShift = (emp, assignment) => {
+    setPendingShiftChange({ type: 'cancel', employee: emp, assignment, effectiveDate: assignment.effective_date });
+    setHrPasscode('');
+    setAdminPasscode('');
+    setPasscodeError('');
+  };
+
+  const closeShiftPasscodeDialog = () => {
+    if (savingId) return;
+    setPendingShiftChange(null);
+    setHrPasscode('');
+    setAdminPasscode('');
+    setPasscodeError('');
+  };
+
+  const verifyShiftPasscodes = async () => {
+    const records = await appApi.entities.DailyPasscode.filter({
+      date: manilaDateString(),
+      company_profile_id: activeCompanyId,
     });
+    const matched = records.find(record =>
+      normalizePasscode(record.passcode) === normalizePasscode(hrPasscode) &&
+      normalizePasscode(record.manager_passcode) === normalizePasscode(adminPasscode)
+    );
+    if (!matched) {
+      if (records.length === 0) {
+        throw new Error('No daily HR/Admin passcodes have been generated for today and the selected company.');
+      }
+      throw new Error('Incorrect HR Officer or Admin passcode. Use the matching pair generated today for the selected company.');
+    }
+  };
+
+  const confirmShiftChange = async () => {
+    if (!pendingShiftChange) return;
+    if (!hrPasscode.trim() || !adminPasscode.trim()) {
+      setPasscodeError('Both the HR Officer and Admin passcodes are required.');
+      return;
+    }
+
+    const { employee, shiftValue, effectiveDate: changeEffectiveDate, assignment, type } = pendingShiftChange;
+    const previousShift = getShiftOption(getCurrentShiftValue(employee, changeEffectiveDate));
+    const nextShift = getShiftOption(type === 'cancel' ? assignment?.work_schedule : shiftValue);
+    const reviewer = user?.full_name || user?.email || 'unknown';
+    const occurredAt = new Date().toISOString();
+    const employeeName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
+    const isCancellation = type === 'cancel';
+
+    setPasscodeError('');
+    setSavingId(employee.id);
+    try {
+      await verifyShiftPasscodes();
+    } catch (error) {
+      setSavingId(null);
+      setPasscodeError(error?.message || 'Unable to verify passcodes.');
+      return;
+    }
+
+    updateMutation.mutate({
+      id: employee.id,
+      data: isCancellation
+        ? buildShiftAssignmentCancellationUpdate(employee, assignment, {
+          today: manilaDateString(),
+          fallbackValue: defaultShiftValue,
+        })
+        : buildShiftAssignmentUpdate(employee, shiftValue, changeEffectiveDate, {
+          today: manilaDateString(),
+          fallbackValue: defaultShiftValue,
+        }),
+      auditLog: {
+        company_profile_id: activeCompanyId,
+        source_entity: 'Employee',
+        source_record_id: employee.id,
+        action: isCancellation ? 'employee_shift_change_cancelled' : 'employee_shift_changed',
+        occurred_at: occurredAt,
+        authorized_by: reviewer,
+        reason: 'HR Officer and Admin passcodes verified',
+        summary: isCancellation
+          ? `Scheduled shift change to ${nextShift.label} effective ${changeEffectiveDate} cancelled`
+          : `Shift changed from ${previousShift.label} to ${nextShift.label} effective ${changeEffectiveDate}`,
+        employee_id: employee.employee_id,
+        employee_name: employeeName || employee.employee_id,
+        record_date: changeEffectiveDate,
+      },
+    });
+    setPendingShiftChange(null);
+    setHrPasscode('');
+    setAdminPasscode('');
   };
 
   const handleBreakTimeChange = (emp, value) => {
@@ -262,7 +386,7 @@ export default function WorkSchedule() {
           <Input
             type="date"
             value={effectiveDate}
-            onChange={e => setEffectiveDate(e.target.value || manilaDateString())}
+            onChange={e => setEffectiveDate(e.target.value || defaultEffectiveDate())}
             className="h-7 w-36 border-0 p-0 text-xs focus-visible:ring-0"
           />
         </div>
@@ -331,9 +455,21 @@ export default function WorkSchedule() {
                       <div className="space-y-1">
                         <ShiftBadge shift={getShiftOption(currentShiftValue)} />
                         {pendingAssignment && (
-                          <p className="text-[10px] text-muted-foreground">
-                            {pendingShift?.label} starts {pendingAssignment.effective_date}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="text-[10px] text-muted-foreground">
+                              {pendingShift?.label} starts {pendingAssignment.effective_date}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-[10px] text-destructive hover:text-destructive"
+                              onClick={() => handleCancelScheduledShift(emp, pendingAssignment)}
+                            >
+                              <XCircle className="h-3 w-3" />
+                              Cancel
+                            </Button>
+                          </div>
                         )}
                       </div>
                     </td>
@@ -420,6 +556,93 @@ export default function WorkSchedule() {
           </table>
         </Card>
       )}
+
+      <Dialog open={!!pendingShiftChange} onOpenChange={(open) => { if (!open) closeShiftPasscodeDialog(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {pendingShiftChange?.type === 'cancel' ? 'Cancel Scheduled Shift Change' : 'Authorize Shift Change'}
+            </DialogTitle>
+            <DialogDescription>
+              {pendingShiftChange?.type === 'cancel'
+                ? "Canceling a scheduled shift change requires today's HR Officer and Admin passcodes."
+                : "Shift changes require today's HR Officer and Admin passcodes for the selected company."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingShiftChange && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+                <p className="font-medium text-foreground">
+                  {pendingShiftChange.employee.first_name} {pendingShiftChange.employee.last_name}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {pendingShiftChange.type === 'cancel'
+                    ? `Cancel ${getShiftOption(pendingShiftChange.assignment?.work_schedule).label}`
+                    : `${getShiftOption(getCurrentShiftValue(pendingShiftChange.employee, pendingShiftChange.effectiveDate)).label} to ${getShiftOption(pendingShiftChange.shiftValue).label}`}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Effective {pendingShiftChange.effectiveDate}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">HR Officer Passcode</label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={hrPasscode}
+                    onChange={event => {
+                      setHrPasscode(event.target.value);
+                      setPasscodeError('');
+                    }}
+                    placeholder="Enter HR passcode"
+                    className="text-center font-mono tracking-widest"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">Admin Passcode</label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={adminPasscode}
+                    onChange={event => {
+                      setAdminPasscode(event.target.value);
+                      setPasscodeError('');
+                    }}
+                    placeholder="Enter admin passcode"
+                    className="text-center font-mono tracking-widest"
+                  />
+                </div>
+              </div>
+
+              {passcodeError && (
+                <p className="text-xs text-destructive">{passcodeError}</p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeShiftPasscodeDialog} disabled={!!savingId}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={confirmShiftChange}
+              disabled={!!savingId || !hrPasscode.trim() || !adminPasscode.trim()}
+            >
+              {savingId
+                ? 'Saving...'
+                : pendingShiftChange?.type === 'cancel'
+                  ? 'Authorize Cancellation'
+                  : 'Authorize Change'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
