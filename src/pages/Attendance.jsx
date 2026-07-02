@@ -10,6 +10,7 @@ import {
   computeLateMinutes,
   computeNightDifferentialHours,
   computeOvertimeHours,
+  normalizeOvernightBreakPunches,
 } from '@/lib/payrollUtils';
 import {
   approvedOvertimeRequestForLog,
@@ -1570,8 +1571,12 @@ export default function Attendance() {
     }
 
     const computationOptions = getLogComputationOptions(log);
+    const normalizedBreaks = normalizeOvernightBreakPunches(log, computationOptions);
     const updates = log.time_in && log.time_out
-      ? { night_diff_hours: Number(computeNightDifferentialHours(log, computationOptions).toFixed(2)) }
+      ? {
+          ...normalizedBreaks.updates,
+          night_diff_hours: Number(computeNightDifferentialHours(normalizedBreaks.log, computationOptions).toFixed(2)),
+        }
       : {};
 
     approveMutation.mutate({ id: log.id, status: 'approved', updates });
@@ -1655,12 +1660,14 @@ export default function Attendance() {
       )
       .map(log => {
         const computationOptions = getLogComputationOptions(log);
-        const hoursWorked = computeCreditedHoursWorked(log, computationOptions);
-        const overtimeHours = computeOvertimeHours(log, hoursWorked, computationOptions);
-        const approvedOtRequest = approvedOvertimeRequestForLog(log, overtimeRequests, selectedEmployee);
+        const normalizedBreaks = normalizeOvernightBreakPunches(log, computationOptions);
+        const normalizedLog = normalizedBreaks.log;
+        const hoursWorked = computeCreditedHoursWorked(normalizedLog, computationOptions);
+        const overtimeHours = computeOvertimeHours(normalizedLog, hoursWorked, computationOptions);
+        const approvedOtRequest = approvedOvertimeRequestForLog(normalizedLog, overtimeRequests, selectedEmployee);
         const cappedOvertime = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
-        const nightDiffHours = computeNightDifferentialHours(log, computationOptions);
-        const lateMinutes = computeLateMinutes(log, computationOptions);
+        const nightDiffHours = computeNightDifferentialHours(normalizedLog, computationOptions);
+        const lateMinutes = computeLateMinutes(normalizedLog, computationOptions);
         const nextHours = Number(hoursWorked.toFixed(2));
         const nextActualOvertime = Number(overtimeHours.toFixed(2));
         const nextOvertime = cappedOvertime;
@@ -1670,10 +1677,12 @@ export default function Attendance() {
         const isPending = log.status === 'pending';
 
         if (!isPending) {
-          return Math.abs((Number(log.night_diff_hours) || 0) - nextNightDiff) > 0.005
+          return Object.keys(normalizedBreaks.updates).length > 0 ||
+            Math.abs((Number(log.night_diff_hours) || 0) - nextNightDiff) > 0.005
             ? {
                 id: log.id,
                 updates: {
+                  ...normalizedBreaks.updates,
                   night_diff_hours: nextNightDiff,
                 },
               }
@@ -1696,6 +1705,7 @@ export default function Attendance() {
         return {
           id: log.id,
           updates: {
+            ...normalizedBreaks.updates,
             hours_worked: nextHours,
             ot_actual_hours: nextActualOvertime,
             overtime_hours: nextOvertime,
@@ -2265,7 +2275,9 @@ export default function Attendance() {
 	                  sortedLogs.map(log => {
 	                    const logWorkSchedule = getLogShiftValue(log);
 	                    const logShift = getLogShift(log);
-	                    const displayLog = normalizeOvernightTimeInForDisplay(log, logShift);
+	                    const computationOptions = getLogComputationOptions(log);
+	                    const normalizedBreakLog = normalizeOvernightBreakPunches(log, computationOptions).log;
+	                    const displayLog = normalizeOvernightTimeInForDisplay(normalizedBreakLog, logShift);
 	                    const logEmployee = { ...selectedEmployee, work_schedule: logWorkSchedule };
 	                    const missingFields = missingAttendanceFields(log, logEmployee, logShift, currentTime);
 	                    const breakTimeInMissing = missingFields.includes('Time In(2)');
@@ -2282,8 +2294,8 @@ export default function Attendance() {
 	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || 0);
 	                    const creditedOvertimeHours = Number(log.overtime_hours || 0);
 	                    const hasUnapprovedOvertime = actualOvertimeHours > 0 && creditedOvertimeHours <= 0 && !log.overtime_request_id;
-	                    const displayedNightDiffHours = log.time_in && log.time_out
-	                      ? Number(computeNightDifferentialHours(log, getLogComputationOptions(log)).toFixed(2))
+	                    const displayedNightDiffHours = displayLog.time_in && displayLog.time_out
+	                      ? Number(computeNightDifferentialHours(displayLog, computationOptions).toFixed(2))
 	                      : Number(log.night_diff_hours) || 0;
 	                    return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
@@ -2304,8 +2316,8 @@ export default function Attendance() {
                         </td>
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
-                            {log.break_time_out
-                              ? <span className="text-orange-500 text-xs">{formatManilaTime(log.break_time_out)}</span>
+                            {displayLog.break_time_out
+                              ? <span className="text-orange-500 text-xs">{formatManilaTime(displayLog.break_time_out)}</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
                             <InlinePhotoButton photoItem={breakOutPhoto} log={log} onView={setPhotoLog} />
                             <InlineLocationButton locationItem={breakOutLocation} log={log} onView={setLocationLog} />
@@ -2313,8 +2325,8 @@ export default function Attendance() {
                         </td>
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
-                            {log.break_time_in
-                              ? <span className="text-teal-600 text-xs">{formatManilaTime(log.break_time_in)}</span>
+                            {displayLog.break_time_in
+                              ? <span className="text-teal-600 text-xs">{formatManilaTime(displayLog.break_time_in)}</span>
                               : breakTimeInMissing
                                 ? <span className="text-amber-500 font-medium text-xs">Missing</span>
                               : <span className="text-muted-foreground text-xs">—</span>}

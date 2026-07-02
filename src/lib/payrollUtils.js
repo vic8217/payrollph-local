@@ -261,6 +261,88 @@ function resolveScheduledTime(logDate, time) {
 	);
 }
 
+function addDateString(dateString, days) {
+	const [year, month, day] = String(dateString || '').split('-').map(Number);
+	if (![year, month, day].every(Number.isFinite)) return null;
+	const date = new Date(Date.UTC(year, month - 1, day + days));
+	return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function manilaClockParts(value) {
+	const date = toValidDate(value);
+	if (!date) return null;
+	const parts = new Intl.DateTimeFormat('en-GB', {
+		timeZone: 'Asia/Manila',
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23',
+	}).formatToParts(date);
+	const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+	const hour = Number(values.hour);
+	const minute = Number(values.minute);
+	return [hour, minute].every(Number.isFinite) ? { hour, minute } : null;
+}
+
+function normalizePunchWithinWorkInterval(log, value, workStart, workEnd) {
+	const punch = toValidDate(value);
+	if (!punch || !workStart || !workEnd || workEnd.getTime() <= workStart.getTime()) return punch;
+	if (punch.getTime() > workStart.getTime() && punch.getTime() <= workEnd.getTime()) return punch;
+
+	const nextDate = addDateString(log?.date, 1);
+	const clock = manilaClockParts(punch);
+	if (!nextDate || !clock) return punch;
+
+	const candidateHours = clock.hour === 12 ? [0, 12] : [clock.hour];
+	for (const hour of candidateHours) {
+		const candidate = resolveScheduledTime(
+			nextDate,
+			`${String(hour).padStart(2, '0')}:${String(clock.minute).padStart(2, '0')}`,
+		);
+		if (
+			candidate &&
+			candidate.getTime() > workStart.getTime() &&
+			candidate.getTime() <= workEnd.getTime()
+		) {
+			return candidate;
+		}
+	}
+
+	return punch;
+}
+
+export function normalizeOvernightBreakPunches(
+	/** @type {PayrollLog} */
+	log,
+	/** @type {HoursComputationOptions} */
+	{ shiftStartTime = '08:00' } = {},
+) {
+	const timeIn = toValidDate(log.time_in);
+	const timeOut = toValidDate(log.time_out);
+	if (!timeIn || !timeOut || timeOut.getTime() <= timeIn.getTime()) {
+		return { log, updates: {} };
+	}
+
+	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
+	const workStart = scheduledStart && timeIn.getTime() < scheduledStart.getTime()
+		? scheduledStart
+		: timeIn;
+	const breakOut = normalizePunchWithinWorkInterval(log, log.break_time_out, workStart, timeOut);
+	const breakIn = normalizePunchWithinWorkInterval(log, log.break_time_in, workStart, timeOut);
+	const updates = {};
+
+	if (breakOut && log.break_time_out && breakOut.getTime() !== toValidDate(log.break_time_out)?.getTime()) {
+		updates.break_time_out = breakOut.toISOString();
+	}
+	if (breakIn && log.break_time_in && breakIn.getTime() !== toValidDate(log.break_time_in)?.getTime()) {
+		updates.break_time_in = breakIn.toISOString();
+	}
+
+	return {
+		log: Object.keys(updates).length > 0 ? { ...log, ...updates } : log,
+		updates,
+	};
+}
+
 export function computeCreditedHoursWorked(
 	/** @type {PayrollLog} */
 	log,
@@ -275,6 +357,7 @@ export function computeCreditedHoursWorked(
 	const timeIn = toValidDate(log.time_in);
 	const timeOut = toValidDate(log.time_out);
 	if (!timeIn || !timeOut) return Number(log.hours_worked) || 0;
+	const normalizedLog = normalizeOvernightBreakPunches(log, { shiftStartTime }).log;
 
 	const allowance = Math.max(0, Number(timeInAllowanceMinutes) || 0);
 	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
@@ -292,8 +375,8 @@ export function computeCreditedHoursWorked(
 		}
 	}
 
-	const breakOut = toValidDate(log.break_time_out);
-	const recordedBreakIn = toValidDate(log.break_time_in);
+	const breakOut = toValidDate(normalizedLog.break_time_out);
+	const recordedBreakIn = toValidDate(normalizedLog.break_time_in);
 	let effectiveBreakIn = recordedBreakIn;
 
 	if (breakOut && recordedBreakIn) {
@@ -358,12 +441,12 @@ function overlapHours(startA, endA, startB, endB) {
 	return Math.max(0, (end - start) / 36e5);
 }
 
-function resolveBreakInterval(log, breakDurationMinutes = 60) {
-	const breakOut = toValidDate(log.break_time_out);
+function resolveBreakInterval(log, breakDurationMinutes = 60, workStart = null, workEnd = null) {
+	const breakOut = normalizePunchWithinWorkInterval(log, log.break_time_out, workStart, workEnd);
 	if (!breakOut) return { breakOut: null, breakIn: null };
 
-	const timeOut = toValidDate(log.time_out);
-	let breakIn = toValidDate(log.break_time_in);
+	const timeOut = workEnd || toValidDate(log.time_out);
+	let breakIn = normalizePunchWithinWorkInterval(log, log.break_time_in, workStart, workEnd);
 	if (!breakIn) {
 		breakIn = new Date(breakOut);
 		breakIn.setMinutes(
@@ -420,7 +503,7 @@ export function computeNightDifferentialHours(
 		: timeIn;
 	if (timeOut.getTime() <= effectiveTimeIn.getTime()) return 0;
 
-	const { breakOut, breakIn } = resolveBreakInterval(log, breakDurationMinutes);
+	const { breakOut, breakIn } = resolveBreakInterval(log, breakDurationMinutes, effectiveTimeIn, timeOut);
 	const workIntervals = breakOut && breakIn
 		? [[effectiveTimeIn, breakOut], [breakIn, timeOut]]
 		: [[effectiveTimeIn, timeOut]];
@@ -482,8 +565,9 @@ export function computeOvertimeHours(
 		(timeOut.getTime() - overtimeWindowStart.getTime()) / 36e5,
 	);
 
-	const breakOut = toValidDate(log.break_time_out);
-	const recordedBreakIn = toValidDate(log.break_time_in);
+	const workStart = toValidDate(log.time_in) || overtimeWindowStart;
+	const breakOut = normalizePunchWithinWorkInterval(log, log.break_time_out, workStart, timeOut);
+	const recordedBreakIn = normalizePunchWithinWorkInterval(log, log.break_time_in, workStart, timeOut);
 	let effectiveBreakIn = recordedBreakIn;
 	if (breakOut && recordedBreakIn) {
 		const expectedBreakIn = new Date(breakOut);
