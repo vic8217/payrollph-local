@@ -13,6 +13,20 @@ import {
   sendFaceError,
 } from "@/server/faceVerification";
 
+function faceEmployeePayload(employee) {
+  return {
+    id: employee.id,
+    employee_id: employee.employee_id,
+    employee_name: employeeName(employee),
+    first_name: employee.first_name || null,
+    middle_name: employee.middle_name || null,
+    last_name: employee.last_name || null,
+    department: employee.department || null,
+    position: employee.position || null,
+    company_profile_id: employee.company_profile_id || null,
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -114,12 +128,7 @@ export default async function handler(req, res) {
         result,
         confidenceScore: best.confidenceScore,
         minimumConfidence,
-        employee: result === "verified" ? {
-          id: employee.id,
-          employee_id: employee.employee_id,
-          employee_name: employeeName(employee),
-          company_profile_id: employee.company_profile_id || null,
-        } : null,
+        employee: result === "verified" ? faceEmployeePayload(employee) : null,
         log,
       });
     }
@@ -174,12 +183,7 @@ export default async function handler(req, res) {
       result,
       confidenceScore,
       minimumConfidence,
-      employee: result === "verified" ? {
-        id: employee.id,
-        employee_id: employee.employee_id,
-        employee_name: employeeName(employee),
-        company_profile_id: employee.company_profile_id || null,
-      } : null,
+      employee: result === "verified" ? faceEmployeePayload(employee) : null,
       log,
     });
   } catch (error) {

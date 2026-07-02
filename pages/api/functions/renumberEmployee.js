@@ -4,7 +4,6 @@ import { authOptions } from "../auth/[...nextauth]";
 import { createRecord, listRecords, updateRecord } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
 import { prisma } from "@/server/prisma";
-import { requireRecentUserPresence } from "@/server/userPresenceVerification";
 
 const LINKED_ENTITIES = [
   "AttendanceLog",
@@ -52,11 +51,6 @@ export default async function handler(req, res) {
   const effectiveRole = authenticatedUser?.role || session.user.role;
   if (!["super_admin", "admin"].includes(effectiveRole)) {
     return res.status(403).json({ error: "Only an admin or super admin can change an employee number" });
-  }
-  try {
-    await requireRecentUserPresence(session.user, { purpose: "high_risk_action" });
-  } catch (error) {
-    return res.status(error.statusCode || 500).json({ error: error.message || "Face verification failed." });
   }
 
   const employeeRecordId = String(req.body?.employee_record_id || "").trim();

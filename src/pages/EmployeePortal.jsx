@@ -278,6 +278,7 @@ export default function EmployeePortal() {
   const [faceSubmitting, setFaceSubmitting] = useState(false);
   const [faceMessage, setFaceMessage] = useState('');
   const [faceError, setFaceError] = useState('');
+  const [faceMatchedEmployee, setFaceMatchedEmployee] = useState(null);
   const { activeCompanyId } = useCompany();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -430,12 +431,15 @@ export default function EmployeePortal() {
         return;
       }
       if (faceResult.result !== 'verified' || !faceResult.employee) {
+        setFaceMatchedEmployee(null);
         setFaceError(`Face verification ${faceResult.result}. Attendance was not recorded.`);
         return;
       }
 
-      const attendance = await recordAttendanceForEmployee(faceResult.employee, facePhoto, faceResult);
-      setFaceMessage(`${attendance.action} recorded for ${faceResult.employee.employee_name || faceResult.employee.employee_id}${attendance.time ? ` at ${attendance.time}` : ''}.`);
+      const matchedEmployee = await resolveEmployeeFromFaceResult(faceResult.employee);
+      setFaceMatchedEmployee(matchedEmployee);
+      const attendance = await recordAttendanceForEmployee(matchedEmployee, facePhoto, faceResult);
+      setFaceMessage(`${attendance.action} recorded for ${employeeDisplayName(matchedEmployee)}${attendance.time ? ` at ${attendance.time}` : ''}.`);
       setFacePhoto('');
       setFaceLivenessConfirmed(false);
     } catch (error) {
@@ -560,6 +564,7 @@ export default function EmployeePortal() {
                 <FaceCapture
                   onCapture={(value) => {
                     setFacePhoto(value);
+                    setFaceMatchedEmployee(null);
                     setFaceError('');
                     setFaceMessage('');
                   }}
@@ -567,6 +572,7 @@ export default function EmployeePortal() {
                   onReset={() => {
                     setFacePhoto('');
                     setFaceLivenessConfirmed(false);
+                    setFaceMatchedEmployee(null);
                     setFaceError('');
                     setFaceMessage('');
                   }}
@@ -584,6 +590,18 @@ export default function EmployeePortal() {
                     : 'Blink or turn your head slightly while your face is inside the guide.'}
                 </div>
                 {faceError && <p className="text-sm font-medium text-destructive">{faceError}</p>}
+                {faceMatchedEmployee && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Verified Employee</p>
+                    <p className="mt-1 text-base font-semibold text-foreground">{employeeDisplayName(faceMatchedEmployee)}</p>
+                    <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                      <p><span className="font-medium text-foreground">Employee ID:</span> {faceMatchedEmployee.employee_id || '-'}</p>
+                      <p><span className="font-medium text-foreground">Department:</span> {faceMatchedEmployee.department || '-'}</p>
+                      <p><span className="font-medium text-foreground">Position:</span> {faceMatchedEmployee.position || '-'}</p>
+                      <p><span className="font-medium text-foreground">Company:</span> {faceMatchedEmployee.company_profile_id || activeCompanyId || '-'}</p>
+                    </div>
+                  </div>
+                )}
                 {faceMessage && <p className="text-sm font-medium text-emerald-700">{faceMessage}</p>}
                 <Button
                   className="w-full"

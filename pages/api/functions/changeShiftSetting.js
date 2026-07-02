@@ -8,7 +8,6 @@ import {
   nextBusinessDate,
   shiftVersionSnapshot,
 } from '@/lib/shiftSettings';
-import { requireRecentUserPresence } from '@/server/userPresenceVerification';
 
 function versionsWithBaseline(shift) {
   if (Array.isArray(shift.effective_versions) && shift.effective_versions.length > 0) {
@@ -81,11 +80,6 @@ export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
   if (!session?.user?.id) {
     return res.status(401).json({ error: 'Your session could not be verified. Please sign in again.' });
-  }
-  try {
-    await requireRecentUserPresence(session.user, { purpose: 'high_risk_action' });
-  } catch (error) {
-    return res.status(error.statusCode || 500).json({ error: error.message || 'Face verification failed.' });
   }
   const changedAt = new Date().toISOString();
   const changedBy = session?.user?.name || session?.user?.email || 'unknown';

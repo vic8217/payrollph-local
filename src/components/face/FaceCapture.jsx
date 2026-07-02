@@ -160,7 +160,7 @@ export default function FaceCapture({
     return hasVerticalPair && (hasHorizontalPair || (centerSamples > 0 && centerDarkFrame / centerSamples > 0.22));
   };
 
-  const stopCamera = () => {
+  const stopCamera = ({ resetState = true } = {}) => {
     if (livenessTimerRef.current) {
       clearInterval(livenessTimerRef.current);
       livenessTimerRef.current = null;
@@ -168,7 +168,8 @@ export default function FaceCapture({
     streamRef.current?.getTracks?.().forEach(track => track.stop());
     streamRef.current = null;
     cameraReadyRef.current = false;
-    setCameraReady(false);
+    if (videoRef.current) videoRef.current.srcObject = null;
+    if (resetState) setCameraReady(false);
   };
 
   const sampleFaceGuideMotion = async () => {
@@ -250,6 +251,7 @@ export default function FaceCapture({
   };
 
   const startCamera = async () => {
+    stopCamera();
     setError('');
     setPreview('');
     setLivenessStatus('idle');
@@ -271,8 +273,11 @@ export default function FaceCapture({
       cameraReadyRef.current = true;
       setCameraReady(true);
       setTimeout(startLivenessDetection, 250);
-    } catch {
-      setError('Camera access is required for face verification.');
+    } catch (startError) {
+      const message = startError?.name === 'NotReadableError'
+        ? 'Camera is already in use. Close other camera apps or restart the camera.'
+        : 'Camera access is required for face verification.';
+      setError(message);
     }
   };
 

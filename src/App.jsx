@@ -6,7 +6,6 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { CompanyProvider } from '@/lib/CompanyContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
-import UserPresenceGate from '@/components/UserPresenceGate';
 import Layout from '@/components/Layout';
 import Dashboard from '@/pages/Dashboard';
 import Employees from '@/pages/Employees';
@@ -39,8 +38,6 @@ import PayslipAcknowledgements from '@/pages/PayslipAcknowledgements';
 import AdminFaceVerification from '@/pages/AdminFaceVerification';
 import AdminFaceEnroll from '@/pages/AdminFaceEnroll';
 import AdminFaceLogs from '@/pages/AdminFaceLogs';
-import EmployeeFaceVerification from '@/pages/EmployeeFaceVerification';
-import EmployeeFaceVerificationTest from '@/pages/EmployeeFaceVerificationTest';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
@@ -83,7 +80,6 @@ const AuthenticatedApp = () => {
   }
 
   return (
-    <UserPresenceGate user={user}>
     <Routes>
       <Route path="/landing" element={<Landing />} />
       <Route element={<Layout />}>
@@ -113,15 +109,12 @@ const AuthenticatedApp = () => {
         <Route path="/admin/face-verification" element={<AdminFaceVerification />} />
         <Route path="/admin/face-verification/enroll" element={<AdminFaceEnroll />} />
         <Route path="/admin/face-verification/logs" element={<AdminFaceLogs />} />
-        <Route path="/employee/face-verification" element={<EmployeeFaceVerification />} />
-        <Route path="/employee/face-verification/test" element={<EmployeeFaceVerificationTest />} />
       </Route>
       <Route path="/scan/confirm" element={<ScanConfirm />} />
       <Route path="/employee-portal-qr" element={<EmployeePortalQR />} />
       <Route path="/employee-portal" element={<EmployeePortal />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
-    </UserPresenceGate>
   );
 };
 

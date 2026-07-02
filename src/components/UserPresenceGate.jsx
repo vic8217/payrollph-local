@@ -17,6 +17,7 @@ export default function UserPresenceGate({ user, children }) {
   const [livenessConfirmed, setLivenessConfirmed] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [message, setMessage] = useState('');
+  const [captureResetKey, setCaptureResetKey] = useState(0);
   const [clientVerified, setClientVerified] = useState(() =>
     typeof sessionStorage !== 'undefined' && sessionStorage.getItem(verifiedKey(user?.id)) === 'true'
   );
@@ -37,13 +38,14 @@ export default function UserPresenceGate({ user, children }) {
       challengeId: challenge?.id,
       challengeNonce: challenge?.nonce,
     }),
-    onSuccess: () => {
+    onSuccess: async () => {
       setMessage('Face profile enrolled. Verification is now required for this session.');
       setImageBase64('');
       setCaptureMetadata(null);
       setChallenge(null);
       setLivenessConfirmed(false);
-      qc.invalidateQueries({ queryKey: ['userPresenceStatus', user?.id] });
+      await qc.invalidateQueries({ queryKey: ['userPresenceStatus', user?.id] });
+      setCaptureResetKey((value) => value + 1);
     },
   });
 
@@ -66,6 +68,7 @@ export default function UserPresenceGate({ user, children }) {
         setImageBase64('');
         setCaptureMetadata(null);
         setLivenessConfirmed(false);
+        setCaptureResetKey((value) => value + 1);
       }
     },
   });
@@ -111,6 +114,7 @@ export default function UserPresenceGate({ user, children }) {
         </div>
 
         <FaceCapture
+          key={`${hasProfile ? 'verify' : 'enroll'}-${captureResetKey}`}
           onBeforeStart={prepareChallenge}
           onCapture={(value, metadata) => {
             setImageBase64(value);
