@@ -9,7 +9,7 @@ export const AuthProvider = ({ children }) => {
 
   const checkAppState = async () => {
     try {
-      const currentUser = await appApi.auth.me();
+      const currentUser = await appApi.auth.me({ force: true });
       setUser(currentUser);
       return currentUser;
     } catch {

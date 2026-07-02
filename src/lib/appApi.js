@@ -33,6 +33,10 @@ export async function requestJson(path, options = {}) {
 
 let cachedUser;
 
+export function clearCachedUser() {
+  cachedUser = null;
+}
+
 function entityUrl(entity, params = {}) {
   const search = new URLSearchParams();
 
@@ -94,11 +98,12 @@ async function uploadFile({ file }) {
 
 export const appApi = {
   auth: {
-    async me() {
-      if (cachedUser) return cachedUser;
+    async me({ force = false } = {}) {
+      if (cachedUser && !force) return cachedUser;
       cachedUser = await requestJson("/api/auth/me");
       return cachedUser;
     },
+    clearCache: clearCachedUser,
     async logout(callbackUrl = "/landing") {
       cachedUser = null;
       try {
