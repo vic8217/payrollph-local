@@ -1428,7 +1428,7 @@ export default function Attendance() {
     : [];
 
   const approveMutation = useMutation({
-    mutationFn: ({ id, status }) => entities.update('AttendanceLog', id, { status }),
+    mutationFn: ({ id, status, updates = {} }) => entities.update('AttendanceLog', id, { status, ...updates }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['attendance'] }),
   });
 
@@ -1569,7 +1569,12 @@ export default function Attendance() {
       return;
     }
 
-    approveMutation.mutate({ id: log.id, status: 'approved' });
+    const computationOptions = getLogComputationOptions(log);
+    const updates = log.time_in && log.time_out
+      ? { night_diff_hours: Number(computeNightDifferentialHours(log, computationOptions).toFixed(2)) }
+      : {};
+
+    approveMutation.mutate({ id: log.id, status: 'approved', updates });
   };
 
   useEffect(() => {
@@ -1645,7 +1650,6 @@ export default function Attendance() {
 
     const logsNeedingRecompute = logs
       .filter(log =>
-        log.status === 'pending' &&
         log.time_in &&
         log.time_out
       )
@@ -1663,6 +1667,18 @@ export default function Attendance() {
         const nextRequestedOvertime = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
         const nextNightDiff = Number(nightDiffHours.toFixed(2));
         const nextOtStatus = overtimeStatusForComputedHours(overtimeHours, cappedOvertime, approvedOtRequest);
+        const isPending = log.status === 'pending';
+
+        if (!isPending) {
+          return Math.abs((Number(log.night_diff_hours) || 0) - nextNightDiff) > 0.005
+            ? {
+                id: log.id,
+                updates: {
+                  night_diff_hours: nextNightDiff,
+                },
+              }
+            : null;
+        }
 
         if (
           Math.abs((Number(log.hours_worked) || 0) - nextHours) <= 0.005 &&
@@ -2266,6 +2282,9 @@ export default function Attendance() {
 	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || 0);
 	                    const creditedOvertimeHours = Number(log.overtime_hours || 0);
 	                    const hasUnapprovedOvertime = actualOvertimeHours > 0 && creditedOvertimeHours <= 0 && !log.overtime_request_id;
+	                    const displayedNightDiffHours = log.time_in && log.time_out
+	                      ? Number(computeNightDifferentialHours(log, getLogComputationOptions(log)).toFixed(2))
+	                      : Number(log.night_diff_hours) || 0;
 	                    return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-2.5 py-3 text-muted-foreground text-xs">{log.date}</td>
@@ -2341,7 +2360,7 @@ export default function Attendance() {
                             </span>
                           ) : '—'}
                         </td>
-                        <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.night_diff_hours > 0 ? `${log.night_diff_hours}h` : '—'}</td>
+                        <td className="px-2.5 py-3 text-xs hidden md:table-cell">{displayedNightDiffHours > 0 ? `${displayedNightDiffHours}h` : '—'}</td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">{log.late_minutes > 0 ? `${log.late_minutes}m` : '—'}</td>
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <Select value={log.day_type || 'regular'} onValueChange={v => updateDayType.mutate({ id: log.id, day_type: v })}>
