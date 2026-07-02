@@ -12,6 +12,7 @@ import { requestJson } from '@/lib/appApi';
 import { manilaDateString } from '@/lib/dateUtils';
 import { effectiveShiftSetting, pendingShiftVersion } from '@/lib/shiftSettings';
 import { Textarea } from '@/components/ui/textarea';
+import UserPresenceActionCheck from '@/components/UserPresenceActionCheck';
 
 function ShiftForm({ shift, onSave, onClose }) {
   const [form, setForm] = useState({
@@ -133,8 +134,13 @@ function ShiftAuthorizationDialog({ action, onClose, onConfirm, saving }) {
   const [adminPasscode, setAdminPasscode] = useState('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
+  const [faceVerified, setFaceVerified] = useState(false);
 
   const submit = async () => {
+    if (!faceVerified) {
+      setError('Complete face verification for this action before scheduling the shift change.');
+      return;
+    }
     if (!hrPasscode.trim() || !adminPasscode.trim() || !reason.trim()) {
       setError('HR Officer passcode, Admin passcode, and reason are required.');
       return;
@@ -173,10 +179,11 @@ function ShiftAuthorizationDialog({ action, onClose, onConfirm, saving }) {
             <label className="text-sm font-medium">Reason for changing</label>
             <Textarea value={reason} onChange={e => setReason(e.target.value)} className="mt-1" rows={3} />
           </div>
+          <UserPresenceActionCheck onVerified={setFaceVerified} disabled={saving} />
           {error && <p className="text-xs text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-            <Button onClick={submit} disabled={saving}>
+            <Button onClick={submit} disabled={saving || !faceVerified}>
               {saving ? 'Scheduling...' : 'Authorize & Schedule'}
             </Button>
           </div>

@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import EmployeeForm from '@/components/employees/EmployeeForm';
+import UserPresenceActionCheck from '@/components/UserPresenceActionCheck';
 
 import Employee201File from '@/components/employees/Employee201File';
 
@@ -90,6 +91,7 @@ function RenumberEmployeeDialog({ employee, open, onClose, onSuccess }) {
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [faceVerified, setFaceVerified] = useState(false);
 
   useEffect(() => {
     if (!open || !employee) return;
@@ -98,9 +100,14 @@ function RenumberEmployeeDialog({ employee, open, onClose, onSuccess }) {
     setAdminPasscode('');
     setReason('');
     setError('');
+    setFaceVerified(false);
   }, [open, employee]);
 
   const submit = async () => {
+    if (!faceVerified) {
+      setError('Complete face verification for this action before authorizing the change.');
+      return;
+    }
     if (!newEmployeeId.trim() || !hrPasscode.trim() || !adminPasscode.trim() || reason.trim().length < 3) {
       setError('New employee number, both passcodes, and a reason are required.');
       return;
@@ -161,10 +168,11 @@ function RenumberEmployeeDialog({ employee, open, onClose, onSuccess }) {
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
               Attendance, payroll, cash advances, leave, and 201-file records will be relinked.
             </div>
+            <UserPresenceActionCheck onVerified={setFaceVerified} disabled={saving} />
             {error && <p className="text-xs text-destructive">{error}</p>}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button onClick={submit} disabled={saving} className="gap-1.5">
+              <Button onClick={submit} disabled={saving || !faceVerified} className="gap-1.5">
                 <KeyRound className="h-4 w-4" /> {saving ? 'Updating...' : 'Authorize Change'}
               </Button>
             </div>

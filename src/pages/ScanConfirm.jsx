@@ -18,6 +18,7 @@ import {
   capOvertimeByApprovedRequest,
   overtimeStatusForComputedHours,
 } from '@/lib/overtimeRequests';
+import { faceVerificationApi } from '@/lib/faceVerificationApi';
 
 const LABOR_CODE_INFO = {
   time_in: {
@@ -259,6 +260,9 @@ function FaceCapture({ onCapture, captured }) {
         {ready && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="w-28 h-36 border-2 border-white/70 rounded-full opacity-70" style={{ borderStyle: 'dashed' }} />
+            <div className="absolute bottom-3 rounded-md bg-slate-950/70 px-3 py-1 text-xs text-white">
+              Align your whole face inside the guide
+            </div>
           </div>
         )}
       </div>
@@ -284,6 +288,7 @@ export default function ScanConfirm() {
   const [done, setDone] = useState(null); // { action, employee, hoursWorked }
   const [loadError, setLoadError] = useState(null);
   const [photoError, setPhotoError] = useState('');
+  const [livenessConfirmed, setLivenessConfirmed] = useState(false);
 
   // Lunch window: if scanning Time In between 12:00pm–12:59pm, snap to 1:00pm, no OT
   const nowHour = new Date().getHours();
@@ -319,6 +324,10 @@ export default function ScanConfirm() {
       setPhotoError('Photo is required. Please take or retake the photo to complete this attendance record.');
       return;
     }
+    if (!livenessConfirmed) {
+      setPhotoError('Please complete and confirm the live blink/head-turn check.');
+      return;
+    }
 
     setConfirming(true);
     const today = manilaDateString();
@@ -341,6 +350,25 @@ export default function ScanConfirm() {
         setConfirming(false);
         return;
       }
+    }
+    let faceResult = null;
+    try {
+      faceResult = await faceVerificationApi.attendance({
+        employeeId: employee.employee_id,
+        employeeRecordId: employee.id,
+        companyProfileId: employee.company_profile_id,
+        imageBase64: capturedPhoto,
+        livenessConfirmed,
+      });
+      if (faceResult.enabled !== false && faceResult.result !== 'verified') {
+        setPhotoError(`Face verification ${faceResult.result}. Attendance was not recorded.`);
+        setConfirming(false);
+        return;
+      }
+    } catch {
+      setPhotoError('Face verification failed. Please retake the photo and try again.');
+      setConfirming(false);
+      return;
     }
     let photoUpdates = {};
     try {
@@ -375,6 +403,9 @@ export default function ScanConfirm() {
         day_type: 'regular',
         status: 'pending',
         ...photoUpdates,
+        face_verification_result: faceResult?.result || 'disabled',
+        face_verification_confidence: faceResult?.confidenceScore ?? null,
+        face_verification_log_id: faceResult?.log?.id || null,
         notes: isLunchWindow ? 'Time-in snapped to 1:00 PM (lunch window rule). No overtime credited.' : (capturedPhoto ? 'Photo captured on time-in' : ''),
       });
       setDone({ action: 'time_in', employee, lunchSnapped: isLunchWindow });
@@ -389,6 +420,9 @@ export default function ScanConfirm() {
         ...(!todayLog.break_time_out && autoBreak ? { break_time_out: autoBreak.break_time_out } : {}),
         break_time_in: now,
         ...photoUpdates,
+        face_verification_result: faceResult?.result || 'disabled',
+        face_verification_confidence: faceResult?.confidenceScore ?? null,
+        face_verification_log_id: faceResult?.log?.id || null,
         notes: capturedPhoto ? 'Photo captured on time-in after break' : '',
       });
       setDone({ action: 'break_time_in', employee });
@@ -461,6 +495,9 @@ export default function ScanConfirm() {
         night_diff_hours: parseFloat(nightDiffHours.toFixed(2)),
         late_minutes: lateMinutes,
         ...photoUpdates,
+        face_verification_result: faceResult?.result || 'disabled',
+        face_verification_confidence: faceResult?.confidenceScore ?? null,
+        face_verification_log_id: faceResult?.log?.id || null,
         notes: capturedPhoto ? 'Photo captured on time-out' : '',
       });
       setDone({ action: 'time_out', employee, hoursWorked });
@@ -638,6 +675,15 @@ export default function ScanConfirm() {
               }}
               captured={capturedPhoto}
             />
+            <label className="flex items-center gap-2 rounded-lg border border-border p-3 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={livenessConfirmed}
+                onChange={event => setLivenessConfirmed(event.target.checked)}
+                className="h-4 w-4"
+              />
+              I blinked or turned my head slightly before this capture.
+            </label>
             {photoError && (
               <p className="text-xs font-medium text-destructive text-center">{photoError}</p>
             )}

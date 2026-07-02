@@ -24,6 +24,11 @@ PORT="3000"
 # Point this to a mounted persistent disk/volume in production.
 # If omitted, uploads are stored in public/uploads inside the app directory.
 UPLOAD_DIR="/var/lib/payrollph/uploads"
+
+# Optional isolated module flag. Existing payroll, attendance, payslip, and auth flows
+# do not require this module.
+PAYROLLPH_FACE_VERIFICATION_ENABLED=false
+PAYROLLPH_ACCURA_FACE_VERIFICATION_ENABLED=false
 ```
 
 Generate a secret:
