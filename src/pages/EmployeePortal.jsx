@@ -274,6 +274,8 @@ export default function EmployeePortal() {
   const [photoCaptureKey, setPhotoCaptureKey] = useState(0);
   const [livenessConfirmed, setLivenessConfirmed] = useState(false);
   const [facePhoto, setFacePhoto] = useState('');
+  const [faceCaptureMetadata, setFaceCaptureMetadata] = useState(null);
+  const [faceCaptureError, setFaceCaptureError] = useState('');
   const [faceLivenessConfirmed, setFaceLivenessConfirmed] = useState(false);
   const [faceSubmitting, setFaceSubmitting] = useState(false);
   const [faceMessage, setFaceMessage] = useState('');
@@ -416,6 +418,14 @@ export default function EmployeePortal() {
       setFaceError('Please complete and confirm the live blink/head-turn check.');
       return;
     }
+    if (!faceCaptureMetadata) {
+      setFaceError('Retake the live face capture before recording attendance.');
+      return;
+    }
+    if (faceCaptureError) {
+      setFaceError(faceCaptureError);
+      return;
+    }
 
     try {
       setFaceSubmitting(true);
@@ -425,6 +435,7 @@ export default function EmployeePortal() {
         companyProfileId: activeCompanyId,
         imageBase64: facePhoto,
         livenessConfirmed: faceLivenessConfirmed,
+        captureMetadata: faceCaptureMetadata,
       });
       if (faceResult.enabled === false) {
         setFaceError('Face verification is disabled. Use QR code instead.');
@@ -441,6 +452,7 @@ export default function EmployeePortal() {
       const attendance = await recordAttendanceForEmployee(matchedEmployee, facePhoto, faceResult);
       setFaceMessage(`${attendance.action} recorded for ${employeeDisplayName(matchedEmployee)}${attendance.time ? ` at ${attendance.time}` : ''}.`);
       setFacePhoto('');
+      setFaceCaptureMetadata(null);
       setFaceLivenessConfirmed(false);
     } catch (error) {
       setFaceError(error?.message || 'Face recognition attendance failed. Please try again.');
@@ -562,8 +574,10 @@ export default function EmployeePortal() {
                   </p>
                 </div>
                 <FaceCapture
-                  onCapture={(value) => {
+                  onCapture={(value, metadata) => {
                     setFacePhoto(value);
+                    setFaceCaptureMetadata(metadata);
+                    setFaceCaptureError('');
                     setFaceMatchedEmployee(null);
                     setFaceError('');
                     setFaceMessage('');
@@ -571,11 +585,14 @@ export default function EmployeePortal() {
                   onLivenessDetected={() => setFaceLivenessConfirmed(true)}
                   onReset={() => {
                     setFacePhoto('');
+                    setFaceCaptureMetadata(null);
+                    setFaceCaptureError('');
                     setFaceLivenessConfirmed(false);
                     setFaceMatchedEmployee(null);
                     setFaceError('');
                     setFaceMessage('');
                   }}
+                  onErrorChange={setFaceCaptureError}
                   autoStart
                   autoCaptureOnLiveness
                   disabled={faceSubmitting}
@@ -606,7 +623,7 @@ export default function EmployeePortal() {
                 <Button
                   className="w-full"
                   onClick={submitFaceAttendance}
-                  disabled={faceSubmitting || !facePhoto || !faceLivenessConfirmed}
+                  disabled={faceSubmitting || !facePhoto || !faceCaptureMetadata || !faceLivenessConfirmed || Boolean(faceCaptureError)}
                 >
                   {faceSubmitting ? 'Verifying...' : 'Verify Face and Record Attendance'}
                 </Button>

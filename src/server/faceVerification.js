@@ -214,6 +214,29 @@ export function faceTemplateFromImage(imageBase64) {
   };
 }
 
+export function assertFreshWebcamCaptureMetadata(captureMetadata) {
+  const metadata = captureMetadata || {};
+  const cameraStartedAt = Number(metadata.cameraStartedAt || 0);
+  const livenessDetectedAt = Number(metadata.livenessDetectedAt || 0);
+  const capturedAt = Number(metadata.capturedAt || 0);
+
+  if (
+    metadata.source !== "webcam" ||
+    !Number.isFinite(cameraStartedAt) ||
+    !Number.isFinite(livenessDetectedAt) ||
+    !Number.isFinite(capturedAt) ||
+    cameraStartedAt <= 0 ||
+    livenessDetectedAt - cameraStartedAt < 1000 ||
+    capturedAt < livenessDetectedAt ||
+    capturedAt - livenessDetectedAt > 7000 ||
+    Date.now() - capturedAt > 30000
+  ) {
+    const error = new Error("Fresh live webcam capture metadata is required. Please retake the live capture.");
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 export function compareTemplates(reference, candidate) {
   if (!reference?.vector || !candidate?.vector || reference.vector.length !== candidate.vector.length) {
     return 0;

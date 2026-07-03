@@ -10,6 +10,7 @@ export default function FaceCapture({
   autoStart = false,
   autoCaptureOnLiveness = false,
   onBeforeStart,
+  onErrorChange,
 }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -26,6 +27,11 @@ export default function FaceCapture({
   const [error, setError] = useState('');
   const [preview, setPreview] = useState('');
   const [livenessStatus, setLivenessStatus] = useState('idle');
+
+  const updateError = (message) => {
+    setError(message);
+    onErrorChange?.(message);
+  };
 
   const getFaceGuideBox = (video) => {
     const width = video.videoWidth || 320;
@@ -57,7 +63,105 @@ export default function FaceCapture({
     return faceDetectorRef.current;
   };
 
+  const readGuideFrame = (video, canvasWidth = 96, canvasHeight = 128) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const guide = getFaceGuideBox(video);
+    context.drawImage(video, guide.x, guide.y, guide.width, guide.height, 0, 0, canvas.width, canvas.height);
+    return {
+      data: context.getImageData(0, 0, canvas.width, canvas.height).data,
+      width: canvas.width,
+      height: canvas.height,
+    };
+  };
+
+  const isSkinLikePixel = (red, green, blue) => {
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    if (red < 45 || green < 30 || blue < 18 || max - min < 12) return false;
+    const y = 0.299 * red + 0.587 * green + 0.114 * blue;
+    const cb = 128 - 0.168736 * red - 0.331264 * green + 0.5 * blue;
+    const cr = 128 + 0.5 * red - 0.418688 * green - 0.081312 * blue;
+    return y > 45 && cb >= 75 && cb <= 145 && cr >= 125 && cr <= 185;
+  };
+
   const validateFaceLikeRegionInsideGuide = (video) => {
+    const frame = readGuideFrame(video, 96, 128);
+    const gray = new Uint8Array(frame.width * frame.height);
+    let skinPixels = 0;
+    let centralSkinPixels = 0;
+    let minSkinX = frame.width;
+    let minSkinY = frame.height;
+    let maxSkinX = 0;
+    let maxSkinY = 0;
+
+    for (let index = 0, pixel = 0; index < frame.data.length; index += 4, pixel += 1) {
+      const red = frame.data[index];
+      const green = frame.data[index + 1];
+      const blue = frame.data[index + 2];
+      const x = pixel % frame.width;
+      const y = Math.floor(pixel / frame.width);
+      gray[pixel] = Math.round((red + green + blue) / 3);
+      if (isSkinLikePixel(red, green, blue)) {
+        skinPixels += 1;
+        minSkinX = Math.min(minSkinX, x);
+        minSkinY = Math.min(minSkinY, y);
+        maxSkinX = Math.max(maxSkinX, x);
+        maxSkinY = Math.max(maxSkinY, y);
+        if (
+          x > frame.width * 0.2 &&
+          x < frame.width * 0.8 &&
+          y > frame.height * 0.12 &&
+          y < frame.height * 0.74
+        ) {
+          centralSkinPixels += 1;
+        }
+      }
+    }
+
+    const totalPixels = frame.width * frame.height;
+    const skinRatio = skinPixels / totalPixels;
+    const centralSkinRatio = centralSkinPixels / totalPixels;
+    const skinBoxWidth = maxSkinX > minSkinX ? (maxSkinX - minSkinX) / frame.width : 0;
+    const skinBoxHeight = maxSkinY > minSkinY ? (maxSkinY - minSkinY) / frame.height : 0;
+
+    let edgePixels = 0;
+    let straightEdgeRows = 0;
+    let straightEdgeColumns = 0;
+    for (let y = 2; y < frame.height - 2; y += 1) {
+      let rowEdges = 0;
+      for (let x = 2; x < frame.width - 2; x += 1) {
+        const horizontal = Math.abs(gray[y * frame.width + x - 1] - gray[y * frame.width + x + 1]);
+        const vertical = Math.abs(gray[(y - 1) * frame.width + x] - gray[(y + 1) * frame.width + x]);
+        if (horizontal + vertical > 95) {
+          edgePixels += 1;
+          rowEdges += 1;
+        }
+      }
+      if (rowEdges / frame.width > 0.36) straightEdgeRows += 1;
+    }
+    for (let x = 2; x < frame.width - 2; x += 1) {
+      let columnEdges = 0;
+      for (let y = 2; y < frame.height - 2; y += 1) {
+        const horizontal = Math.abs(gray[y * frame.width + x - 1] - gray[y * frame.width + x + 1]);
+        const vertical = Math.abs(gray[(y - 1) * frame.width + x] - gray[(y + 1) * frame.width + x]);
+        if (horizontal + vertical > 95) columnEdges += 1;
+      }
+      if (columnEdges / frame.height > 0.34) straightEdgeColumns += 1;
+    }
+
+    const edgeRatio = edgePixels / totalPixels;
+    const hasPhotoLikeEdges = edgeRatio > 0.18 || (straightEdgeRows >= 2 && straightEdgeColumns >= 2);
+    if (hasPhotoLikeEdges && centralSkinRatio < 0.11) {
+      return { ok: false, message: 'Phone or photo edges detected. Use a live face, not a picture.' };
+    }
+
+    if (skinRatio < 0.1 || centralSkinRatio < 0.055 || skinBoxWidth < 0.34 || skinBoxHeight < 0.28) {
+      return { ok: false, message: 'Move closer and center your live face inside the guide.' };
+    }
+
     return { ok: true, message: '' };
   };
 
@@ -77,7 +181,7 @@ export default function FaceCapture({
     try {
       faces = await detector.detect(video);
     } catch {
-      return { ok: true, message: '' };
+      return validateFaceLikeRegionInsideGuide(video);
     }
 
     if (faces.length !== 1) {
@@ -85,6 +189,27 @@ export default function FaceCapture({
         ok: false,
         message: faces.length > 1 ? 'Only one face must be inside the guide.' : 'Place your face inside the guide.',
       };
+    }
+
+    const face = faces[0].boundingBox;
+    const guide = getFaceGuideBox(video);
+    const faceCenterX = face.x + face.width / 2;
+    const faceCenterY = face.y + face.height / 2;
+    const insideGuide =
+      face.x >= guide.x - guide.width * 0.08 &&
+      face.y >= guide.y - guide.height * 0.08 &&
+      face.x + face.width <= guide.x + guide.width * 1.08 &&
+      face.y + face.height <= guide.y + guide.height * 1.08 &&
+      faceCenterX >= guide.x &&
+      faceCenterX <= guide.x + guide.width &&
+      faceCenterY >= guide.y &&
+      faceCenterY <= guide.y + guide.height;
+    if (!insideGuide) {
+      return { ok: false, message: 'Keep your whole face inside the guide.' };
+    }
+
+    if (face.width < guide.width * 0.36 || face.height < guide.height * 0.3) {
+      return { ok: false, message: 'Move closer so your live face fills the guide.' };
     }
 
     return { ok: true, message: '' };
@@ -180,7 +305,7 @@ export default function FaceCapture({
     if (detectScreenPresentation(video)) {
       capturedRef.current = true;
       setLivenessStatus('spoof');
-      setError('Possible phone or screen photo detected. Use a live face, not a picture.');
+      updateError('Possible phone or screen photo detected. Use a live face, not a picture.');
       samplingRef.current = false;
       return;
     }
@@ -188,11 +313,11 @@ export default function FaceCapture({
     if (!faceGuide.ok) {
       previousFrameRef.current = null;
       setLivenessStatus('align');
-      setError(faceGuide.message);
+      updateError(faceGuide.message);
       samplingRef.current = false;
       return;
     }
-    if (error) setError('');
+    if (error) updateError('');
     const width = video.videoWidth || 320;
     const height = video.videoHeight || 240;
     if (!width || !height) {
@@ -200,16 +325,10 @@ export default function FaceCapture({
       return;
     }
 
-    const canvas = document.createElement('canvas');
-    canvas.width = 72;
-    canvas.height = 96;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    const guide = getFaceGuideBox(video);
-    context.drawImage(video, guide.x, guide.y, guide.width, guide.height, 0, 0, canvas.width, canvas.height);
-    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    const frame = new Uint8Array(canvas.width * canvas.height);
-    for (let index = 0, pixel = 0; index < data.length; index += 4, pixel += 1) {
-      frame[pixel] = Math.round((data[index] + data[index + 1] + data[index + 2]) / 3);
+    const guideFrame = readGuideFrame(video, 72, 96);
+    const frame = new Uint8Array(guideFrame.width * guideFrame.height);
+    for (let index = 0, pixel = 0; index < guideFrame.data.length; index += 4, pixel += 1) {
+      frame[pixel] = Math.round((guideFrame.data[index] + guideFrame.data[index + 1] + guideFrame.data[index + 2]) / 3);
     }
 
     const previous = previousFrameRef.current;
@@ -224,11 +343,15 @@ export default function FaceCapture({
     }
 
     let diff = 0;
+    let activePixels = 0;
     for (let index = 0; index < frame.length; index += 1) {
-      diff += Math.abs(frame[index] - previous[index]);
+      const delta = Math.abs(frame[index] - previous[index]);
+      diff += delta;
+      if (delta > 18) activePixels += 1;
     }
     const motionScore = diff / frame.length;
-    if (motionScore > 7.5 && motionScore < 45) {
+    const activeMotionRatio = activePixels / frame.length;
+    if (motionScore > 7.5 && motionScore < 34 && activeMotionRatio > 0.025 && activeMotionRatio < 0.24) {
       capturedRef.current = true;
       livenessDetectedAtRef.current = Date.now();
       setLivenessStatus('detected');
@@ -252,7 +375,7 @@ export default function FaceCapture({
 
   const startCamera = async () => {
     stopCamera();
-    setError('');
+    updateError('');
     setPreview('');
     setLivenessStatus('idle');
     capturedRef.current = false;
@@ -277,7 +400,7 @@ export default function FaceCapture({
       const message = startError?.name === 'NotReadableError'
         ? 'Camera is already in use. Close other camera apps or restart the camera.'
         : 'Camera access is required for face verification.';
-      setError(message);
+      updateError(message);
     }
   };
 
@@ -286,13 +409,13 @@ export default function FaceCapture({
     if (!video || !cameraReadyRef.current) return;
     if (detectScreenPresentation(video)) {
       setLivenessStatus('spoof');
-      setError('Possible phone or screen photo detected. Use a live face, not a picture.');
+      updateError('Possible phone or screen photo detected. Use a live face, not a picture.');
       return;
     }
     const faceGuide = await validateWholeFaceInsideGuide(video);
     if (!faceGuide.ok) {
       setLivenessStatus('align');
-      setError(faceGuide.message);
+      updateError(faceGuide.message);
       capturedRef.current = false;
       startLivenessDetection();
       return;

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { prisma } from "@/server/prisma";
 import {
+  assertFreshWebcamCaptureMetadata,
   compareTemplates,
   decryptText,
   employeeName,
@@ -52,6 +53,7 @@ export default async function handler(req, res) {
       });
       return res.status(200).json({ enabled: true, result: "liveness failed", log });
     }
+    assertFreshWebcamCaptureMetadata(req.body?.captureMetadata);
 
     const candidateTemplate = faceTemplateFromImage(req.body.imageBase64);
     const setting = await faceSetting(companyProfileId);
