@@ -22,6 +22,9 @@ model AppUser {
   updatedAt              DateTime  @updatedAt
   passwordResetTokens    PasswordResetToken[]
   accessLogs             UserAccessLog[]
+  faceProfile            UserFaceProfile?
+  faceVerificationLogs   UserFaceVerificationLog[]
+  faceVerificationChallenges UserFaceVerificationChallenge[]
 }
 
 model EntityRecord {
@@ -64,4 +67,148 @@ model UserAccessLog {
   @@index([userId])
   @@index([eventType])
   @@index([occurredAt])
+}
+
+model UserFaceProfile {
+  id                     String   @id @default(cuid())
+  userId                 String   @unique
+  user                   AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyProfileId       String?
+  encryptedReferenceImage String?
+  encryptedEmbedding     String
+  referenceImageIv       String?
+  referenceImageAuthTag  String?
+  embeddingIv            String
+  embeddingAuthTag       String
+  status                 String   @default("active")
+  consentAt              DateTime
+  enrolledAt             DateTime @default(now())
+  enrolledByUserId       String?
+  enrolledByUserEmail    String?
+  revokedAt              DateTime?
+  revokedByUserId        String?
+  auditLog               Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([companyProfileId])
+  @@index([status])
+}
+
+model UserFaceVerificationLog {
+  id                     String   @id @default(cuid())
+  userId                 String
+  user                   AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyProfileId       String?
+  userFaceProfileId      String?
+  purpose                String
+  result                 String
+  similarityScore        Float?
+  livenessResult         String
+  livenessMessage        String?
+  deviceUserAgent        String?
+  ipAddress              String?
+  requestedByUserEmail   String?
+  auditLog               Json?
+  createdAt              DateTime @default(now())
+
+  @@index([userId])
+  @@index([companyProfileId])
+  @@index([result])
+  @@index([purpose])
+  @@index([createdAt])
+}
+
+model UserFaceVerificationChallenge {
+  id            String    @id @default(cuid())
+  userId        String
+  user          AppUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyProfileId String?
+  purpose       String
+  nonceHash     String
+  issuedAt      DateTime  @default(now())
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  deviceUserAgent String?
+  ipAddress     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId])
+  @@index([purpose])
+  @@index([expiresAt])
+  @@index([consumedAt])
+}
+
+model EmployeeFaceProfile {
+  id                      String   @id @default(cuid())
+  companyProfileId        String?
+  employeeRecordId        String?
+  employeeId              String
+  employeeName            String?
+  encryptedReferenceImage String
+  encryptedTemplate       String
+  referenceImageIv        String
+  referenceImageAuthTag   String
+  templateIv              String
+  templateAuthTag         String
+  status                  String   @default("active")
+  consentAt               DateTime
+  enrolledByUserId        String?
+  enrolledByUserEmail     String?
+  enrolledAt              DateTime @default(now())
+  suspendedAt             DateTime?
+  suspendedByUserId       String?
+  revokedAt               DateTime?
+  revokedByUserId         String?
+  auditLog                Json?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([companyProfileId])
+  @@index([employeeId])
+  @@index([status])
+}
+
+model EmployeeFaceVerificationLog {
+  id                  String   @id @default(cuid())
+  companyProfileId    String?
+  employeeFaceProfileId String?
+  employeeRecordId    String?
+  employeeId          String
+  employeeName        String?
+  purpose             String
+  result              String
+  confidenceScore     Float?
+  livenessResult      String
+  livenessMessage     String?
+  deviceUserAgent     String?
+  ipAddress           String?
+  encryptedPhotoEvidence String?
+  photoEvidenceIv     String?
+  photoEvidenceAuthTag String?
+  requestedByUserId   String?
+  requestedByUserEmail String?
+  auditLog            Json?
+  createdAt           DateTime @default(now())
+
+  @@index([companyProfileId])
+  @@index([employeeId])
+  @@index([result])
+  @@index([purpose])
+  @@index([createdAt])
+}
+
+model FaceVerificationSetting {
+  id                  String   @id @default(cuid())
+  companyProfileId    String?  @unique
+  enabled             Boolean  @default(false)
+  storePhotoEvidence  Boolean  @default(false)
+  minimumConfidence   Float    @default(0.82)
+  updatedByUserId     String?
+  updatedByUserEmail  String?
+  auditLog            Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([companyProfileId])
 }

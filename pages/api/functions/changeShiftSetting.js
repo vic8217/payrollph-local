@@ -78,6 +78,9 @@ export default async function handler(req, res) {
 
   const effectiveDate = nextBusinessDate(today);
   const session = await getServerSession(req, res, authOptions);
+  if (!session?.user?.id) {
+    return res.status(401).json({ error: 'Your session could not be verified. Please sign in again.' });
+  }
   const changedAt = new Date().toISOString();
   const changedBy = session?.user?.name || session?.user?.email || 'unknown';
   const audit = {

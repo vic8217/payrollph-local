@@ -315,7 +315,17 @@ function attendancePhotoItem(log, action) {
     };
   }
 
-  if (log.photo_url && (log.photo_action === action || (!log.photo_action && latestPunchAction(log) === action))) {
+  if (log.photo_url && log.photo_action === action) {
+    return {
+      ...punch,
+      photoUrl: log.photo_url,
+      timeValue: log[punch.timeField],
+      legacy: true,
+    };
+  }
+
+  const hasPunchSpecificPhoto = punchPhotoFields.some(item => log[item.photoField]);
+  if (log.photo_url && !log.photo_action && !hasPunchSpecificPhoto && latestPunchAction(log) === action) {
     return {
       ...punch,
       photoUrl: log.photo_url,

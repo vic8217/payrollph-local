@@ -35,6 +35,9 @@ import UsersLog from '@/pages/UsersLog';
 import PasscodeAudit from '@/pages/PasscodeAudit';
 import Landing from '@/pages/Landing';
 import PayslipAcknowledgements from '@/pages/PayslipAcknowledgements';
+import AdminFaceVerification from '@/pages/AdminFaceVerification';
+import AdminFaceEnroll from '@/pages/AdminFaceEnroll';
+import AdminFaceLogs from '@/pages/AdminFaceLogs';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
@@ -103,6 +106,9 @@ const AuthenticatedApp = () => {
         <Route path="/users-log" element={<UsersLog />} />
         <Route path="/passcode-audit" element={<PasscodeAudit />} />
         <Route path="/payslip-acknowledgements" element={<PayslipAcknowledgements />} />
+        <Route path="/admin/face-verification" element={<AdminFaceVerification />} />
+        <Route path="/admin/face-verification/enroll" element={<AdminFaceEnroll />} />
+        <Route path="/admin/face-verification/logs" element={<AdminFaceLogs />} />
       </Route>
       <Route path="/scan/confirm" element={<ScanConfirm />} />
       <Route path="/employee-portal-qr" element={<EmployeePortalQR />} />

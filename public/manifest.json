@@ -1,0 +1,21 @@
+{
+  "name": "PayrollPH Employee Portal",
+  "short_name": "Employee Portal",
+  "description": "Employee attendance, payslips, leave, overtime, and profile access for PayrollPH.",
+  "start_url": "/employee-portal",
+  "scope": "/employee-portal",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/icons/employee-portal-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false
+}

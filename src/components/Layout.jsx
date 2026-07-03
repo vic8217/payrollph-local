@@ -43,6 +43,7 @@ const navItems = [
   { label: 'Users Log',       icon: Activity,          path: '/users-log',          roles: ['super_admin'] },
   { label: 'Passcode Audit',  icon: ShieldCheck,       path: '/passcode-audit',     roles: ['super_admin', 'admin'] },
   { label: 'Payslip Receipts', icon: ReceiptText,       path: '/payslip-acknowledgements', roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Face Verification', icon: ShieldCheck,      path: '/admin/face-verification', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Company Profile', icon: Building2,         path: '/company-profile',    roles: ['super_admin', 'admin', 'user'] },
   { label: 'Archived Companies', icon: Archive,         path: '/archived-companies', roles: ['super_admin'] },
   { label: 'Shift Settings',  icon: Settings,          path: '/settings',           roles: ['super_admin', 'admin'] },
