@@ -1,4 +1,4 @@
-const CACHE_NAME = "payrollph-employee-portal-v1";
+const CACHE_NAME = "payrollph-employee-portal-v2";
 const APP_SHELL_URL = "/employee-portal";
 
 self.addEventListener("install", (event) => {
@@ -27,6 +27,7 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/")) return;
   if (url.pathname.startsWith("/uploads/")) return;
+  const isLocalDev = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
 
   if (request.mode === "navigate" && url.pathname.startsWith("/employee-portal")) {
     event.respondWith(
@@ -42,6 +43,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (url.pathname.startsWith("/_next/static/") || url.pathname === "/manifest.json" || url.pathname.startsWith("/icons/")) {
+    if (isLocalDev || url.pathname.startsWith("/_next/static/")) {
+      event.respondWith(fetch(request));
+      return;
+    }
+
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) return cached;

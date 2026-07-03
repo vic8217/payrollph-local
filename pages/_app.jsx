@@ -29,6 +29,9 @@ if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
   const isInitError = (value) =>
     !!value && String(value.message || value || "").includes(INIT_ERROR);
 
+  const isEmployeePortalRoute = () =>
+    window.location.pathname.startsWith("/employee-portal");
+
   // Layer 1: keep hmrRefresh patched on the live app-router instance.
   const patchHmrRefresh = () => {
     const router = window.next && window.next.router;
@@ -80,6 +83,29 @@ if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
     },
     true,
   );
+
+  // On the public employee portal SPA route, Next dev can sometimes keep
+  // requesting a full page refresh even after the app-router init error has
+  // been neutralized. Suppress only rapid repeat reload attempts on this route;
+  // manual browser refresh still works normally.
+  try {
+    const originalReload = window.location.reload.bind(window.location);
+    let lastDevReloadAt = 0;
+    Object.defineProperty(window.location, "reload", {
+      configurable: true,
+      value: (...args) => {
+        if (isEmployeePortalRoute()) {
+          const now = Date.now();
+          if (now - lastDevReloadAt < 1500) return undefined;
+          lastDevReloadAt = now;
+        }
+        return originalReload(...args);
+      },
+    });
+  } catch {
+    // Some browsers expose location.reload as non-configurable. The error and
+    // rejection listeners above still handle the root dev-router problem.
+  }
 }
 
 export default function PayrollPhApp({ Component, pageProps }) {

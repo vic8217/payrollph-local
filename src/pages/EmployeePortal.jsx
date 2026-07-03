@@ -326,7 +326,7 @@ export default function EmployeePortal() {
   const [activeTab, setActiveTab] = useState('scan');
   const [attendanceMode, setAttendanceMode] = useState('face');
   const [user, setUser] = useState(null);
-  const [loadingUser, setLoadingUser] = useState(true);
+  const [loadingUser, setLoadingUser] = useState(false);
   const [scannedEmployee, setScannedEmployee] = useState(null);
   const [authorizedTab, setAuthorizedTab] = useState(null);
   const [scanConfirm, setScanConfirm] = useState(null); // { name, action, attendanceAction, time, logId }
@@ -350,7 +350,18 @@ export default function EmployeePortal() {
   const streamRef = useRef(null);
 
   useEffect(() => {
-    appApi.auth.me().then(setUser).catch(() => {}).finally(() => setLoadingUser(false));
+    let cancelled = false;
+    appApi.auth.me()
+      .then(currentUser => {
+        if (!cancelled) setUser(currentUser);
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -368,9 +379,27 @@ export default function EmployeePortal() {
   useEffect(() => {
     if (
       typeof window === 'undefined' ||
-      !('serviceWorker' in navigator) ||
-      !window.isSecureContext
+      !('serviceWorker' in navigator)
     ) {
+      return undefined;
+    }
+
+    const isLocalDev = process.env.NODE_ENV !== 'production' ||
+      ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+
+    if (isLocalDev) {
+      navigator.serviceWorker
+        .getRegistrations()
+        .then(registrations => {
+          registrations
+            .filter(registration => registration.scope.includes('/employee-portal'))
+            .forEach(registration => registration.unregister());
+        })
+        .catch(() => {});
+      return undefined;
+    }
+
+    if (!window.isSecureContext) {
       return undefined;
     }
 
