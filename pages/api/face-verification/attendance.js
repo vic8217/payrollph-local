@@ -14,7 +14,21 @@ import {
   sendFaceError,
 } from "@/server/faceVerification";
 
-function faceEmployeePayload(employee) {
+function enrolledFaceImage(profile) {
+  if (!profile?.encryptedReferenceImage) return null;
+
+  try {
+    return decryptText(
+      profile.encryptedReferenceImage,
+      profile.referenceImageIv,
+      profile.referenceImageAuthTag,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function faceEmployeePayload(employee, profile = null) {
   return {
     id: employee.id,
     employee_id: employee.employee_id,
@@ -25,6 +39,7 @@ function faceEmployeePayload(employee) {
     department: employee.department || null,
     position: employee.position || null,
     company_profile_id: employee.company_profile_id || null,
+    enrolledFacePhotoUrl: enrolledFaceImage(profile),
   };
 }
 
@@ -130,7 +145,7 @@ export default async function handler(req, res) {
         result,
         confidenceScore: best.confidenceScore,
         minimumConfidence,
-        employee: result === "verified" ? faceEmployeePayload(employee) : null,
+        employee: result === "verified" ? faceEmployeePayload(employee, profile) : null,
         log,
       });
     }
@@ -185,7 +200,7 @@ export default async function handler(req, res) {
       result,
       confidenceScore,
       minimumConfidence,
-      employee: result === "verified" ? faceEmployeePayload(employee) : null,
+      employee: result === "verified" ? faceEmployeePayload(employee, profile) : null,
       log,
     });
   } catch (error) {

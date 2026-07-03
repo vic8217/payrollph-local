@@ -66,6 +66,7 @@ function captureAttendanceLocation() {
  * @property {string} employee_id
  * @property {string} first_name
  * @property {string} last_name
+ * @property {string=} photo_url
  */
 
 /**
@@ -74,6 +75,7 @@ function captureAttendanceLocation() {
  * @property {string} message
  * @property {string=} name
  * @property {string=} time
+ * @property {string=} photoUrl
  */
 
 /**
@@ -87,6 +89,19 @@ function captureAttendanceLocation() {
 /**
  * @typedef {'time_in' | 'break_time_out' | 'break_time_in' | 'time_out' | 'duplicate_scan'} AttendanceAction
  */
+
+function employeePhotoUrl(employee) {
+  return employee?.photo_url || employee?.photo || employee?.image || employee?.picture || '';
+}
+
+function initialsFromName(name = '') {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase())
+    .join('') || '?';
+}
 
 // Used both as: standalone QR scanner page AND as gating screen before protected tabs
 /**
@@ -268,7 +283,12 @@ export default function EmployeeQRGate({
 
     if (isGateMode) {
       // Just verify identity, pass employee up
-      setResult({ success: true, message: `Welcome, ${emp.first_name}!`, name: [emp.first_name, emp.middle_name, emp.last_name].filter(Boolean).join(' ') });
+      setResult({
+        success: true,
+        message: `Welcome, ${emp.first_name}!`,
+        name: [emp.first_name, emp.middle_name, emp.last_name].filter(Boolean).join(' '),
+        photoUrl: employeePhotoUrl(emp),
+      });
       setProcessing(false);
       setTimeout(() => { lockedRef.current = false; onEmployeeScanned?.(emp); }, 800);
       return;
@@ -324,7 +344,7 @@ export default function EmployeeQRGate({
     const recordedAt = log?.[actionTimeFields[action]] || new Date();
     const recordedTime = formatManilaTime(recordedAt);
 
-    setResult({ success: true, message: `${actionLabel} recorded`, name: empName, time: recordedTime });
+    setResult({ success: true, message: `${actionLabel} recorded`, name: empName, time: recordedTime, photoUrl: employeePhotoUrl(emp) });
     onAttendanceLogged?.({ name: empName, action: actionLabel, attendanceAction: action, time: recordedTime, logId: log?.id });
 
     setInput('');
@@ -407,7 +427,15 @@ export default function EmployeeQRGate({
 
         {result && (
           <div className={`flex items-center gap-3 p-4 rounded-lg ${result.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-            <CheckCircle2 className={`w-5 h-5 ${result.success ? 'text-green-600' : 'text-red-500'}`} />
+            {result.success && result.photoUrl ? (
+              <img src={result.photoUrl} alt={result.name || 'Employee'} className="h-12 w-12 rounded-full border border-green-200 object-cover object-top" />
+            ) : result.success ? (
+              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-green-200 bg-green-100 text-sm font-semibold text-green-700">
+                {initialsFromName(result.name)}
+              </div>
+            ) : (
+              <CheckCircle2 className="w-5 h-5 text-red-500" />
+            )}
             <div>
               <p className={`text-sm font-medium ${result.success ? 'text-green-800' : 'text-red-700'}`}>
                 {result.success ? `${result.name} — ${result.message}` : result.message}

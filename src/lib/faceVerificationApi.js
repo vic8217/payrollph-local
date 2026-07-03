@@ -33,5 +33,6 @@ export const faceVerificationApi = {
   attendance: (payload) => faceRequest('attendance', { method: 'POST', body: JSON.stringify(payload) }),
   suspend: (payload) => faceRequest('suspend', { method: 'POST', body: JSON.stringify(payload) }),
   revoke: (payload) => faceRequest('revoke', { method: 'POST', body: JSON.stringify(payload) }),
+  clear: (payload) => faceRequest('clear', { method: 'POST', body: JSON.stringify(payload) }),
   reenroll: (payload) => faceRequest('reenroll', { method: 'POST', body: JSON.stringify(payload) }),
 };

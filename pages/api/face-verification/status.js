@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { prisma } from "@/server/prisma";
 import {
+  decryptText,
   employeeName,
   employeeRecords,
   faceSetting,
@@ -11,6 +12,23 @@ import {
   sanitizeProfile,
   sendFaceError,
 } from "@/server/faceVerification";
+
+function adminProfilePayload(profile) {
+  const payload = sanitizeProfile(profile);
+  if (!payload || !profile?.encryptedReferenceImage) return payload;
+
+  try {
+    payload.referenceImage = decryptText(
+      profile.encryptedReferenceImage,
+      profile.referenceImageIv,
+      profile.referenceImageAuthTag,
+    );
+  } catch {
+    payload.referenceImage = null;
+  }
+
+  return payload;
+}
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -31,13 +49,21 @@ export default async function handler(req, res) {
     const isAdmin = ["super_admin", "admin", "user"].includes(user.role);
     if (req.query.scope === "admin" && isAdmin) {
       const employees = await employeeRecords(companyProfileId);
+      const allEmployees = await employeeRecords(companyProfileId, { activeOnly: false });
       const profiles = await prisma.employeeFaceProfile.findMany({
         where: { companyProfileId },
         orderBy: { updatedAt: "desc" },
       });
       const activeEmployeeIds = new Set(employees.map((employee) => String(employee.employee_id || "").toLowerCase()));
+      const employeeById = new Map(allEmployees.map((employee) => [
+        String(employee.employee_id || "").toLowerCase(),
+        employee,
+      ]));
       const activeEmployeeProfiles = profiles.filter((profile) =>
         activeEmployeeIds.has(String(profile.employeeId || "").toLowerCase())
+      );
+      const unlistedProfiles = profiles.filter((profile) =>
+        !activeEmployeeIds.has(String(profile.employeeId || "").toLowerCase())
       );
       const recentLogs = await prisma.employeeFaceVerificationLog.findMany({
         where: { companyProfileId },
@@ -59,6 +85,7 @@ export default async function handler(req, res) {
           totalEnrolled: activeEmployeeProfiles.filter((profile) => profile.status === "active").length,
           withoutProfile: employees.filter((employee) => !profileEmployeeIds.has(String(employee.employee_id || "").toLowerCase())).length,
           suspendedOrRevoked: activeEmployeeProfiles.filter((profile) => ["suspended", "revoked"].includes(profile.status)).length,
+          unlistedProfiles: unlistedProfiles.length,
           failedCount,
         },
         employees: employees.map((employee) => ({
@@ -66,10 +93,21 @@ export default async function handler(req, res) {
           employee_id: employee.employee_id,
           employee_name: employeeName(employee),
           department: employee.department || null,
-          profile: sanitizeProfile(activeEmployeeProfiles.find((profile) =>
+          profile: adminProfilePayload(activeEmployeeProfiles.find((profile) =>
             String(profile.employeeId || "").toLowerCase() === String(employee.employee_id || "").toLowerCase()
           )),
         })),
+        unlistedProfiles: unlistedProfiles.map((profile) => {
+          const employee = employeeById.get(String(profile.employeeId || "").toLowerCase());
+          return {
+            id: `profile-${profile.id}`,
+            employee_id: profile.employeeId,
+            employee_name: employee ? employeeName(employee) : profile.employeeName,
+            department: employee?.department || null,
+            employeeStatus: employee?.status || "archived/unlisted",
+            profile: adminProfilePayload(profile),
+          };
+        }),
         recentLogs: recentLogs.map(sanitizeLog),
       });
     }

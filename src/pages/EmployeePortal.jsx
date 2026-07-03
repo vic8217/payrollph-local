@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { appApi } from '@/lib/appApi';
+import { appApi, requestJson } from '@/lib/appApi';
 import { QrCode, CreditCard, User, LogOut, Building2, Scan, CheckCircle2, Camera, BookOpen, Car, Palmtree, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import EmployeeQRGate from '@/components/employee/EmployeeQRGate';
@@ -25,6 +25,7 @@ const tabs = [
 ];
 
 const protectedTabs = new Set(['cash-advance', 'personal-leave', 'overtime-request', 'profile', 'trip-report']);
+const defaultPortalAccessModes = Object.fromEntries(Array.from(protectedTabs).map(tabId => [tabId, 'choice']));
 
 const attendancePhotoFields = {
   time_in: 'time_in_photo_url',
@@ -52,6 +53,26 @@ function employeeDisplayName(employee) {
     [employee?.first_name, employee?.middle_name, employee?.last_name].filter(Boolean).join(' ') ||
     employee?.employee_id ||
     'Employee';
+}
+
+function employeePhotoUrl(employee) {
+  return employee?.enrolledFacePhotoUrl ||
+    employee?.referenceImage ||
+    employee?.profile?.referenceImage ||
+    employee?.photo_url ||
+    employee?.photo ||
+    employee?.image ||
+    employee?.picture ||
+    '';
+}
+
+function employeeInitials(employee) {
+  return employeeDisplayName(employee)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase())
+    .join('') || '?';
 }
 
 function captureAttendanceLocation() {
@@ -93,10 +114,13 @@ function captureAttendanceLocation() {
   });
 }
 
-function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
-  const [mode, setMode] = useState('face');
+function PortalAccessGate({ activeCompanyId, tabId, tabLabel, accessMode = 'choice', onAuthorized }) {
+  const forcedMode = accessMode === 'face' || accessMode === 'qr_face' || accessMode === 'qr_only';
+  const [mode, setMode] = useState(accessMode === 'qr_face' || accessMode === 'qr_only' ? 'qr' : 'face');
   const [qrEmployee, setQrEmployee] = useState(null);
   const [imageBase64, setImageBase64] = useState('');
+  const [captureMetadata, setCaptureMetadata] = useState(null);
+  const [captureError, setCaptureError] = useState('');
   const [livenessConfirmed, setLivenessConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
@@ -105,6 +129,8 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
 
   const resetFaceState = () => {
     setImageBase64('');
+    setCaptureMetadata(null);
+    setCaptureError('');
     setLivenessConfirmed(false);
     setMessage('');
     setError('');
@@ -113,6 +139,14 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
   const verifyFace = async () => {
     if (!imageBase64 || !livenessConfirmed) {
       setError('Complete the live face capture before continuing.');
+      return;
+    }
+    if (!captureMetadata) {
+      setError('Retake the live face capture before continuing.');
+      return;
+    }
+    if (captureError) {
+      setError(captureError);
       return;
     }
 
@@ -126,6 +160,7 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
         employeeRecordId: qrEmployee?.id,
         imageBase64,
         livenessConfirmed,
+        captureMetadata,
       });
 
       if (result.enabled === false) {
@@ -137,8 +172,11 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
         return;
       }
 
-      await onAuthorized(qrEmployee || result.employee);
-      setMessage(`Verified ${employeeDisplayName(qrEmployee || result.employee)}.`);
+      const verifiedEmployee = qrEmployee
+        ? { ...qrEmployee, ...(result.employee || {}) }
+        : result.employee;
+      await onAuthorized(verifiedEmployee);
+      setMessage(`Verified ${employeeDisplayName(verifiedEmployee)}.`);
     } catch (verifyError) {
       setError(verifyError?.message || 'Face verification failed. Please try again.');
     } finally {
@@ -146,44 +184,66 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
     }
   };
 
+  useEffect(() => {
+    setMode(accessMode === 'qr_face' || accessMode === 'qr_only' ? 'qr' : 'face');
+    setQrEmployee(null);
+    resetFaceState();
+    setResetKey(k => k + 1);
+  }, [accessMode, tabId]);
+
+  if (accessMode === 'qr_only') {
+    return (
+      <EmployeeQRGate
+        key={`portal-access-${tabLabel}-qr-only`}
+        companyProfileId={activeCompanyId}
+        onEmployeeScanned={onAuthorized}
+        promptMessage={`Scan your QR code to access ${tabLabel}`}
+        title={tabLabel}
+        description="Scan your QR code to continue."
+      />
+    );
+  }
+
   return (
     <div className="mx-auto max-w-xl p-4 space-y-4">
-      <div className="rounded-xl border border-border bg-card p-3">
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setMode('face');
-              setQrEmployee(null);
-              resetFaceState();
-              setResetKey(k => k + 1);
-            }}
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-              mode === 'face'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Face Recognition
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode('qr');
-              setQrEmployee(null);
-              resetFaceState();
-              setResetKey(k => k + 1);
-            }}
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-              mode === 'qr'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            QR Code + Face
-          </button>
+      {!forcedMode && (
+        <div className="rounded-xl border border-border bg-card p-3">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setMode('face');
+                setQrEmployee(null);
+                resetFaceState();
+                setResetKey(k => k + 1);
+              }}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                mode === 'face'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Face Recognition
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('qr');
+                setQrEmployee(null);
+                resetFaceState();
+                setResetKey(k => k + 1);
+              }}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                mode === 'qr'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              QR Code + Face
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {mode === 'qr' && !qrEmployee ? (
         <EmployeeQRGate
@@ -210,13 +270,16 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
           </div>
           <FaceCapture
             key={resetKey}
-            onCapture={(value) => {
+            onCapture={(value, metadata) => {
               setImageBase64(value);
+              setCaptureMetadata(metadata);
+              setCaptureError('');
               setError('');
               setMessage('');
             }}
             onLivenessDetected={() => setLivenessConfirmed(true)}
             onReset={resetFaceState}
+            onErrorChange={setCaptureError}
             autoStart
             autoCaptureOnLiveness
             disabled={submitting}
@@ -233,7 +296,7 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
           {error && <p className="text-sm font-medium text-destructive">{error}</p>}
           {message && <p className="text-sm font-medium text-emerald-700">{message}</p>}
           <div className="flex flex-wrap gap-2">
-            {qrEmployee && (
+            {qrEmployee && !forcedMode && (
               <Button
                 type="button"
                 variant="outline"
@@ -248,7 +311,7 @@ function PortalAccessGate({ activeCompanyId, tabLabel, onAuthorized }) {
             <Button
               className="flex-1"
               onClick={verifyFace}
-              disabled={submitting || !imageBase64 || !livenessConfirmed}
+              disabled={submitting || !imageBase64 || !captureMetadata || !livenessConfirmed || Boolean(captureError)}
             >
               {submitting ? 'Verifying...' : 'Verify Face and Continue'}
             </Button>
@@ -281,6 +344,7 @@ export default function EmployeePortal() {
   const [faceMessage, setFaceMessage] = useState('');
   const [faceError, setFaceError] = useState('');
   const [faceMatchedEmployee, setFaceMatchedEmployee] = useState(null);
+  const [portalAccessModes, setPortalAccessModes] = useState(defaultPortalAccessModes);
   const { activeCompanyId } = useCompany();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -288,6 +352,18 @@ export default function EmployeePortal() {
   useEffect(() => {
     appApi.auth.me().then(setUser).catch(() => {}).finally(() => setLoadingUser(false));
   }, []);
+
+  useEffect(() => {
+    if (!activeCompanyId) return;
+    requestJson(`/api/employee-portal/access-settings?company_profile_id=${encodeURIComponent(activeCompanyId)}`)
+      .then(data => {
+        setPortalAccessModes({
+          ...defaultPortalAccessModes,
+          ...(data?.protected_tab_access_modes || {}),
+        });
+      })
+      .catch(() => setPortalAccessModes(defaultPortalAccessModes));
+  }, [activeCompanyId]);
 
   useEffect(() => {
     if (
@@ -380,7 +456,7 @@ export default function EmployeePortal() {
         code: faceEmployee.employee_id,
         company_profile_id: faceEmployee.company_profile_id || activeCompanyId,
       });
-      return res.employee || faceEmployee;
+      return res.employee ? { ...res.employee, ...faceEmployee } : faceEmployee;
     } catch {
       return faceEmployee;
     }
@@ -503,7 +579,18 @@ export default function EmployeePortal() {
           {scannedEmployee && (
             <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5">
               <div className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-xs font-medium text-green-800">{scannedEmployee.first_name} {scannedEmployee.last_name}</span>
+              {employeePhotoUrl(scannedEmployee) ? (
+                <img
+                  src={employeePhotoUrl(scannedEmployee)}
+                  alt={employeeDisplayName(scannedEmployee)}
+                  className="h-7 w-7 rounded-full border border-green-200 object-cover object-top"
+                />
+              ) : (
+                <span className="flex h-7 w-7 items-center justify-center rounded-full border border-green-200 bg-green-100 text-[10px] font-semibold text-green-700">
+                  {employeeInitials(scannedEmployee)}
+                </span>
+              )}
+              <span className="text-xs font-medium text-green-800">{employeeDisplayName(scannedEmployee)}</span>
               <button onClick={() => { setScannedEmployee(null); setAuthorizedTab(null); setActiveTab('scan'); setScanKey(k => k + 1); }} className="text-green-600 hover:text-green-800 ml-1 text-xs">✕</button>
             </div>
           )}
@@ -541,6 +628,31 @@ export default function EmployeePortal() {
           ))}
         </div>
       </div>
+
+      {scannedEmployee && protectedTabs.has(activeTab) && authorizedTab === activeTab && (
+        <div className="border-b border-green-200 bg-green-50 px-4 py-3">
+          <div className="mx-auto flex max-w-5xl items-center gap-3">
+            {employeePhotoUrl(scannedEmployee) ? (
+              <img
+                src={employeePhotoUrl(scannedEmployee)}
+                alt={employeeDisplayName(scannedEmployee)}
+                className="h-12 w-12 rounded-lg border border-green-200 object-cover object-top"
+              />
+            ) : (
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-green-200 bg-green-100 text-sm font-semibold text-green-700">
+                {employeeInitials(scannedEmployee)}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-green-700">Verified Employee</p>
+              <p className="truncate text-sm font-semibold text-foreground">{employeeDisplayName(scannedEmployee)}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {scannedEmployee.employee_id || '-'}{scannedEmployee.department ? ` · ${scannedEmployee.department}` : ''}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <main className="flex-1 overflow-auto">
@@ -665,7 +777,9 @@ export default function EmployeePortal() {
           <PortalAccessGate
             key={`${activeTab}-${scanKey}`}
             activeCompanyId={activeCompanyId}
+            tabId={activeTab}
             tabLabel={tabs.find(t => t.id === activeTab)?.label || 'Employee Portal'}
+            accessMode={portalAccessModes[activeTab] || 'choice'}
             onAuthorized={authorizePortalEmployee}
           />
         )}

@@ -200,17 +200,37 @@ export function faceTemplateFromImage(imageBase64) {
 
   const bucketCount = 32;
   const buckets = Array.from({ length: bucketCount }, () => ({ sum: 0, count: 0 }));
+  const histogramBinCount = 64;
+  const histogram = Array.from({ length: histogramBinCount }, () => 0);
+  const transitionBuckets = Array.from({ length: bucketCount }, () => ({ sum: 0, count: 0 }));
   for (let index = 0; index < bytes.length; index += 1) {
     const bucket = buckets[index % bucketCount];
     bucket.sum += bytes[index];
     bucket.count += 1;
+    histogram[Math.min(histogramBinCount - 1, Math.floor(bytes[index] / 4))] += 1;
+
+    if (index > 0) {
+      const transitionBucket = transitionBuckets[index % bucketCount];
+      transitionBucket.sum += Math.abs(bytes[index] - bytes[index - 1]);
+      transitionBucket.count += 1;
+    }
   }
 
+  const sampleCount = 128;
+  const sampledBytes = Array.from({ length: sampleCount }, (_, index) => {
+    const byteIndex = Math.min(bytes.length - 1, Math.floor(((index + 0.5) * bytes.length) / sampleCount));
+    return Number((bytes[byteIndex] / 255).toFixed(6));
+  });
+  const totalBytes = Math.max(bytes.length, 1);
+
   return {
-    version: 1,
+    version: 2,
     length: bytes.length,
     digest: crypto.createHash("sha256").update(bytes).digest("hex"),
     vector: buckets.map((bucket) => Number(((bucket.sum / Math.max(bucket.count, 1)) / 255).toFixed(6))),
+    histogram: histogram.map((count) => Number((count / totalBytes).toFixed(6))),
+    sampledBytes,
+    transitions: transitionBuckets.map((bucket) => Number(((bucket.sum / Math.max(bucket.count, 1)) / 255).toFixed(6))),
   };
 }
 
@@ -256,6 +276,43 @@ export function compareTemplates(reference, candidate) {
   return Number(Math.max(0, Math.min(1, 1 - distance / 3 - lengthPenalty * 0.15)).toFixed(4));
 }
 
+function cosineSimilarity(left = [], right = []) {
+  if (!left?.length || left.length !== right?.length) return 0;
+  let dot = 0;
+  let leftMagnitude = 0;
+  let rightMagnitude = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    dot += Number(left[index] || 0) * Number(right[index] || 0);
+    leftMagnitude += Number(left[index] || 0) ** 2;
+    rightMagnitude += Number(right[index] || 0) ** 2;
+  }
+  if (!leftMagnitude || !rightMagnitude) return 0;
+  return dot / Math.sqrt(leftMagnitude * rightMagnitude);
+}
+
+function meanAbsoluteSimilarity(left = [], right = []) {
+  if (!left?.length || left.length !== right?.length) return 0;
+  const distance = left.reduce((sum, value, index) => sum + Math.abs(Number(value || 0) - Number(right[index] || 0)), 0) / left.length;
+  return Math.max(0, Math.min(1, 1 - distance));
+}
+
+function compareDuplicateTemplates(reference, candidate) {
+  if (!reference || !candidate) return 0;
+  if (reference.digest && candidate.digest && reference.digest === candidate.digest) return 1;
+
+  const baseScore = compareTemplates(reference, candidate);
+  const histogramScore = cosineSimilarity(reference.histogram, candidate.histogram);
+  const sampleScore = meanAbsoluteSimilarity(reference.sampledBytes, candidate.sampledBytes);
+  const transitionScore = meanAbsoluteSimilarity(reference.transitions, candidate.transitions);
+  const referenceImageScore = Number((
+    histogramScore * 0.45 +
+    sampleScore * 0.35 +
+    transitionScore * 0.2
+  ).toFixed(4));
+
+  return Math.max(baseScore, referenceImageScore);
+}
+
 export async function faceSetting(companyProfileId) {
   const setting = await prisma.faceVerificationSetting.findFirst({
     where: { companyProfileId: companyProfileId || null },
@@ -277,7 +334,7 @@ export async function assertNoDuplicateEmployeeFaceEnrollment({
   const minimumConfidence = Number(setting.minimumConfidence || 0.82);
   const duplicateThreshold = Number(
     process.env.PAYROLLPH_FACE_DUPLICATE_THRESHOLD ||
-      Math.max(0.9, minimumConfidence + 0.08),
+      Math.max(0.84, minimumConfidence + 0.02),
   );
 
   const profiles = await prisma.employeeFaceProfile.findMany({
@@ -298,7 +355,19 @@ export async function assertNoDuplicateEmployeeFaceEnrollment({
         profile.templateIv,
         profile.templateAuthTag,
       ));
-      const confidenceScore = compareTemplates(referenceTemplate, candidateTemplate);
+      let comparableTemplate = referenceTemplate;
+      if (profile.encryptedReferenceImage) {
+        try {
+          comparableTemplate = faceTemplateFromImage(decryptText(
+            profile.encryptedReferenceImage,
+            profile.referenceImageIv,
+            profile.referenceImageAuthTag,
+          ));
+        } catch {
+          comparableTemplate = referenceTemplate;
+        }
+      }
+      const confidenceScore = compareDuplicateTemplates(comparableTemplate, candidateTemplate);
       if (!bestMatch || confidenceScore > bestMatch.confidenceScore) {
         bestMatch = { profile, confidenceScore };
       }

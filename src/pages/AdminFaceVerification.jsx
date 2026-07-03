@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const statusColors = {
   active: 'bg-emerald-100 text-emerald-700',
@@ -31,6 +32,7 @@ export default function AdminFaceVerification() {
   const { user, navigateToLogin } = useAuth();
   const qc = useQueryClient();
   const [filter, setFilter] = useState('');
+  const [photoPreview, setPhotoPreview] = useState(null);
   const canAdmin = ['super_admin', 'admin', 'user'].includes(user?.role);
 
   const query = useQuery({
@@ -49,6 +51,15 @@ export default function AdminFaceVerification() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['faceVerificationAdminStatus'] }),
   });
 
+  const clearProfile = (employee) => {
+    if (!employee?.profile?.id) return;
+    const confirmed = window.confirm(
+      `Clear the enrolled face photo for ${employee.employee_name || employee.employee_id || 'this employee'}? This removes the face profile and the employee must be enrolled again.`,
+    );
+    if (!confirmed) return;
+    actionMutation.mutate({ action: 'clear', profileId: employee.profile.id });
+  };
+
   const employees = useMemo(() => {
     const term = filter.trim().toLowerCase();
     const rows = query.data?.employees || [];
@@ -59,6 +70,17 @@ export default function AdminFaceVerification() {
         .includes(term)
     );
   }, [filter, query.data?.employees]);
+
+  const unlistedProfiles = useMemo(() => {
+    const term = filter.trim().toLowerCase();
+    const rows = query.data?.unlistedProfiles || [];
+    if (!term) return rows;
+    return rows.filter(employee =>
+      `${employee.employee_id || ''} ${employee.employee_name || ''} ${employee.department || ''} ${employee.employeeStatus || ''}`
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [filter, query.data?.unlistedProfiles]);
 
   if (!canAdmin) return <Disabled message="You are not authorized for face verification administration." />;
   if (query.data && !query.data.enabled) return <Disabled />;
@@ -135,6 +157,7 @@ export default function AdminFaceVerification() {
                 <thead className="bg-muted/50 text-xs text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 text-left font-medium">Employee</th>
+                    <th className="px-4 py-3 text-left font-medium">Photo</th>
                     <th className="px-4 py-3 text-left font-medium">Department</th>
                     <th className="px-4 py-3 text-left font-medium">Status</th>
                     <th className="px-4 py-3 text-left font-medium">Enrolled</th>
@@ -147,6 +170,24 @@ export default function AdminFaceVerification() {
                       <td className="px-4 py-3">
                         <p className="font-medium">{employee.employee_name || 'Unnamed'}</p>
                         <p className="text-xs text-muted-foreground">{employee.employee_id}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        {employee.profile?.referenceImage ? (
+                          <button
+                            type="button"
+                            onClick={() => setPhotoPreview(employee)}
+                            className="block h-12 w-12 overflow-hidden rounded-md border border-border bg-muted transition hover:ring-2 hover:ring-primary/40"
+                            title={`View enrolled photo for ${employee.employee_name || employee.employee_id || 'employee'}`}
+                          >
+                            <img
+                              src={employee.profile.referenceImage}
+                              alt={`Enrolled face for ${employee.employee_name || employee.employee_id || 'employee'}`}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{employee.department || '-'}</td>
                       <td className="px-4 py-3">
@@ -176,6 +217,11 @@ export default function AdminFaceVerification() {
                               Revoke
                             </Button>
                           )}
+                          {employee.profile && (
+                            <Button size="sm" variant="outline" onClick={() => clearProfile(employee)}>
+                              Clear Photo
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -184,6 +230,80 @@ export default function AdminFaceVerification() {
               </table>
             </div>
           </Card>
+
+          {(query.data?.unlistedProfiles || []).length > 0 && (
+            <Card className="overflow-hidden">
+              <div className="border-b border-border p-4">
+                <p className="font-semibold">Archived / Unlisted Face Profiles</p>
+                <p className="text-xs text-muted-foreground">
+                  These face profiles are still stored but their employee record is no longer active in this company list.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-medium">Employee</th>
+                      <th className="px-4 py-3 text-left font-medium">Photo</th>
+                      <th className="px-4 py-3 text-left font-medium">Employee Status</th>
+                      <th className="px-4 py-3 text-left font-medium">Face Status</th>
+                      <th className="px-4 py-3 text-left font-medium">Enrolled</th>
+                      <th className="px-4 py-3 text-right font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unlistedProfiles.map(employee => (
+                      <tr key={employee.id} className="border-t border-border">
+                        <td className="px-4 py-3">
+                          <p className="font-medium">{employee.employee_name || 'Unnamed'}</p>
+                          <p className="text-xs text-muted-foreground">{employee.employee_id}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          {employee.profile?.referenceImage ? (
+                            <button
+                              type="button"
+                              onClick={() => setPhotoPreview(employee)}
+                              className="block h-12 w-12 overflow-hidden rounded-md border border-border bg-muted transition hover:ring-2 hover:ring-primary/40"
+                              title={`View enrolled photo for ${employee.employee_name || employee.employee_id || 'employee'}`}
+                            >
+                              <img
+                                src={employee.profile.referenceImage}
+                                alt={`Enrolled face for ${employee.employee_name || employee.employee_id || 'employee'}`}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">{employee.employeeStatus || 'archived/unlisted'}</td>
+                        <td className="px-4 py-3">
+                          <Badge className={statusColors[employee.profile?.status] || statusColors.revoked}>{employee.profile?.status || 'unknown'}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {employee.profile?.enrolledAt ? new Date(employee.profile.enrolledAt).toLocaleString() : '-'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-end">
+                            <Button size="sm" variant="outline" onClick={() => clearProfile(employee)}>
+                              Clear Photo
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {unlistedProfiles.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="p-4 text-sm text-muted-foreground">
+                          No archived/unlisted face profiles match your search.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
 
           <Card className="overflow-hidden">
             <div className="border-b border-border p-4 font-semibold">Recent Verification Logs</div>
@@ -268,6 +388,29 @@ export default function AdminFaceVerification() {
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
+
+          <Dialog open={!!photoPreview} onOpenChange={(open) => !open && setPhotoPreview(null)}>
+            <DialogContent className="max-w-xl">
+              <DialogHeader>
+                <DialogTitle>{photoPreview?.employee_name || 'Enrolled Photo'}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                {photoPreview?.profile?.referenceImage && (
+                  <div className="overflow-hidden rounded-lg border border-border bg-muted">
+                    <img
+                      src={photoPreview.profile.referenceImage}
+                      alt={`Enrolled face for ${photoPreview.employee_name || photoPreview.employee_id || 'employee'}`}
+                      className="max-h-[70vh] w-full object-contain"
+                    />
+                  </div>
+                )}
+                <div className="text-sm text-muted-foreground">
+                  <p>{photoPreview?.employee_id || '-'}</p>
+                  <p>Enrolled {photoPreview?.profile?.enrolledAt ? new Date(photoPreview.profile.enrolledAt).toLocaleString() : '-'}</p>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>
