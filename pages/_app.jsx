@@ -1,4 +1,5 @@
 import "@/index.css";
+import Head from "next/head";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Dev-only workaround for a Next.js 16.2.4 bug that causes an endless
@@ -82,5 +83,21 @@ if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
 }
 
 export default function PayrollPhApp({ Component, pageProps }) {
-  return <Component {...pageProps} />;
+  return (
+    <>
+      <Head>
+        <title>PayrollPH Employee Portal</title>
+        <meta name="application-name" content="PayrollPH Employee Portal" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="Employee Portal" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="theme-color" content="#2563eb" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="icon" href="/icons/employee-portal-icon.svg" type="image/svg+xml" />
+      </Head>
+      <Component {...pageProps} />
+    </>
+  );
 }

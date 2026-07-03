@@ -289,6 +289,22 @@ export default function EmployeePortal() {
     appApi.auth.me().then(setUser).catch(() => {}).finally(() => setLoadingUser(false));
   }, []);
 
+  useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      !('serviceWorker' in navigator) ||
+      !window.isSecureContext
+    ) {
+      return undefined;
+    }
+
+    navigator.serviceWorker
+      .register('/employee-portal-sw.js', { scope: '/employee-portal' })
+      .catch(() => {});
+
+    return undefined;
+  }, []);
+
   // Start camera and auto-capture when modal opens
   useEffect(() => {
     if (!scanConfirm) return;

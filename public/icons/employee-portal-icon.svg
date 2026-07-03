@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PayrollPH Employee Portal">
+  <rect width="512" height="512" rx="96" fill="#2563eb"/>
+  <circle cx="256" cy="184" r="74" fill="#ffffff"/>
+  <path fill="#ffffff" d="M128 394c14-79 62-126 128-126s114 47 128 126c3 18-11 34-29 34H157c-18 0-32-16-29-34Z"/>
+  <path fill="#bfdbfe" d="M116 95h280c12 0 21 9 21 21v56h-32v-45H127v45H95v-56c0-12 9-21 21-21Zm0 245h32v45h216v-45h32v56c0 12-9 21-21 21H116c-12 0-21-9-21-21v-56Z"/>
+</svg>
