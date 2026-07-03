@@ -16,6 +16,8 @@ export default function AdminFaceEnroll() {
   const [params] = useSearchParams();
   const [employeeId, setEmployeeId] = useState(params.get('employee_id') || '');
   const [imageBase64, setImageBase64] = useState('');
+  const [captureMetadata, setCaptureMetadata] = useState(null);
+  const [captureError, setCaptureError] = useState('');
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [livenessConfirmed, setLivenessConfirmed] = useState(false);
   const [message, setMessage] = useState('');
@@ -40,6 +42,7 @@ export default function AdminFaceEnroll() {
         employeeRecordId: selectedEmployee?.id,
         companyProfileId: activeCompanyId,
         imageBase64,
+        captureMetadata,
         consentAccepted,
         livenessConfirmed,
       };
@@ -50,6 +53,9 @@ export default function AdminFaceEnroll() {
     onSuccess: () => {
       setMessage('Face profile saved.');
       setImageBase64('');
+      setCaptureMetadata(null);
+      setCaptureError('');
+      setLivenessConfirmed(false);
       qc.invalidateQueries({ queryKey: ['faceVerificationAdminStatus'] });
       qc.invalidateQueries({ queryKey: ['faceVerificationEnrollStatus'] });
     },
@@ -99,26 +105,29 @@ export default function AdminFaceEnroll() {
             </div>
           )}
 
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            Ask the employee to blink and turn their head slightly before capture. Keep the whole face inside the camera guide.
+          <div className={`rounded-lg border p-3 text-sm ${
+            livenessConfirmed
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-amber-200 bg-amber-50 text-amber-900'
+          }`}>
+            {livenessConfirmed
+              ? 'Live face captured. Ready to save the profile.'
+              : 'Ask the employee to center their face, then blink or turn their head slightly. The system will capture automatically.'}
           </div>
 
           <div className="flex items-center gap-2 rounded-lg border border-border p-3">
             <Checkbox checked={consentAccepted} onCheckedChange={checked => setConsentAccepted(Boolean(checked))} />
             <span className="text-sm">Employee consent for biometric enrollment was confirmed.</span>
           </div>
-          <div className="flex items-center gap-2 rounded-lg border border-border p-3">
-            <Checkbox checked={livenessConfirmed} onCheckedChange={checked => setLivenessConfirmed(Boolean(checked))} />
-            <span className="text-sm">Employee completed the live blink/head-turn challenge.</span>
-          </div>
 
           {message && <p className="text-sm text-emerald-700">{message}</p>}
+          {captureError && <p className="text-sm text-destructive">{captureError}</p>}
           {enrollMutation.error && <p className="text-sm text-destructive">{enrollMutation.error.message}</p>}
 
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => enrollMutation.mutate()}
-              disabled={!employeeId || !imageBase64 || !consentAccepted || !livenessConfirmed || enrollMutation.isPending}
+              disabled={!employeeId || !imageBase64 || !captureMetadata || Boolean(captureError) || !consentAccepted || !livenessConfirmed || enrollMutation.isPending}
             >
               <Save className="mr-2 h-4 w-4" />
               {enrollMutation.isPending ? 'Saving...' : selectedEmployee?.profile ? 'Re-enroll Profile' : 'Enroll Profile'}
@@ -135,7 +144,26 @@ export default function AdminFaceEnroll() {
         </Card>
 
         <Card className="p-4">
-          <FaceCapture onCapture={setImageBase64} disabled={enrollMutation.isPending} />
+          <FaceCapture
+            onCapture={(value, metadata) => {
+              setImageBase64(value);
+              setCaptureMetadata(metadata);
+              setCaptureError('');
+              setMessage('');
+            }}
+            onLivenessDetected={() => setLivenessConfirmed(true)}
+            onReset={() => {
+              setImageBase64('');
+              setCaptureMetadata(null);
+              setCaptureError('');
+              setLivenessConfirmed(false);
+              setMessage('');
+            }}
+            onErrorChange={setCaptureError}
+            autoStart
+            autoCaptureOnLiveness
+            disabled={enrollMutation.isPending}
+          />
         </Card>
       </div>
     </div>

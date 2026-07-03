@@ -267,6 +267,62 @@ export async function faceSetting(companyProfileId) {
   };
 }
 
+export async function assertNoDuplicateEmployeeFaceEnrollment({
+  candidateTemplate,
+  companyProfileId,
+  employeeId,
+  excludeProfileId = null,
+}) {
+  const setting = await faceSetting(companyProfileId || null);
+  const minimumConfidence = Number(setting.minimumConfidence || 0.82);
+  const duplicateThreshold = Number(
+    process.env.PAYROLLPH_FACE_DUPLICATE_THRESHOLD ||
+      Math.max(0.9, minimumConfidence + 0.08),
+  );
+
+  const profiles = await prisma.employeeFaceProfile.findMany({
+    where: {
+      companyProfileId: companyProfileId || null,
+      status: "active",
+      ...(excludeProfileId ? { id: { not: excludeProfileId } } : {}),
+      ...(employeeId ? { employeeId: { not: employeeId } } : {}),
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  let bestMatch = null;
+  for (const profile of profiles) {
+    try {
+      const referenceTemplate = JSON.parse(decryptText(
+        profile.encryptedTemplate,
+        profile.templateIv,
+        profile.templateAuthTag,
+      ));
+      const confidenceScore = compareTemplates(referenceTemplate, candidateTemplate);
+      if (!bestMatch || confidenceScore > bestMatch.confidenceScore) {
+        bestMatch = { profile, confidenceScore };
+      }
+    } catch {
+      // Skip unreadable legacy/corrupt templates without blocking enrollment.
+    }
+  }
+
+  if (bestMatch && bestMatch.confidenceScore >= duplicateThreshold) {
+    const error = new Error(
+      `This face appears to already be enrolled for ${bestMatch.profile.employeeName || bestMatch.profile.employeeId || "another employee"}.`,
+    );
+    error.statusCode = 409;
+    error.duplicateFace = {
+      profileId: bestMatch.profile.id,
+      employeeId: bestMatch.profile.employeeId,
+      employeeName: bestMatch.profile.employeeName,
+      confidenceScore: bestMatch.confidenceScore,
+      duplicateThreshold,
+    };
+    throw error;
+  }
+}
+
 export async function logVerification({
   profile,
   employee,

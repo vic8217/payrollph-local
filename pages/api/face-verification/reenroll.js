@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { prisma } from "@/server/prisma";
 import {
+  assertFreshWebcamCaptureMetadata,
+  assertNoDuplicateEmployeeFaceEnrollment,
   encryptText,
   employeeName,
   faceTemplateFromImage,
@@ -40,8 +42,16 @@ export default async function handler(req, res) {
     if (!req.body?.livenessConfirmed) {
       return res.status(400).json({ error: "Live blink/head-turn confirmation is required before re-enrollment." });
     }
+    assertFreshWebcamCaptureMetadata(req.body?.captureMetadata);
 
     const template = faceTemplateFromImage(req.body.imageBase64);
+    await assertNoDuplicateEmployeeFaceEnrollment({
+      candidateTemplate: template,
+      companyProfileId: employee.company_profile_id || existing.companyProfileId || null,
+      employeeId: employee.employee_id,
+      excludeProfileId: existing.id,
+    });
+
     const encryptedImage = encryptText(req.body.imageBase64);
     const encryptedTemplate = encryptText(JSON.stringify(template));
     const now = new Date();

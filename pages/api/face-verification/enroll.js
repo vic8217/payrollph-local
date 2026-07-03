@@ -1,7 +1,10 @@
 // @ts-nocheck
 import { prisma } from "@/server/prisma";
 import {
+  assertFreshWebcamCaptureMetadata,
+  assertNoDuplicateEmployeeFaceEnrollment,
   encryptText,
+  employeeName,
   faceTemplateFromImage,
   findEmployeeForRequest,
   requireFaceAdmin,
@@ -9,7 +12,6 @@ import {
   requireFaceSession,
   sanitizeProfile,
   sendFaceError,
-  employeeName,
 } from "@/server/faceVerification";
 
 export default async function handler(req, res) {
@@ -37,8 +39,19 @@ export default async function handler(req, res) {
     if (!req.body?.livenessConfirmed) {
       return res.status(400).json({ error: "Live blink/head-turn confirmation is required before enrollment." });
     }
+    assertFreshWebcamCaptureMetadata(req.body?.captureMetadata);
 
     const template = faceTemplateFromImage(req.body.imageBase64);
+    const existing = await prisma.employeeFaceProfile.findFirst({
+      where: { employeeId: employee.employee_id, companyProfileId: employee.company_profile_id || null },
+    });
+    await assertNoDuplicateEmployeeFaceEnrollment({
+      candidateTemplate: template,
+      companyProfileId: employee.company_profile_id || null,
+      employeeId: employee.employee_id,
+      excludeProfileId: existing?.id || null,
+    });
+
     const encryptedImage = encryptText(req.body.imageBase64);
     const encryptedTemplate = encryptText(JSON.stringify(template));
     const now = new Date();
@@ -70,9 +83,6 @@ export default async function handler(req, res) {
       },
     };
 
-    const existing = await prisma.employeeFaceProfile.findFirst({
-      where: { employeeId: employee.employee_id, companyProfileId: employee.company_profile_id || null },
-    });
     const profile = existing
       ? await prisma.employeeFaceProfile.update({ where: { id: existing.id }, data })
       : await prisma.employeeFaceProfile.create({ data });
