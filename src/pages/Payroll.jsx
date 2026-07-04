@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Play, CheckCircle2, FileText, Printer, Search, Calculator, Trash2 } from 'lucide-react';
+import { Play, CheckCircle2, FileText, Printer, Search, Calculator, Trash2, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -455,6 +455,26 @@ export default function Payroll() {
     },
   });
 
+  const backupAttendancePeriodPhotos = useMutation({
+    mutationFn: (/** @type {PayrollEntity} */ period) => appApi.functions.invoke('backupAttendancePeriodPhotos', {
+      company_profile_id: activeCompanyId,
+      start_date: period.start_date,
+      end_date: period.end_date,
+    }),
+    onSuccess: (result) => {
+      const csv = typeof result?.csv === 'string' ? result.csv : '';
+      const filename = result?.filename || 'attendance-photo-backup.csv';
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+    },
+  });
+
   const previewEmployeePay = async () => {
     setPayPreviewError('');
     setPayPreview(null);
@@ -901,6 +921,11 @@ export default function Payroll() {
     deleteAttendancePeriodPhotos.mutate(selectedPeriod);
   };
 
+  const handleBackupAttendancePhotos = (/** @type {PayrollEntity} */ period) => {
+    if (!period || period.status !== 'released') return;
+    backupAttendancePeriodPhotos.mutate(period);
+  };
+
   return (
     <div className="p-6 space-y-5 max-w-7xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1076,6 +1101,12 @@ export default function Payroll() {
         </div>
       )}
 
+      {backupAttendancePeriodPhotos.error && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          {backupAttendancePeriodPhotos.error.message || 'Unable to download attendance photo backup CSV.'}
+        </div>
+      )}
+
       <PayrollCard className="border border-border shadow-sm overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
           <div>
@@ -1126,28 +1157,50 @@ export default function Payroll() {
                     </td>
                     <td className="px-4 py-3">
                       {period.savedPeriod ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-8 gap-1.5 text-destructive hover:text-destructive"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            const confirmed = window.confirm(`Delete attendance photos for ${period.period_name} (${period.start_date} to ${period.end_date}) across all employees? Payroll and attendance records will remain.`);
-                            if (!confirmed) return;
-                            deleteAttendancePeriodPhotos.mutate(period.savedPeriod);
-                          }}
-                          disabled={
-                            deleteAttendancePeriodPhotos.isPending ||
-                            !canDeleteAttendancePhotosForPeriod(period, currentPeriodConfig)
-                          }
-                          title={canDeleteAttendancePhotosForPeriod(period, currentPeriodConfig)
-                            ? 'Delete attendance photos for this payroll period'
-                            : `Available when the current payroll period reaches ${attendancePhotoCleanupDateLabel(period)}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          {deleteAttendancePeriodPhotos.isPending ? 'Deleting...' : 'Delete Photos'}
-                        </Button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleBackupAttendancePhotos(period.savedPeriod);
+                            }}
+                            disabled={period.savedPeriod.status !== 'released' || backupAttendancePeriodPhotos.isPending}
+                            title={period.savedPeriod.status === 'released'
+                              ? 'Download attendance photo backup CSV'
+                              : 'Available after payroll is released to employees'}
+                          >
+                            <Download className="h-4 w-4" />
+                            {backupAttendancePeriodPhotos.isPending ? 'Backing up...' : 'Backup CSV'}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 text-destructive hover:text-destructive"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              const confirmed = window.confirm(`Delete attendance photos for ${period.period_name} (${period.start_date} to ${period.end_date}) across all employees? Payroll and attendance records will remain.`);
+                              if (!confirmed) return;
+                              deleteAttendancePeriodPhotos.mutate(period.savedPeriod);
+                            }}
+                            disabled={
+                              deleteAttendancePeriodPhotos.isPending ||
+                              !period.savedPeriod.attendance_photos_backup_completed_at ||
+                              !canDeleteAttendancePhotosForPeriod(period, currentPeriodConfig)
+                            }
+                            title={!period.savedPeriod.attendance_photos_backup_completed_at
+                              ? 'Download the backup CSV before deleting photos'
+                              : canDeleteAttendancePhotosForPeriod(period, currentPeriodConfig)
+                                ? 'Delete attendance photos for this payroll period'
+                                : `Available when the current payroll period reaches ${attendancePhotoCleanupDateLabel(period)}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {deleteAttendancePeriodPhotos.isPending ? 'Deleting...' : 'Delete Photos'}
+                          </Button>
+                        </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
@@ -1214,11 +1267,14 @@ export default function Payroll() {
                       onClick={handleDeleteAttendancePhotos}
                       disabled={
                         deleteAttendancePeriodPhotos.isPending ||
+                        !selectedPeriod.attendance_photos_backup_completed_at ||
                         !canDeleteAttendancePhotosForPeriod(selectedPeriod, currentPeriodConfig)
                       }
-                      title={canDeleteAttendancePhotosForPeriod(selectedPeriod, currentPeriodConfig)
-                        ? 'Delete attendance photos for this payroll period'
-                        : `Available when the current payroll period reaches ${attendancePhotoCleanupDateLabel(selectedPeriod)}`}
+                      title={!selectedPeriod.attendance_photos_backup_completed_at
+                        ? 'Download the backup CSV before deleting photos'
+                        : canDeleteAttendancePhotosForPeriod(selectedPeriod, currentPeriodConfig)
+                          ? 'Delete attendance photos for this payroll period'
+                          : `Available when the current payroll period reaches ${attendancePhotoCleanupDateLabel(selectedPeriod)}`}
                     >
                       <Trash2 className="h-4 w-4" />
                       {deleteAttendancePeriodPhotos.isPending ? 'Deleting photos...' : 'Delete Attendance Photos'}

@@ -117,6 +117,27 @@ async function assertRetentionElapsed(companyProfileId, startDate) {
   throw error;
 }
 
+async function assertBackupCompleted(companyProfileId, startDate, endDate) {
+  const periods = await listRecords("PayrollPeriod", { limit: 10000 });
+  const period = periods.find((item) =>
+    String(item.company_profile_id || "") === String(companyProfileId || "") &&
+    item.start_date === startDate &&
+    item.end_date === endDate
+  );
+
+  if (!period || period.status !== "released") {
+    const error = new Error("Attendance photos can be deleted only after this payroll period is released to employees.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (period.attendance_photos_backup_completed_at) return;
+
+  const error = new Error("Download the attendance photo backup CSV before deleting photos for this payroll period.");
+  error.statusCode = 409;
+  throw error;
+}
+
 function uploadFileNameFromUrl(photoUrl) {
   const pathname = String(photoUrl || "").split("?")[0];
   const marker = "/api/uploads/";
@@ -176,6 +197,7 @@ export default async function handler(req, res) {
     }
 
     assertCanManageCompany(session, companyProfileId);
+    await assertBackupCompleted(companyProfileId, startDate, endDate);
     await assertRetentionElapsed(companyProfileId, startDate);
 
     const logs = await listRecords("AttendanceLog", { limit: 10000 });
