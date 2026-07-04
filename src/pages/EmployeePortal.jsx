@@ -559,7 +559,9 @@ export default function EmployeePortal() {
         captureMetadata: faceCaptureMetadata,
       });
       if (faceResult.enabled === false) {
-        setFaceError('Face verification is disabled. Use QR code instead.');
+        setFaceError('face verification - not on file');
+        setAttendanceMode('qr');
+        setScanKey(k => k + 1);
         return;
       }
       if (faceResult.result !== 'verified' || !faceResult.employee) {
