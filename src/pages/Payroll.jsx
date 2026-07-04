@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Play, CheckCircle2, FileText, Printer, Search, Calculator } from 'lucide-react';
+import { Play, CheckCircle2, FileText, Printer, Search, Calculator, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -122,6 +122,8 @@ const generationStatusColors = {
   missing: 'bg-gray-100 text-gray-600',
 };
 
+const ATTENDANCE_PHOTO_RETENTION_DAYS = 21;
+
 /**
  * @param {CashAdvanceEntity} ca
  * @param {string} periodStartDate
@@ -135,6 +137,37 @@ function isCashAdvanceDeductibleForPeriod(ca, periodStartDate) {
 /** @param {number | string | null | undefined} value */
 function money(value) {
   return parseFloat((Number(value) || 0).toFixed(2));
+}
+
+function addRetentionDays(date, days = ATTENDANCE_PHOTO_RETENTION_DAYS) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function attendancePhotoCleanupDate(period) {
+  if (!period?.start_date) return null;
+  const start = new Date(`${period.start_date}T00:00:00+08:00`);
+  if (!Number.isFinite(start.getTime())) return null;
+  return addRetentionDays(start);
+}
+
+function canDeleteAttendancePhotosForPeriod(period, currentPeriod) {
+  const cleanupDate = attendancePhotoCleanupDate(period);
+  const currentStart = currentPeriod?.start_date
+    ? new Date(`${currentPeriod.start_date}T00:00:00+08:00`)
+    : null;
+  return Boolean(
+    cleanupDate &&
+    currentStart &&
+    Number.isFinite(currentStart.getTime()) &&
+    currentStart.getTime() >= cleanupDate.getTime()
+  );
+}
+
+function attendancePhotoCleanupDateLabel(period) {
+  const cleanupDate = attendancePhotoCleanupDate(period);
+  return cleanupDate ? format(cleanupDate, 'MMM d, yyyy') : 'after retention ends';
 }
 
 function legacyShiftTimes(value) {
@@ -407,6 +440,18 @@ export default function Payroll() {
       qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
       qc.invalidateQueries({ queryKey: ['payrollRecords'] });
       setSelectedPeriod(previous => previous?.id === updatedPeriod.id ? { ...previous, ...updatedPeriod } : updatedPeriod);
+    },
+  });
+
+  const deleteAttendancePeriodPhotos = useMutation({
+    mutationFn: (/** @type {PayrollEntity} */ period) => appApi.functions.invoke('deleteAttendancePeriodPhotos', {
+      company_profile_id: activeCompanyId,
+      start_date: period.start_date,
+      end_date: period.end_date,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['attendanceLogs'] });
+      qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
     },
   });
 
@@ -849,6 +894,13 @@ export default function Payroll() {
     )
     : records;
 
+  const handleDeleteAttendancePhotos = () => {
+    if (!selectedPeriod) return;
+    const confirmed = window.confirm(`Delete attendance photos for ${selectedPeriod.period_name} (${selectedPeriod.start_date} to ${selectedPeriod.end_date}) across all employees? Payroll and attendance records will remain.`);
+    if (!confirmed) return;
+    deleteAttendancePeriodPhotos.mutate(selectedPeriod);
+  };
+
   return (
     <div className="p-6 space-y-5 max-w-7xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1039,6 +1091,7 @@ export default function Payroll() {
             <thead>
               <tr className="bg-muted/50 border-b border-border">
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Period Covered</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Photo Cleanup</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Payroll Generation</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Employees</th>
@@ -1070,6 +1123,34 @@ export default function Payroll() {
                         {isCurrent ? <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Current</span> : ''}
                         {!isCurrent && isTarget ? <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Selected</span> : ''}
                       </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      {period.savedPeriod ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 text-destructive hover:text-destructive"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            const confirmed = window.confirm(`Delete attendance photos for ${period.period_name} (${period.start_date} to ${period.end_date}) across all employees? Payroll and attendance records will remain.`);
+                            if (!confirmed) return;
+                            deleteAttendancePeriodPhotos.mutate(period.savedPeriod);
+                          }}
+                          disabled={
+                            deleteAttendancePeriodPhotos.isPending ||
+                            !canDeleteAttendancePhotosForPeriod(period, currentPeriodConfig)
+                          }
+                          title={canDeleteAttendancePhotosForPeriod(period, currentPeriodConfig)
+                            ? 'Delete attendance photos for this payroll period'
+                            : `Available when the current payroll period reaches ${attendancePhotoCleanupDateLabel(period)}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          {deleteAttendancePeriodPhotos.isPending ? 'Deleting...' : 'Delete Photos'}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant="outline" className={`text-xs ${generationStatusColors[period.generation_status]}`}>
@@ -1125,10 +1206,32 @@ export default function Payroll() {
                     <Badge variant="outline" className={`text-xs capitalize ${statusColors[selectedPeriod.status] || 'bg-gray-100 text-gray-600'}`}>
                       {selectedPeriod.status === 'released' ? 'Released to employees' : `${selectedPeriod.status || 'draft'} - not released`}
                     </Badge>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 text-destructive hover:text-destructive"
+                      onClick={handleDeleteAttendancePhotos}
+                      disabled={
+                        deleteAttendancePeriodPhotos.isPending ||
+                        !canDeleteAttendancePhotosForPeriod(selectedPeriod, currentPeriodConfig)
+                      }
+                      title={canDeleteAttendancePhotosForPeriod(selectedPeriod, currentPeriodConfig)
+                        ? 'Delete attendance photos for this payroll period'
+                        : `Available when the current payroll period reaches ${attendancePhotoCleanupDateLabel(selectedPeriod)}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {deleteAttendancePeriodPhotos.isPending ? 'Deleting photos...' : 'Delete Attendance Photos'}
+                    </Button>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     {records.length} employees · Gross ₱{(selectedPeriod.total_gross || 0).toLocaleString()} · Net ₱{(selectedPeriod.total_net || 0).toLocaleString()}
                   </p>
+                  {deleteAttendancePeriodPhotos.error && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {deleteAttendancePeriodPhotos.error.message || 'Unable to delete attendance photos.'}
+                    </p>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   {selectedPeriod.status === 'processing' && (() => {

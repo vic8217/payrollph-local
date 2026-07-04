@@ -66,6 +66,7 @@ const matchesDailyPasscode = (record, input) => {
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
+const ATTENDANCE_PHOTO_RETENTION_DAYS = 21;
 
 const legacyShiftOptions = [
   { value: 'day_shift', label: 'Day Shift', shortLabel: 'Day' },
@@ -335,6 +336,17 @@ function attendancePhotoItem(log, action) {
   }
 
   return null;
+}
+
+function attendancePhotoAgeDays(photoItem) {
+  const rawDate = photoItem?.timeValue || photoItem?.log?.date || photoItem?.log?.created_date;
+  const capturedAt = rawDate ? new Date(rawDate) : null;
+  if (!capturedAt || !Number.isFinite(capturedAt.getTime())) return 0;
+  return Math.max(0, Math.floor((Date.now() - capturedAt.getTime()) / (24 * 60 * 60 * 1000)));
+}
+
+function isAttendancePhotoArchived(photoItem) {
+  return attendancePhotoAgeDays(photoItem) >= ATTENDANCE_PHOTO_RETENTION_DAYS;
 }
 
 function attendanceLocationItem(log, action) {
@@ -1907,7 +1919,6 @@ export default function Attendance() {
             </Select>
           </div>
         </div>
-
         {loadingEmployees ? (
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
@@ -2492,6 +2503,15 @@ export default function Attendance() {
             <div className="space-y-3">
               <div className="rounded-xl overflow-hidden border border-border bg-muted">
                 <img src={photoLog.photoUrl} alt="Employee attendance capture" className="w-full max-h-[70vh] object-contain" />
+              </div>
+              <div className={`rounded-lg border px-3 py-2 text-xs ${
+                isAttendancePhotoArchived(photoLog)
+                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : 'border-sky-200 bg-sky-50 text-sky-800'
+              }`}>
+                {isAttendancePhotoArchived(photoLog)
+                  ? `Archived attendance photo. Payroll-period photos are deleted together after ${ATTENDANCE_PHOTO_RETENTION_DAYS} days.`
+                  : `Attendance photos are retained per payroll period for ${ATTENDANCE_PHOTO_RETENTION_DAYS} days.`}
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                 <div>
