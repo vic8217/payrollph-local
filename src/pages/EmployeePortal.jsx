@@ -497,13 +497,14 @@ export default function EmployeePortal() {
     setAuthorizedTab(activeTab);
   };
 
-  const attachAttendancePhoto = async (log, action, photoDataUrl, faceResult) => {
+  const attachAttendancePhoto = async (log, action, photoDataUrl, faceResult, verificationMethod = 'face_verification') => {
     const blob = await fetch(photoDataUrl).then(r => r.blob());
     const photoField = attendancePhotoFields[action];
     const file = new File([blob], `${action || 'attendance'}_photo.jpg`, { type: 'image/jpeg' });
     const { file_url } = await appApi.integrations.Core.UploadFile({ file });
     await appApi.entities.AttendanceLog.update(log.id, {
       ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
+      ...(action ? { [`${action}_verification_method`]: verificationMethod } : {}),
       photo_url: file_url,
       face_verification_result: faceResult?.result || 'disabled',
       face_verification_confidence: faceResult?.confidenceScore ?? null,
@@ -511,7 +512,7 @@ export default function EmployeePortal() {
     });
   };
 
-  const recordAttendanceForEmployee = async (employee, photoDataUrl, faceResult) => {
+  const recordAttendanceForEmployee = async (employee, photoDataUrl, faceResult, verificationMethod = 'face_verification') => {
     const location = await captureAttendanceLocation();
     const logRes = await appApi.functions.invoke('logAttendance', {
       employee_id: employee.employee_id,
@@ -522,7 +523,7 @@ export default function EmployeePortal() {
     if (logRes.duplicate) {
       throw new Error(logRes.message || 'Scan already recorded. Please wait before scanning again.');
     }
-    await attachAttendancePhoto(logRes.log, logRes.action, photoDataUrl, faceResult);
+    await attachAttendancePhoto(logRes.log, logRes.action, photoDataUrl, faceResult, verificationMethod);
     const timeField = attendanceTimeFields[logRes.action];
     return {
       action: attendanceActionLabels[logRes.action] || 'Attendance',
@@ -572,7 +573,7 @@ export default function EmployeePortal() {
 
       const matchedEmployee = await resolveEmployeeFromFaceResult(faceResult.employee);
       setFaceMatchedEmployee(matchedEmployee);
-      const attendance = await recordAttendanceForEmployee(matchedEmployee, facePhoto, faceResult);
+      const attendance = await recordAttendanceForEmployee(matchedEmployee, facePhoto, faceResult, 'face_verification');
       setFaceMessage(`${attendance.action} recorded for ${employeeDisplayName(matchedEmployee)}${attendance.time ? ` at ${attendance.time}` : ''}.`);
       setFacePhoto('');
       setFaceCaptureMetadata(null);
@@ -983,6 +984,7 @@ export default function EmployeePortal() {
                   const { file_url } = await appApi.integrations.Core.UploadFile({ file });
                   await appApi.entities.AttendanceLog.update(logRes.log.id, {
                     ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
+                    ...(action ? { [`${action}_verification_method`]: 'qr_face' } : {}),
                     photo_url: file_url,
                     face_verification_result: faceResult.result,
                     face_verification_confidence: faceResult.confidenceScore ?? null,

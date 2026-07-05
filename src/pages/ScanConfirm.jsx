@@ -170,6 +170,7 @@ async function uploadAttendancePhoto(photoDataUrl, action) {
 
   return {
     [attendancePhotoFields[action]]: file_url,
+    [`${action}_verification_method`]: 'qr_face',
     photo_url: file_url,
     photo_action: action,
   };

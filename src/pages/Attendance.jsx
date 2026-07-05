@@ -24,7 +24,7 @@ import {
   manilaDateString,
 } from '@/lib/dateUtils';
 import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot, sortedShiftAssignments } from '@/lib/shiftSettings';
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert, QrCode, ScanFace } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -287,10 +287,10 @@ function missingAttendanceFields(log, employee, shift, now = new Date()) {
 }
 
 const punchPhotoFields = [
-  { action: 'time_in', label: 'Time In(1)', timeField: 'time_in', photoField: 'time_in_photo_url', locationField: 'time_in_location' },
-  { action: 'break_time_out', label: 'Time Out(1)', timeField: 'break_time_out', photoField: 'break_time_out_photo_url', locationField: 'break_time_out_location' },
-  { action: 'break_time_in', label: 'Time In(2)', timeField: 'break_time_in', photoField: 'break_time_in_photo_url', locationField: 'break_time_in_location' },
-  { action: 'time_out', label: 'Time Out(2)', timeField: 'time_out', photoField: 'time_out_photo_url', locationField: 'time_out_location' },
+  { action: 'time_in', label: 'Time In(1)', timeField: 'time_in', photoField: 'time_in_photo_url', locationField: 'time_in_location', methodField: 'time_in_verification_method' },
+  { action: 'break_time_out', label: 'Time Out(1)', timeField: 'break_time_out', photoField: 'break_time_out_photo_url', locationField: 'break_time_out_location', methodField: 'break_time_out_verification_method' },
+  { action: 'break_time_in', label: 'Time In(2)', timeField: 'break_time_in', photoField: 'break_time_in_photo_url', locationField: 'break_time_in_location', methodField: 'break_time_in_verification_method' },
+  { action: 'time_out', label: 'Time Out(2)', timeField: 'time_out', photoField: 'time_out_photo_url', locationField: 'time_out_location', methodField: 'time_out_verification_method' },
 ];
 
 function latestPunchAction(log) {
@@ -313,6 +313,7 @@ function attendancePhotoItem(log, action) {
       ...punch,
       photoUrl: log[punch.photoField],
       timeValue: log[punch.timeField],
+      verificationMethod: log[punch.methodField],
     };
   }
 
@@ -321,6 +322,7 @@ function attendancePhotoItem(log, action) {
       ...punch,
       photoUrl: log.photo_url,
       timeValue: log[punch.timeField],
+      verificationMethod: log[punch.methodField],
       legacy: true,
     };
   }
@@ -331,6 +333,7 @@ function attendancePhotoItem(log, action) {
       ...punch,
       photoUrl: log.photo_url,
       timeValue: log[punch.timeField],
+      verificationMethod: log[punch.methodField],
       legacy: true,
     };
   }
@@ -901,6 +904,26 @@ function InlinePhotoButton({ photoItem, log, onView }) {
       <Eye className="w-3.5 h-3.5" />
       <span className="sr-only">View {photoItem.label} photo</span>
     </Button>
+  );
+}
+
+function InlineVerificationMethodIcon({ photoItem }) {
+  if (!photoItem?.verificationMethod) return null;
+
+  const isQrFace = photoItem.verificationMethod === 'qr_face';
+  const Icon = isQrFace ? QrCode : ScanFace;
+  const label = isQrFace ? `${photoItem.label} used QR Code + Face` : `${photoItem.label} used Face Verification`;
+
+  return (
+    <span
+      className={`inline-flex h-6 w-6 items-center justify-center rounded ${
+        isQrFace ? 'text-indigo-600 bg-indigo-50' : 'text-emerald-600 bg-emerald-50'
+      }`}
+      title={label}
+      aria-label={label}
+    >
+      <Icon className="w-3.5 h-3.5" />
+    </span>
   );
 }
 
@@ -2332,6 +2355,7 @@ export default function Attendance() {
                               ? <span className="text-green-600 text-xs">{formatManilaTime(displayLog.time_in)}</span>
                               : <span className="text-amber-500 font-medium text-xs">Missing</span>}
                             <InlinePhotoButton photoItem={timeInPhoto} log={log} onView={setPhotoLog} />
+                            <InlineVerificationMethodIcon photoItem={timeInPhoto} />
                             <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
@@ -2341,6 +2365,7 @@ export default function Attendance() {
                               ? <span className="text-orange-500 text-xs">{formatManilaTime(displayLog.break_time_out)}</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
                             <InlinePhotoButton photoItem={breakOutPhoto} log={log} onView={setPhotoLog} />
+                            <InlineVerificationMethodIcon photoItem={breakOutPhoto} />
                             <InlineLocationButton locationItem={breakOutLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
@@ -2352,6 +2377,7 @@ export default function Attendance() {
                                 ? <span className="text-amber-500 font-medium text-xs">Missing</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
                             <InlinePhotoButton photoItem={breakInPhoto} log={log} onView={setPhotoLog} />
+                            <InlineVerificationMethodIcon photoItem={breakInPhoto} />
                             <InlineLocationButton locationItem={breakInLocation} log={log} onView={setLocationLog} />
                           </div>
                         </td>
@@ -2363,6 +2389,7 @@ export default function Attendance() {
 	                                ? <span className="text-amber-500 font-medium text-xs">Missing</span>
 	                                : <span className="text-muted-foreground text-xs">—</span>}
                               <InlinePhotoButton photoItem={timeOutPhoto} log={log} onView={setPhotoLog} />
+                              <InlineVerificationMethodIcon photoItem={timeOutPhoto} />
                               <InlineLocationButton locationItem={timeOutLocation} log={log} onView={setLocationLog} />
                             </div>
 	                        </td>
@@ -2529,6 +2556,16 @@ export default function Attendance() {
                 <div>
                   <p className="font-medium text-foreground">Time</p>
                   <p>{photoLog.timeValue ? formatManilaTime(photoLog.timeValue) : '—'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Verification</p>
+                  <p>
+                    {photoLog.verificationMethod === 'qr_face'
+                      ? 'QR Code + Face'
+                      : photoLog.verificationMethod === 'face_verification'
+                        ? 'Face Verification'
+                        : '—'}
+                  </p>
                 </div>
               </div>
               <Button variant="outline" className="w-full" onClick={() => window.open(photoLog.photoUrl, '_blank', 'noopener,noreferrer')}>
