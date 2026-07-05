@@ -1418,7 +1418,11 @@ export default function Attendance() {
       const selectedRecordId = String(selectedEmployee.id || '');
       const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
       const selectedEmployeeCode = normalizeAttendanceCode(selectedEmployee.employee_id);
-      const periodLogs = all.filter(l => l.date >= startStr && l.date <= endStr);
+      const periodLogs = all.filter(l => {
+        const logCompanyId = String(l.company_profile_id || '');
+        const sameCompany = !logCompanyId || logCompanyId === String(activeCompanyId);
+        return sameCompany && l.date >= startStr && l.date <= endStr;
+      });
       const matchedLogs = periodLogs.filter(l => {
         const logCompanyId = String(l.company_profile_id || '');
         const sameCompany = !logCompanyId || logCompanyId === String(activeCompanyId);
@@ -1430,15 +1434,11 @@ export default function Attendance() {
         return sameCompany && (sameRecord || sameEmployeeId);
       });
 
-      return { logs: matchedLogs, periodLogs, recentLogs: all.slice(0, 8) };
+      return { logs: matchedLogs, periodLogs };
     },
     enabled: !!selectedEmployee && !!activeCompanyId,
   });
   const logs = attendanceData.logs || [];
-  const recentAttendanceLogs = attendanceData.recentLogs || [];
-  const unmatchedPeriodLogs = (attendanceData.periodLogs || [])
-    .filter(log => !logs.some(matched => matched.id === log.id))
-    .slice(0, 8);
 
   const { data: payrollPeriods = [] } = useQuery({
     queryKey: ['payrollPeriods', activeCompanyId],
@@ -2241,78 +2241,11 @@ export default function Attendance() {
                   <tr><td colSpan={13} className="text-center py-10 text-muted-foreground">
                     <div className="space-y-4">
                       <p>No attendance records for this week.</p>
-                      {unmatchedPeriodLogs.length > 0 && (
-                        <div className="mx-auto max-w-4xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-left">
-                          <p className="text-xs font-semibold text-amber-800">
-                            Attendance rows exist in this period, but none matched {employeeFullName(selectedEmployee)} / {selectedEmployee.employee_id}.
-                          </p>
-                          <div className="mt-2 overflow-x-auto">
-                            <table className="w-full text-xs text-amber-900">
-                              <thead>
-                                <tr>
-                                  <th className="py-1 pr-3 text-left font-medium">Date</th>
-                                  <th className="py-1 pr-3 text-left font-medium">Employee ID</th>
-                                  <th className="py-1 pr-3 text-left font-medium">Employee Name</th>
-                                  <th className="py-1 pr-3 text-left font-medium">Company ID</th>
-                                  <th className="py-1 pr-3 text-left font-medium">Time In</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {unmatchedPeriodLogs.map(log => (
-                                  <tr key={log.id}>
-                                    <td className="py-1 pr-3">{log.date || '—'}</td>
-                                    <td className="py-1 pr-3">{log.employee_id || '—'}</td>
-                                    <td className="py-1 pr-3">{log.employee_name || '—'}</td>
-                                    <td className="py-1 pr-3">{log.company_profile_id || '—'}</td>
-                                    <td className="py-1 pr-3">{log.time_in ? formatManilaTime(log.time_in) : '—'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      )}
-                      {unmatchedPeriodLogs.length === 0 && (
-                        <div className="mx-auto max-w-4xl rounded-lg border border-blue-200 bg-blue-50 p-3 text-left">
-                          <p className="text-xs font-semibold text-blue-800">
-                            No attendance rows were returned for {startStr} to {endStr} from this HR server.
-                          </p>
-                          <p className="mt-1 text-xs text-blue-700">
-                            Selected employee: {employeeFullName(selectedEmployee)} / {selectedEmployee.employee_id} · Active company: {activeCompanyId || 'none'}
-                          </p>
-                          {recentAttendanceLogs.length > 0 ? (
-                            <div className="mt-2 overflow-x-auto">
-                              <p className="mb-1 text-xs text-blue-700">Latest attendance rows returned by this server:</p>
-                              <table className="w-full text-xs text-blue-900">
-                                <thead>
-                                  <tr>
-                                    <th className="py-1 pr-3 text-left font-medium">Date</th>
-                                    <th className="py-1 pr-3 text-left font-medium">Employee ID</th>
-                                    <th className="py-1 pr-3 text-left font-medium">Employee Name</th>
-                                    <th className="py-1 pr-3 text-left font-medium">Company ID</th>
-                                    <th className="py-1 pr-3 text-left font-medium">Time In</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {recentAttendanceLogs.map(log => (
-                                    <tr key={log.id}>
-                                      <td className="py-1 pr-3">{log.date || '—'}</td>
-                                      <td className="py-1 pr-3">{log.employee_id || '—'}</td>
-                                      <td className="py-1 pr-3">{log.employee_name || '—'}</td>
-                                      <td className="py-1 pr-3">{log.company_profile_id || '—'}</td>
-                                      <td className="py-1 pr-3">{log.time_in ? formatManilaTime(log.time_in) : '—'}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          ) : (
-                            <p className="mt-2 text-xs text-blue-700">
-                              This HR server returned zero attendance rows total. The employee portal is likely using a different server/database, or the phone is showing cached data.
-                            </p>
-                          )}
-                        </div>
-                      )}
+                      <div className="mx-auto max-w-4xl rounded-lg border border-blue-200 bg-blue-50 p-3 text-left">
+                        <p className="text-xs font-semibold text-blue-800">
+                          No attendance rows were returned for {employeeFullName(selectedEmployee)} from {startStr} to {endStr}.
+                        </p>
+                      </div>
                     </div>
                   </td></tr>
                 ) : (
