@@ -861,7 +861,7 @@ export default function Payroll() {
       totalNet += computedWithIncentives.net_pay;
     }
 
-    await entities.PayrollPeriod.update(period.id, {
+    const updatedPeriod = await entities.PayrollPeriod.update(period.id, {
       total_gross: parseFloat(totalGross.toFixed(2)),
       total_deductions: parseFloat(totalDed.toFixed(2)),
       total_net: parseFloat(totalNet.toFixed(2)),
@@ -869,8 +869,9 @@ export default function Payroll() {
     });
 
     qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+    qc.invalidateQueries({ queryKey: ['payrollRecords'] });
     qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
-    setSelectedPeriod({ ...period });
+    setSelectedPeriod(updatedPeriod);
     setGenerating(false);
   };
 
@@ -916,6 +917,20 @@ export default function Payroll() {
       ].some(value => String(value || '').toLowerCase().includes(normalizedEmployeeSearch))
     )
     : records;
+  const payrollRecordTotals = records.reduce((totals, record) => ({
+    gross: money(totals.gross + (Number(record.gross_pay) || 0)),
+    cashAdvance: money(totals.cashAdvance + (Number(record.cash_advance_deduction) || 0)),
+    deductions: money(totals.deductions + (Number(record.total_deductions) || 0)),
+    net: money(totals.net + (Number(record.net_pay) || 0)),
+  }), { gross: 0, cashAdvance: 0, deductions: 0, net: 0 });
+  const filteredRecordTotals = filteredRecords.reduce((totals, record) => ({
+    gross: money(totals.gross + (Number(record.gross_pay) || 0)),
+    cashAdvance: money(totals.cashAdvance + (Number(record.cash_advance_deduction) || 0)),
+    deductions: money(totals.deductions + (Number(record.total_deductions) || 0)),
+    net: money(totals.net + (Number(record.net_pay) || 0)),
+  }), { gross: 0, cashAdvance: 0, deductions: 0, net: 0 });
+  const selectedPeriodGross = records.length ? payrollRecordTotals.gross : (selectedPeriod?.total_gross || 0);
+  const selectedPeriodNet = records.length ? payrollRecordTotals.net : (selectedPeriod?.total_net || 0);
 
   const handleDeleteAttendancePhotos = () => {
     if (!selectedPeriod) return;
@@ -1284,7 +1299,7 @@ export default function Payroll() {
                     </Button>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {records.length} employees · Gross ₱{(selectedPeriod.total_gross || 0).toLocaleString()} · Net ₱{(selectedPeriod.total_net || 0).toLocaleString()}
+                    {records.length} employees · Gross ₱{selectedPeriodGross.toLocaleString()} · Net ₱{selectedPeriodNet.toLocaleString()}
                   </p>
                   {deleteAttendancePeriodPhotos.error && (
                     <p className="mt-1 text-xs text-destructive">
@@ -1399,6 +1414,22 @@ export default function Payroll() {
                         </tr>
                         );
                         })}
+                        {filteredRecords.length > 0 && (
+                          <tr className="border-t-2 border-border bg-muted/40 font-semibold">
+                            <td className="px-4 py-3 text-right text-foreground">Total</td>
+                            <td className="px-4 py-3 text-right text-foreground">₱{filteredRecordTotals.gross.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right">
+                              {filteredRecordTotals.cashAdvance > 0
+                                ? <span className="text-destructive">-₱{filteredRecordTotals.cashAdvance.toLocaleString()}</span>
+                                : <span className="text-muted-foreground text-xs">—</span>
+                              }
+                            </td>
+                            <td className="px-4 py-3 text-right text-destructive">₱{filteredRecordTotals.deductions.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right font-bold text-foreground">₱{filteredRecordTotals.net.toLocaleString()}</td>
+                            <td className="px-4 py-3"></td>
+                            <td className="px-4 py-3"></td>
+                          </tr>
+                        )}
                         </tbody>
                   </table>
                 </div>
