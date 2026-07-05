@@ -907,17 +907,22 @@ export default function Payroll() {
     : targetPeriod?.status === 'processing'
       ? 'Approve this payroll period before regenerating'
       : undefined;
+  const knownEmployeeIds = new Set(employees.map(employee => String(employee.employee_id || '').toLowerCase()));
+  const eligibleRecords = employeesQuery.isSuccess
+    ? records.filter(record => knownEmployeeIds.has(String(record.employee_id || '').toLowerCase()))
+    : records;
+  const hiddenOrphanRecordCount = Math.max(records.length - eligibleRecords.length, 0);
   const normalizedEmployeeSearch = employeeSearch.trim().toLowerCase();
   const filteredRecords = normalizedEmployeeSearch
-    ? records.filter(record =>
+    ? eligibleRecords.filter(record =>
       [
         record.employee_name,
         record.employee_id,
         record.department,
       ].some(value => String(value || '').toLowerCase().includes(normalizedEmployeeSearch))
     )
-    : records;
-  const payrollRecordTotals = records.reduce((totals, record) => ({
+    : eligibleRecords;
+  const payrollRecordTotals = eligibleRecords.reduce((totals, record) => ({
     gross: money(totals.gross + (Number(record.gross_pay) || 0)),
     cashAdvance: money(totals.cashAdvance + (Number(record.cash_advance_deduction) || 0)),
     deductions: money(totals.deductions + (Number(record.total_deductions) || 0)),
@@ -929,8 +934,8 @@ export default function Payroll() {
     deductions: money(totals.deductions + (Number(record.total_deductions) || 0)),
     net: money(totals.net + (Number(record.net_pay) || 0)),
   }), { gross: 0, cashAdvance: 0, deductions: 0, net: 0 });
-  const selectedPeriodGross = records.length ? payrollRecordTotals.gross : (selectedPeriod?.total_gross || 0);
-  const selectedPeriodNet = records.length ? payrollRecordTotals.net : (selectedPeriod?.total_net || 0);
+  const selectedPeriodGross = eligibleRecords.length ? payrollRecordTotals.gross : (selectedPeriod?.total_gross || 0);
+  const selectedPeriodNet = eligibleRecords.length ? payrollRecordTotals.net : (selectedPeriod?.total_net || 0);
 
   const handleDeleteAttendancePhotos = () => {
     if (!selectedPeriod) return;
@@ -1299,8 +1304,13 @@ export default function Payroll() {
                     </Button>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {records.length} employees · Gross ₱{selectedPeriodGross.toLocaleString()} · Net ₱{selectedPeriodNet.toLocaleString()}
+                    {eligibleRecords.length} employees · Gross ₱{selectedPeriodGross.toLocaleString()} · Net ₱{selectedPeriodNet.toLocaleString()}
                   </p>
+                  {hiddenOrphanRecordCount > 0 && (
+                    <p className="mt-1 text-xs text-amber-700">
+                      {hiddenOrphanRecordCount} saved payroll record{hiddenOrphanRecordCount === 1 ? '' : 's'} hidden because the employee is no longer in this company employee list.
+                    </p>
+                  )}
                   {deleteAttendancePeriodPhotos.error && (
                     <p className="mt-1 text-xs text-destructive">
                       {deleteAttendancePeriodPhotos.error.message || 'Unable to delete attendance photos.'}
@@ -1336,7 +1346,7 @@ export default function Payroll() {
                   <div>
                     <p className="text-sm font-medium text-foreground">Employee Payroll Records</p>
                     <p className="text-xs text-muted-foreground">
-                      Showing {filteredRecords.length} of {records.length} employee{records.length === 1 ? '' : 's'}
+                      Showing {filteredRecords.length} of {eligibleRecords.length} employee{eligibleRecords.length === 1 ? '' : 's'}
                     </p>
                   </div>
                   <div className="relative w-full sm:w-72">
@@ -1363,7 +1373,7 @@ export default function Payroll() {
                       </tr>
                     </thead>
                     <tbody>
-                      {records.length === 0 ? (
+                      {eligibleRecords.length === 0 ? (
                        <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No payroll records. Click "Generate Payroll" to compute.</td></tr>
                       ) : filteredRecords.length === 0 ? (
                        <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No employees match your search.</td></tr>
