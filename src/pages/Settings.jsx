@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Clock, Plus, Pencil, Trash2, Star } from 'lucide-react';
+import { Clock, Plus, Pencil, Trash2, Star, FileText, ExternalLink } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
 import { requestJson } from '@/lib/appApi';
 import { manilaDateString } from '@/lib/dateUtils';
@@ -39,17 +39,68 @@ function ShiftForm({ shift, onSave, onClose }) {
     grace_period_minutes: shift?.grace_period_minutes || 0,
     time_in_allowance_minutes: shift?.time_in_allowance_minutes || 0,
     paid_break_time: Boolean(shift?.paid_break_time),
+    paid_breaktime_approval_document_url: shift?.paid_breaktime_approval_document_url || null,
+    paid_breaktime_approval_document_name: shift?.paid_breaktime_approval_document_name || null,
+    paid_breaktime_approval_uploaded_at: shift?.paid_breaktime_approval_uploaded_at || null,
     is_default: shift?.is_default || false,
   });
+  const [approvalFile, setApprovalFile] = useState(null);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const approvalPreviewUrl = useMemo(() => (
+    approvalFile ? URL.createObjectURL(approvalFile) : null
+  ), [approvalFile]);
 
-  const handleSubmit = (e) => {
+  useEffect(() => () => {
+    if (approvalPreviewUrl) URL.revokeObjectURL(approvalPreviewUrl);
+  }, [approvalPreviewUrl]);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSave(form);
+    setUploadError('');
+
+    let payload = { ...form };
+    if (payload.paid_break_time) {
+      if (!payload.paid_breaktime_approval_document_url && !approvalFile) {
+        setUploadError('Director approval document is required for paid breaktime.');
+        return;
+      }
+
+      if (approvalFile) {
+        setUploadingDocument(true);
+        try {
+          const { file_url: fileUrl } = await appApi.integrations.Core.UploadFile({ file: approvalFile });
+          payload = {
+            ...payload,
+            paid_breaktime_approval_document_url: fileUrl,
+            paid_breaktime_approval_document_name: approvalFile.name,
+            paid_breaktime_approval_uploaded_at: new Date().toISOString(),
+          };
+        } catch (error) {
+          setUploadError(error?.message || 'Unable to upload the director approval document.');
+          setUploadingDocument(false);
+          return;
+        }
+        setUploadingDocument(false);
+      }
+    } else {
+      payload = {
+        ...payload,
+        paid_breaktime_approval_document_url: null,
+        paid_breaktime_approval_document_name: null,
+        paid_breaktime_approval_uploaded_at: null,
+      };
+    }
+
+    onSave(payload);
   };
+
+  const approvalDocumentName = approvalFile?.name || form.paid_breaktime_approval_document_name;
+  const approvalDocumentUrl = approvalPreviewUrl || form.paid_breaktime_approval_document_url;
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{shift ? 'Edit Shift' : 'Add Shift'}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -129,7 +180,19 @@ function ShiftForm({ shift, onSave, onClose }) {
               type="checkbox"
               id="paid_break_time"
               checked={form.paid_break_time}
-              onChange={e => setForm(f => ({ ...f, paid_break_time: e.target.checked }))}
+              onChange={e => {
+                const checked = e.target.checked;
+                if (!checked) setApprovalFile(null);
+                setForm(f => ({
+                  ...f,
+                  paid_break_time: checked,
+                  ...(!checked ? {
+                    paid_breaktime_approval_document_url: null,
+                    paid_breaktime_approval_document_name: null,
+                    paid_breaktime_approval_uploaded_at: null,
+                  } : {}),
+                }));
+              }}
               className="rounded"
             />
             <label htmlFor="paid_break_time" className="text-sm font-medium cursor-pointer">
@@ -139,6 +202,41 @@ function ShiftForm({ shift, onSave, onClose }) {
           <p className="-mt-3 text-xs text-muted-foreground">
             When enabled, breaktime is included in worked hours, overtime, and night differential.
           </p>
+          {form.paid_break_time && (
+            <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+              <div>
+                <label className="text-sm font-medium">Director approval document</label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Required before saving a shift with paid breaktime.
+                </p>
+              </div>
+              <Input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={e => setApprovalFile(e.target.files?.[0] || null)}
+                required={!form.paid_breaktime_approval_document_url}
+              />
+              {approvalDocumentName && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background px-3 py-2 text-sm">
+                  <span className="inline-flex min-w-0 items-center gap-2 text-muted-foreground">
+                    <FileText className="h-4 w-4 flex-shrink-0" />
+                    <span className="truncate">{approvalDocumentName}</span>
+                  </span>
+                  {approvalDocumentUrl && (
+                    <a
+                      href={approvalDocumentUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      View <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </div>
+              )}
+              {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -152,8 +250,10 @@ function ShiftForm({ shift, onSave, onClose }) {
             </label>
           </div>
           <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">Save Shift</Button>
+            <Button type="button" variant="outline" onClick={onClose} disabled={uploadingDocument}>Cancel</Button>
+            <Button type="submit" disabled={uploadingDocument}>
+              {uploadingDocument ? 'Uploading...' : 'Save Shift'}
+            </Button>
           </div>
         </form>
       </DialogContent>
@@ -385,6 +485,16 @@ export default function Settings() {
                       )}
                       {shift.paid_break_time && (
                         <span className="text-xs ml-2">• Paid breaktime</span>
+                      )}
+                      {shift.paid_break_time && shift.paid_breaktime_approval_document_url && (
+                        <a
+                          href={shift.paid_breaktime_approval_document_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs ml-2 text-primary hover:underline"
+                        >
+                          <FileText className="h-3 w-3" /> View approval
+                        </a>
                       )}
                       {shift.time_in_allowance_minutes > 0 && (
                         <span className="text-xs ml-2">• Time In(1) allowance: {shift.time_in_allowance_minutes}min</span>

@@ -10,6 +10,9 @@ const VERSION_FIELDS = [
   'grace_period_minutes',
   'time_in_allowance_minutes',
   'paid_break_time',
+  'paid_breaktime_approval_document_url',
+  'paid_breaktime_approval_document_name',
+  'paid_breaktime_approval_uploaded_at',
   'is_default',
   'is_active',
 ];

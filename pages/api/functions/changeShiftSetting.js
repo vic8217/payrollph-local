@@ -30,6 +30,22 @@ function appendVersion(shift, effectiveDate, values, audit) {
   return versions.sort((a, b) => a.effective_date.localeCompare(b.effective_date));
 }
 
+function normalizeShiftData(data = {}) {
+  const normalized = { ...data };
+  if (normalized.paid_break_time) {
+    if (!normalized.paid_breaktime_approval_document_url) {
+      throw new Error('Director approval document is required for paid breaktime.');
+    }
+    normalized.paid_breaktime_approval_document_name = normalized.paid_breaktime_approval_document_name || 'Director approval document';
+    normalized.paid_breaktime_approval_uploaded_at = normalized.paid_breaktime_approval_uploaded_at || new Date().toISOString();
+  } else {
+    normalized.paid_breaktime_approval_document_url = null;
+    normalized.paid_breaktime_approval_document_name = null;
+    normalized.paid_breaktime_approval_uploaded_at = null;
+  }
+  return normalized;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -91,28 +107,41 @@ export default async function handler(req, res) {
 
   let changedShift;
   if (operation === 'create') {
+    let shiftData;
+    try {
+      shiftData = normalizeShiftData(data);
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
+    }
     const created = await createRecord('Settings', {
-      ...data,
+      ...shiftData,
       company_profile_id: companyProfileId,
       effective_versions: [
         {
           effective_date: SHIFT_VERSION_BASE_DATE,
-          ...shiftVersionSnapshot(data, { is_active: false, is_default: false }),
+          ...shiftVersionSnapshot(shiftData, { is_active: false, is_default: false }),
         },
         {
           effective_date: effectiveDate,
-          ...shiftVersionSnapshot(data, { is_active: true }),
+          ...shiftVersionSnapshot(shiftData, { is_active: true }),
           ...audit,
         },
       ],
     });
     changedShift = created;
   } else {
-    const nextValues = operation === 'delete'
+    let nextValues = operation === 'delete'
       ? { is_active: false, is_default: false }
       : operation === 'set_default'
         ? { is_default: true }
         : data;
+    if (operation === 'update') {
+      try {
+        nextValues = normalizeShiftData(nextValues);
+      } catch (validationError) {
+        return res.status(400).json({ error: validationError.message });
+      }
+    }
     changedShift = await updateRecord('Settings', shift.id, {
       ...nextValues,
       effective_versions: appendVersion(shift, effectiveDate, nextValues, audit),
