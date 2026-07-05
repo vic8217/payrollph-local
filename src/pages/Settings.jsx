@@ -38,6 +38,7 @@ function ShiftForm({ shift, onSave, onClose }) {
     overtime_start_time: shift?.overtime_start_time || '17:30',
     grace_period_minutes: shift?.grace_period_minutes || 0,
     time_in_allowance_minutes: shift?.time_in_allowance_minutes || 0,
+    paid_break_time: Boolean(shift?.paid_break_time),
     is_default: shift?.is_default || false,
   });
 
@@ -123,6 +124,21 @@ function ShiftForm({ shift, onSave, onClose }) {
             />
             <p className="text-xs text-muted-foreground mt-1">Credited toward worked hours when first time-in is within this many minutes after shift start</p>
           </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="paid_break_time"
+              checked={form.paid_break_time}
+              onChange={e => setForm(f => ({ ...f, paid_break_time: e.target.checked }))}
+              className="rounded"
+            />
+            <label htmlFor="paid_break_time" className="text-sm font-medium cursor-pointer">
+              Paid breaktime
+            </label>
+          </div>
+          <p className="-mt-3 text-xs text-muted-foreground">
+            When enabled, breaktime is included in worked hours, overtime, and night differential.
+          </p>
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -366,6 +382,9 @@ export default function Settings() {
                       <span className="text-xs ml-2">• OT starts: {formatTime(shift.overtime_start_time || '17:30')}</span>
                       {shift.grace_period_minutes > 0 && (
                         <span className="text-xs ml-2">• Grace: {shift.grace_period_minutes}min</span>
+                      )}
+                      {shift.paid_break_time && (
+                        <span className="text-xs ml-2">• Paid breaktime</span>
                       )}
                       {shift.time_in_allowance_minutes > 0 && (
                         <span className="text-xs ml-2">• Time In(1) allowance: {shift.time_in_allowance_minutes}min</span>

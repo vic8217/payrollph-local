@@ -189,6 +189,7 @@ function resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift) {
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+    paidBreakTime: Boolean(shift.paid_break_time),
   };
 }
 
@@ -550,6 +551,7 @@ export default function Payroll() {
           breakDurationMinutes: [30, 60].includes(Number(employee.break_duration_minutes))
             ? Number(employee.break_duration_minutes)
             : 60,
+          paidBreakTime: Boolean(defaultShift.paid_break_time),
           applyStatutoryDeductions: false,
           resolveLogOptions: (log) => ({
             ...resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift),
@@ -779,6 +781,7 @@ export default function Payroll() {
           lateGraceMinutes: gracePeriodMinutes,
           breakInGraceMinutes: gracePeriodMinutes,
           breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
+          paidBreakTime: Boolean(defaultShift.paid_break_time),
           resolveLogOptions: (log) => ({
             ...resolveShiftOptionsForLog(log, emp, shiftSettings, defaultShift),
             breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,

@@ -118,6 +118,7 @@ function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) 
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
     lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
+    paidBreakTime: Boolean(shift.paid_break_time),
     isOvernightShift: shiftEndTime <= shiftStartTime,
   };
 }
@@ -400,6 +401,7 @@ export default function ScanConfirm() {
         shift_overtime_start_time: shiftOptions.overtimeStartTime,
         shift_grace_period_minutes: shiftOptions.lateGraceMinutes,
         shift_time_in_allowance_minutes: shiftOptions.timeInAllowanceMinutes,
+        shift_paid_break_time: shiftOptions.paidBreakTime,
         ...(scheduledBreakAfterTimeIn(employee, today, effectiveTimeIn, shiftOptions.isOvernightShift) || {}),
         day_type: 'regular',
         status: 'pending',
@@ -456,6 +458,7 @@ export default function ScanConfirm() {
       }, {
         ...shiftOptions,
         breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: shiftOptions.paidBreakTime,
       });
       const overtimeHours = computeOvertimeHours({
         ...todayLog,
@@ -466,6 +469,7 @@ export default function ScanConfirm() {
       }, hoursWorked, {
         ...shiftOptions,
         breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: shiftOptions.paidBreakTime,
       });
       const completedLog = {
         ...todayLog,
@@ -479,6 +483,7 @@ export default function ScanConfirm() {
       const nightDiffHours = computeNightDifferentialHours(completedLog, {
         shiftStartTime: shiftOptions.shiftStartTime,
         breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: shiftOptions.paidBreakTime,
       });
       const lateMinutes = computeLateMinutes(completedLog, {
         ...shiftOptions,

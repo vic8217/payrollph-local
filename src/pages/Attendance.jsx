@@ -611,6 +611,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         lateGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: Boolean(selectedShift.paid_break_time),
       });
       updates.hours_worked = parseFloat(hrs.toFixed(2));
       const recomputedOvertime = computeOvertimeHours({
@@ -625,6 +626,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         overtimeStartTime: selectedShift.overtime_start_time || fallbackShift.overtime_start_time,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: Boolean(selectedShift.paid_break_time),
       });
       const attendanceMetrics = {
         ...log,
@@ -642,6 +644,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       updates.night_diff_hours = computeNightDifferentialHours(attendanceMetrics, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
         breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: Boolean(selectedShift.paid_break_time),
       });
       updates.late_minutes = computeLateMinutes(attendanceMetrics, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
@@ -1597,6 +1600,7 @@ export default function Attendance() {
       lateGraceMinutes: shift.grace_period_minutes || 0,
       breakInGraceMinutes: shift.grace_period_minutes || 0,
       breakDurationMinutes: getBreakDurationMinutes(employee),
+      paidBreakTime: Boolean(shift.paid_break_time),
     };
   };
   const defaultShiftValue = getDefaultShiftValue();

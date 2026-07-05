@@ -9,6 +9,7 @@ const VERSION_FIELDS = [
   'overtime_start_time',
   'grace_period_minutes',
   'time_in_allowance_minutes',
+  'paid_break_time',
   'is_default',
   'is_active',
 ];
@@ -59,6 +60,7 @@ export function shiftFromAttendanceSnapshot(log, fallbackShift) {
     overtime_start_time: log.shift_overtime_start_time,
     grace_period_minutes: log.shift_grace_period_minutes,
     time_in_allowance_minutes: log.shift_time_in_allowance_minutes,
+    paid_break_time: log.shift_paid_break_time,
   };
 }
 

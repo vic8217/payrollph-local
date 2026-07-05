@@ -43,6 +43,7 @@
  * @property {number=} lateGraceMinutes
  * @property {number=} breakInGraceMinutes
  * @property {number=} breakDurationMinutes
+ * @property {boolean=} paidBreakTime
  * @property {string=} overtimeStartTime
  * @property {boolean=} applyStatutoryDeductions
  * @property {(log: PayrollLog, employee?: EmployeePayrollInfo) => HoursComputationOptions=} resolveLogOptions
@@ -352,6 +353,7 @@ export function computeCreditedHoursWorked(
 		timeInAllowanceMinutes = 0,
 		breakInGraceMinutes = 0,
 		breakDurationMinutes = 60,
+		paidBreakTime = false,
 	} = {},
 ) {
 	const timeIn = toValidDate(log.time_in);
@@ -378,6 +380,11 @@ export function computeCreditedHoursWorked(
 	const breakOut = toValidDate(normalizedLog.break_time_out);
 	const recordedBreakIn = toValidDate(normalizedLog.break_time_in);
 	let effectiveBreakIn = recordedBreakIn;
+	if (paidBreakTime) {
+		return parseFloat(
+			Math.max(0, (timeOut.getTime() - effectiveTimeIn.getTime()) / 36e5).toFixed(2),
+		);
+	}
 
 	if (breakOut && recordedBreakIn) {
 		const expectedBreakIn = new Date(breakOut);
@@ -489,7 +496,7 @@ export function computeNightDifferentialHours(
 	/** @type {PayrollLog} */
 	log,
 	/** @type {HoursComputationOptions} */
-	{ shiftStartTime, breakDurationMinutes = 60 } = {},
+	{ shiftStartTime, breakDurationMinutes = 60, paidBreakTime = false } = {},
 ) {
 	const timeIn = toValidDate(log.time_in);
 	const timeOut = toValidDate(log.time_out);
@@ -503,7 +510,9 @@ export function computeNightDifferentialHours(
 		: timeIn;
 	if (timeOut.getTime() <= effectiveTimeIn.getTime()) return 0;
 
-	const { breakOut, breakIn } = resolveBreakInterval(log, breakDurationMinutes, effectiveTimeIn, timeOut);
+	const { breakOut, breakIn } = paidBreakTime
+		? { breakOut: null, breakIn: null }
+		: resolveBreakInterval(log, breakDurationMinutes, effectiveTimeIn, timeOut);
 	const workIntervals = breakOut && breakIn
 		? [[effectiveTimeIn, breakOut], [breakIn, timeOut]]
 		: [[effectiveTimeIn, timeOut]];
@@ -535,6 +544,7 @@ export function computeOvertimeHours(
 		overtimeStartTime,
 		breakInGraceMinutes = 0,
 		breakDurationMinutes = 60,
+		paidBreakTime = false,
 	} = {},
 ) {
 	if (!overtimeStartTime) {
@@ -566,7 +576,7 @@ export function computeOvertimeHours(
 	);
 
 	const workStart = toValidDate(log.time_in) || overtimeWindowStart;
-	const breakOut = normalizePunchWithinWorkInterval(log, log.break_time_out, workStart, timeOut);
+	const breakOut = paidBreakTime ? null : normalizePunchWithinWorkInterval(log, log.break_time_out, workStart, timeOut);
 	const recordedBreakIn = normalizePunchWithinWorkInterval(log, log.break_time_in, workStart, timeOut);
 	let effectiveBreakIn = recordedBreakIn;
 	if (breakOut && recordedBreakIn) {

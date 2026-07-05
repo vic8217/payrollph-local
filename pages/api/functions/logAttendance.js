@@ -163,6 +163,7 @@ function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) 
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
     lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
+    paidBreakTime: Boolean(shift.paid_break_time),
     isOvernightShift: shiftEndTime <= shiftStartTime,
   };
 }
@@ -359,6 +360,7 @@ export default async function handler(req, res) {
       shift_overtime_start_time: currentShiftOptions.overtimeStartTime,
       shift_grace_period_minutes: currentShiftOptions.lateGraceMinutes,
       shift_time_in_allowance_minutes: currentShiftOptions.timeInAllowanceMinutes,
+      shift_paid_break_time: currentShiftOptions.paidBreakTime,
       ...(autoBreak || {}),
       ...locationUpdateFor("time_in", location),
       status: "pending",
@@ -446,16 +448,19 @@ export default async function handler(req, res) {
     const hoursWorked = computeCreditedHoursWorked(completedLog, {
       ...shiftOptions,
       breakDurationMinutes: getBreakDurationMinutes(employee),
+      paidBreakTime: shiftOptions.paidBreakTime,
     });
     const overtimeHours = computeOvertimeHours(completedLog, hoursWorked, {
       ...shiftOptions,
       breakDurationMinutes: getBreakDurationMinutes(employee),
+      paidBreakTime: shiftOptions.paidBreakTime,
     });
     const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, employee);
     const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
     const nightDiffHours = computeNightDifferentialHours(completedLog, {
       shiftStartTime: shiftOptions.shiftStartTime,
       breakDurationMinutes: getBreakDurationMinutes(employee),
+      paidBreakTime: shiftOptions.paidBreakTime,
     });
     const lateMinutes = computeLateMinutes(completedLog, shiftOptions);
     const log = await updateRecord("AttendanceLog", currentLog.id, {
