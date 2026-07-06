@@ -68,6 +68,9 @@ const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
 const ATTENDANCE_PHOTO_RETENTION_DAYS = 21;
 
+const formatHours = (value) => `${(Number(value) || 0).toFixed(2)}h`;
+const formatMinutes = (value) => `${Math.round(Number(value) || 0)}m`;
+
 const legacyShiftOptions = [
   { value: 'day_shift', label: 'Day Shift', shortLabel: 'Day' },
   { value: 'night_shift', label: 'Night Shift', shortLabel: 'Night' },
@@ -913,14 +916,14 @@ function InlinePhotoButton({ photoItem, log, onView }) {
 function InlineVerificationMethodIcon({ photoItem }) {
   if (!photoItem?.verificationMethod) return null;
 
-  const isQrFace = photoItem.verificationMethod === 'qr_face';
-  const Icon = isQrFace ? QrCode : ScanFace;
-  const label = isQrFace ? `${photoItem.label} used QR Code + Face` : `${photoItem.label} used Face Verification`;
+  const isQrPhoto = ['qr_face', 'qr_photo_liveness'].includes(photoItem.verificationMethod);
+  const Icon = isQrPhoto ? QrCode : ScanFace;
+  const label = isQrPhoto ? `${photoItem.label} used QR Code + Photo` : `${photoItem.label} used Face Verification`;
 
   return (
     <span
       className={`inline-flex h-6 w-6 items-center justify-center rounded ${
-        isQrFace ? 'text-indigo-600 bg-indigo-50' : 'text-emerald-600 bg-emerald-50'
+        isQrPhoto ? 'text-indigo-600 bg-indigo-50' : 'text-emerald-600 bg-emerald-50'
       }`}
       title={label}
       aria-label={label}
@@ -1390,6 +1393,7 @@ export default function Attendance() {
   const [locationLog, setLocationLog] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('all');
+  const [summaryDate, setSummaryDate] = useState(() => manilaDateString());
   const [showQuickView, setShowQuickView] = useState(false);
   const { user: currentUser } = useAuth();
   const { activeCompanyId, activeCompany } = useCompany();
@@ -1607,6 +1611,57 @@ export default function Attendance() {
   const getLogShiftValue = (log) => getEmployeeLogShiftValue(log);
   const getLogShift = (log) => getEmployeeLogShift(log);
   const getLogComputationOptions = (log) => getEmployeeLogComputationOptions(log);
+
+  const computeLogSummaryMetrics = (log, employee) => {
+    if (!log) {
+      return {
+        logs: 0,
+        completed: false,
+        hours: 0,
+        undertimeMinutes: 0,
+        overtimeHours: 0,
+        nightDiffHours: 0,
+      };
+    }
+
+    const computationOptions = getEmployeeLogComputationOptions(log, employee);
+    const completed = Boolean(log.time_in && log.time_out);
+    const hours = completed
+      ? computeCreditedHoursWorked(log, computationOptions)
+      : Number(log.hours_worked) || 0;
+    const lateMinutes = computeLateMinutes(log, computationOptions);
+    const isHalfDay = (log.day_type || '') === 'half_day';
+    const missingMinutesFromHours = hours > 0 && hours < 8 ? (8 - hours) * 60 : 0;
+    const manualUndertimeMinutes = Number(log.undertime_minutes) || 0;
+    const undertimeMinutes = isHalfDay
+      ? 0
+      : manualUndertimeMinutes > 0
+        ? manualUndertimeMinutes
+        : Math.max(0, missingMinutesFromHours - lateMinutes);
+    const computedOvertime = completed
+      ? computeOvertimeHours(log, hours, computationOptions)
+      : Number(log.overtime_hours) || 0;
+    const approvedRequest = approvedOvertimeRequestForLog(log, overtimeRequests, employee);
+    const hasRequestAwareOvertime =
+      log.overtime_request_id != null ||
+      approvedRequest ||
+      ['approved', 'denied'].includes(log.ot_status);
+    const overtimeHours = hasRequestAwareOvertime
+      ? Number(log.overtime_hours) || 0
+      : computedOvertime;
+    const nightDiffHours = completed
+      ? computeNightDifferentialHours(log, computationOptions)
+      : Number(log.night_diff_hours) || 0;
+
+    return {
+      logs: 1,
+      completed,
+      hours,
+      undertimeMinutes,
+      overtimeHours,
+      nightDiffHours,
+    };
+  };
 
   const handleApproveLog = (log) => {
     const logShiftValue = getLogShiftValue(log);
@@ -1857,6 +1912,72 @@ export default function Attendance() {
     late: totals.late + row.late,
   }), { employees: filteredEmployees.length, logs: 0, completed: 0, incomplete: 0, pending: 0, approved: 0, rejected: 0, hours: 0, overtime: 0, late: 0 });
 
+  const selectedDateLogs = allAttendanceLogs.filter(log => log.date === summaryDate);
+  const dailySummaryRows = filteredEmployees
+    .map(employee => {
+      const employeeLogs = selectedDateLogs.filter(log => {
+        const sameRecord = String(log.employee_record_id || '') === String(employee.id || '');
+        const sameEmployeeId =
+          normalizeAttendanceKey(log.employee_id) === normalizeAttendanceKey(employee.employee_id) ||
+          normalizeAttendanceCode(log.employee_id) === normalizeAttendanceCode(employee.employee_id);
+        return sameRecord || sameEmployeeId;
+      });
+      const primaryLog = employeeLogs[0] || null;
+      const metrics = employeeLogs.reduce((totals, log) => {
+        const item = computeLogSummaryMetrics(log, employee);
+        return {
+          logs: totals.logs + item.logs,
+          completed: totals.completed || item.completed,
+          hours: totals.hours + item.hours,
+          undertimeMinutes: totals.undertimeMinutes + item.undertimeMinutes,
+          overtimeHours: totals.overtimeHours + item.overtimeHours,
+          nightDiffHours: totals.nightDiffHours + item.nightDiffHours,
+        };
+      }, {
+        logs: 0,
+        completed: false,
+        hours: 0,
+        undertimeMinutes: 0,
+        overtimeHours: 0,
+        nightDiffHours: 0,
+      });
+
+      return {
+        employee,
+        log: primaryLog,
+        ...metrics,
+        status: primaryLog?.status || (employeeLogs.length ? 'pending' : 'no_log'),
+      };
+    })
+    .sort((a, b) => {
+      const aHasLog = a.logs > 0 ? 0 : 1;
+      const bHasLog = b.logs > 0 ? 0 : 1;
+      if (aHasLog !== bHasLog) return aHasLog - bHasLog;
+      return `${a.employee.last_name || ''} ${a.employee.first_name || ''}`.localeCompare(`${b.employee.last_name || ''} ${b.employee.first_name || ''}`);
+    });
+
+  const dailySummaryTotals = dailySummaryRows.reduce((totals, row) => ({
+    employees: totals.employees + 1,
+    present: totals.present + (row.logs > 0 ? 1 : 0),
+    complete: totals.complete + (row.completed ? 1 : 0),
+    incomplete: totals.incomplete + (row.logs > 0 && !row.completed ? 1 : 0),
+    noLog: totals.noLog + (row.logs === 0 ? 1 : 0),
+    hours: totals.hours + row.hours,
+    undertimeMinutes: totals.undertimeMinutes + row.undertimeMinutes,
+    overtimeHours: totals.overtimeHours + row.overtimeHours,
+    nightDiffHours: totals.nightDiffHours + row.nightDiffHours,
+  }), {
+    employees: 0,
+    present: 0,
+    complete: 0,
+    incomplete: 0,
+    noLog: 0,
+    hours: 0,
+    undertimeMinutes: 0,
+    overtimeHours: 0,
+    nightDiffHours: 0,
+  });
+
   const handleDownloadCSV = async () => {
     setDownloading(true);
     try {
@@ -1952,6 +2073,132 @@ export default function Attendance() {
           </div>
         ) : (
           <>
+            <Card className="border border-border shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <p className="font-semibold text-sm text-foreground">Daily Attendance Summary</p>
+                  <p className="text-xs text-muted-foreground">
+                    {filterDept === 'all' ? 'All departments' : filterDept} · {summaryDate}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={summaryDate}
+                    onChange={event => setSummaryDate(event.target.value || manilaDateString())}
+                    className="h-8 w-40 text-sm"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => setSummaryDate(manilaDateString())}
+                  >
+                    Today
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 border-b border-border">
+                <div className="px-4 py-3 border-r border-border last:border-r-0">
+                  <p className="text-xs text-muted-foreground">Employees</p>
+                  <p className="text-lg font-semibold text-foreground">{dailySummaryTotals.employees}</p>
+                </div>
+                <div className="px-4 py-3 border-r border-border last:border-r-0">
+                  <p className="text-xs text-muted-foreground">Present</p>
+                  <p className="text-lg font-semibold text-emerald-700">{dailySummaryTotals.present}</p>
+                </div>
+                <div className="px-4 py-3 border-r border-border last:border-r-0">
+                  <p className="text-xs text-muted-foreground">Complete</p>
+                  <p className="text-lg font-semibold text-foreground">{dailySummaryTotals.complete}</p>
+                </div>
+                <div className="px-4 py-3 border-r border-border last:border-r-0">
+                  <p className="text-xs text-muted-foreground">Incomplete</p>
+                  <p className="text-lg font-semibold text-amber-700">{dailySummaryTotals.incomplete}</p>
+                </div>
+                <div className="px-4 py-3 border-r border-border last:border-r-0">
+                  <p className="text-xs text-muted-foreground">Work Hours</p>
+                  <p className="text-lg font-semibold text-foreground">{formatHours(dailySummaryTotals.hours)}</p>
+                </div>
+                <div className="px-4 py-3 border-r border-border last:border-r-0">
+                  <p className="text-xs text-muted-foreground">Undertime</p>
+                  <p className="text-lg font-semibold text-red-700">{formatMinutes(dailySummaryTotals.undertimeMinutes)}</p>
+                </div>
+                <div className="px-4 py-3 border-r border-border last:border-r-0">
+                  <p className="text-xs text-muted-foreground">Overtime</p>
+                  <p className="text-lg font-semibold text-blue-700">{formatHours(dailySummaryTotals.overtimeHours)}</p>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Night Diff</p>
+                  <p className="text-lg font-semibold text-violet-700">{formatHours(dailySummaryTotals.nightDiffHours)}</p>
+                </div>
+              </div>
+
+              {loadingQuickView ? (
+                <div className="flex justify-center py-8">
+                  <div className="w-7 h-7 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+                </div>
+              ) : (
+                <div className="max-h-80 overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/70 backdrop-blur border-b border-border">
+                      <tr>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Employee</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Department</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time In</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time Out</th>
+                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Hours</th>
+                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Undertime</th>
+                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">OT</th>
+                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Night Diff</th>
+                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dailySummaryRows.map(row => (
+                        <tr key={row.employee.id} className="border-b border-border last:border-0">
+                          <td className="px-4 py-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedEmployee(row.employee)}
+                              className="font-medium text-foreground hover:text-primary text-left"
+                            >
+                              {employeeFullName(row.employee)}
+                            </button>
+                            <p className="text-xs text-muted-foreground">{row.employee.employee_id}</p>
+                          </td>
+                          <td className="px-4 py-2 text-muted-foreground">{row.employee.department || '—'}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{row.log?.time_in ? formatManilaTime(row.log.time_in) : '—'}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{row.log?.time_out ? formatManilaTime(row.log.time_out) : '—'}</td>
+                          <td className="px-4 py-2 text-right">{formatHours(row.hours)}</td>
+                          <td className="px-4 py-2 text-right text-red-700">{formatMinutes(row.undertimeMinutes)}</td>
+                          <td className="px-4 py-2 text-right text-blue-700">{formatHours(row.overtimeHours)}</td>
+                          <td className="px-4 py-2 text-right text-violet-700">{formatHours(row.nightDiffHours)}</td>
+                          <td className="px-4 py-2 text-right">
+                            {row.status === 'no_log' ? (
+                              <Badge variant="outline" className="bg-muted text-muted-foreground border-border">No log</Badge>
+                            ) : (
+                              <Badge className={statusColors[row.status] || statusColors.pending}>
+                                {row.status}
+                              </Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {dailySummaryRows.length === 0 && (
+                        <tr>
+                          <td colSpan={9} className="text-center py-8 text-muted-foreground">
+                            No employees found for this filter.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+
             {pendingOvertimeRequests.length > 0 && (
               <Card className="border border-amber-200 bg-amber-50/50 shadow-sm overflow-hidden">
                 <div className="px-4 py-3 border-b border-amber-200 flex items-center justify-between gap-3">
@@ -2497,8 +2744,8 @@ export default function Attendance() {
                 <div>
                   <p className="font-medium text-foreground">Verification</p>
                   <p>
-                    {photoLog.verificationMethod === 'qr_face'
-                      ? 'QR Code + Face'
+                    {['qr_face', 'qr_photo_liveness'].includes(photoLog.verificationMethod)
+                      ? 'QR Code + Photo'
                       : photoLog.verificationMethod === 'face_verification'
                         ? 'Face Verification'
                         : '—'}

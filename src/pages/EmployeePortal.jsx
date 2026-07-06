@@ -767,7 +767,7 @@ export default function EmployeePortal() {
                   const { file_url } = await appApi.integrations.Core.UploadFile({ file });
                   await appApi.entities.AttendanceLog.update(logRes.log.id, {
                     ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
-                    ...(action ? { [`${action}_verification_method`]: 'qr_face' } : {}),
+                    ...(action ? { [`${action}_verification_method`]: 'qr_photo_liveness' } : {}),
                     photo_url: file_url,
                     face_verification_result: 'disabled',
                     face_verification_confidence: null,
@@ -790,9 +790,17 @@ export default function EmployeePortal() {
                     action: actionLabels[action] || 'Attendance',
                     time: timeField && logRes.log?.[timeField] ? formatManilaTime(logRes.log[timeField]) : '',
                   });
-                } catch {
+                } catch (error) {
+                  const errorMessage = error?.message || 'Live photo or attendance logging failed. Please retake the photo and try again.';
+                  if (
+                    error?.status === 409 ||
+                    /already complete|already recorded|please wait/i.test(errorMessage)
+                  ) {
+                    closeAttendanceLoggerWithCooldown();
+                    return;
+                  }
                   setPhotoStatus('done');
-                  setPhotoSubmitError('Live photo or attendance logging failed. Please retake the photo and try again.');
+                  setPhotoSubmitError(errorMessage || 'Live photo or attendance logging failed. Please retake the photo and try again.');
                   return;
                 }
                 closeAttendanceLoggerWithCooldown();
