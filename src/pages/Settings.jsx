@@ -13,23 +13,6 @@ import { manilaDateString } from '@/lib/dateUtils';
 import { effectiveShiftSetting, pendingShiftVersion } from '@/lib/shiftSettings';
 import { Textarea } from '@/components/ui/textarea';
 
-const protectedPortalTabs = [
-  { id: 'cash-advance', label: 'Cash Advance' },
-  { id: 'personal-leave', label: 'Personal Leave' },
-  { id: 'overtime-request', label: 'Overtime Request' },
-  { id: 'profile', label: 'My Profile' },
-  { id: 'trip-report', label: 'Vehicle Trip Report' },
-];
-
-const portalAccessModeOptions = [
-  { value: 'choice', label: 'Employee choice' },
-  { value: 'face', label: 'Face only' },
-  { value: 'qr_face', label: 'QR + face' },
-  { value: 'qr_only', label: 'QR only' },
-];
-
-const defaultPortalAccessModes = Object.fromEntries(protectedPortalTabs.map(tab => [tab.id, 'choice']));
-
 function ShiftForm({ shift, onSave, onClose }) {
   const [form, setForm] = useState({
     setting_name: shift?.setting_name || '',
@@ -344,35 +327,6 @@ export default function Settings() {
     },
   });
 
-  const { data: portalAccessSettings } = useQuery({
-    queryKey: ['employeePortalAccessSettings', activeCompanyId],
-    queryFn: () => requestJson(`/api/employee-portal/access-settings?company_profile_id=${encodeURIComponent(activeCompanyId || '')}`),
-    enabled: !!activeCompanyId,
-  });
-
-  const portalAccessMutation = useMutation({
-    mutationFn: modes => requestJson('/api/employee-portal/access-settings', {
-      method: 'POST',
-      body: JSON.stringify({
-        company_profile_id: activeCompanyId,
-        protected_tab_access_modes: modes,
-      }),
-    }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['employeePortalAccessSettings', activeCompanyId] }),
-  });
-
-  const portalAccessModes = {
-    ...defaultPortalAccessModes,
-    ...(portalAccessSettings?.protected_tab_access_modes || {}),
-  };
-
-  const updatePortalAccessMode = (tabId, mode) => {
-    portalAccessMutation.mutate({
-      ...portalAccessModes,
-      [tabId]: mode,
-    });
-  };
-
   const setDefault = (shift) => {
     setPendingAction({
       operation: 'set_default',
@@ -408,42 +362,6 @@ export default function Settings() {
           <Plus className="w-4 h-4" /> Add Shift
         </Button>
       </div>
-
-      <Card>
-        <CardContent className="space-y-4 p-4">
-          <div>
-            <h2 className="font-semibold text-foreground">Employee Portal Access</h2>
-            <p className="text-sm text-muted-foreground">
-              Choose how protected employee portal tabs verify the employee before opening.
-            </p>
-          </div>
-          <div className="space-y-3">
-            {protectedPortalTabs.map(tab => (
-              <div key={tab.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3">
-                <div>
-                  <p className="text-sm font-medium text-foreground">{tab.label}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {portalAccessModeOptions.find(option => option.value === portalAccessModes[tab.id])?.label || 'Employee choice'}
-                  </p>
-                </div>
-                <select
-                  value={portalAccessModes[tab.id] || 'choice'}
-                  onChange={event => updatePortalAccessMode(tab.id, event.target.value)}
-                  disabled={portalAccessMutation.isPending}
-                  className="h-9 min-w-44 rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  {portalAccessModeOptions.map(option => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </div>
-          {portalAccessMutation.error && (
-            <p className="text-sm text-destructive">{portalAccessMutation.error.message}</p>
-          )}
-        </CardContent>
-      </Card>
 
       {isLoading ? (
         <div className="flex justify-center py-16">

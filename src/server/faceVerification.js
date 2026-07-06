@@ -276,20 +276,6 @@ export function compareTemplates(reference, candidate) {
   return Number(Math.max(0, Math.min(1, 1 - distance / 3 - lengthPenalty * 0.15)).toFixed(4));
 }
 
-function cosineSimilarity(left = [], right = []) {
-  if (!left?.length || left.length !== right?.length) return 0;
-  let dot = 0;
-  let leftMagnitude = 0;
-  let rightMagnitude = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    dot += Number(left[index] || 0) * Number(right[index] || 0);
-    leftMagnitude += Number(left[index] || 0) ** 2;
-    rightMagnitude += Number(right[index] || 0) ** 2;
-  }
-  if (!leftMagnitude || !rightMagnitude) return 0;
-  return dot / Math.sqrt(leftMagnitude * rightMagnitude);
-}
-
 function meanAbsoluteSimilarity(left = [], right = []) {
   if (!left?.length || left.length !== right?.length) return 0;
   const distance = left.reduce((sum, value, index) => sum + Math.abs(Number(value || 0) - Number(right[index] || 0)), 0) / left.length;
@@ -300,17 +286,23 @@ function compareDuplicateTemplates(reference, candidate) {
   if (!reference || !candidate) return 0;
   if (reference.digest && candidate.digest && reference.digest === candidate.digest) return 1;
 
-  const baseScore = compareTemplates(reference, candidate);
-  const histogramScore = cosineSimilarity(reference.histogram, candidate.histogram);
   const sampleScore = meanAbsoluteSimilarity(reference.sampledBytes, candidate.sampledBytes);
   const transitionScore = meanAbsoluteSimilarity(reference.transitions, candidate.transitions);
-  const referenceImageScore = Number((
-    histogramScore * 0.45 +
-    sampleScore * 0.35 +
-    transitionScore * 0.2
-  ).toFixed(4));
+  const lengthSimilarity = Math.max(0, Math.min(
+    1,
+    1 - Math.abs((reference.length || 0) - (candidate.length || 0)) /
+      Math.max(reference.length || 1, candidate.length || 1),
+  ));
 
-  return Math.max(baseScore, referenceImageScore);
+  // The enrollment template is intentionally lightweight and is not a true
+  // face embedding. Broad signals like byte histograms are too similar across
+  // webcam captures and can make the first enrolled employee block everyone
+  // else, so duplicate detection is limited to exact/near image reuse.
+  return Number((
+    sampleScore * 0.7 +
+    transitionScore * 0.2 +
+    lengthSimilarity * 0.1
+  ).toFixed(4));
 }
 
 export async function faceSetting(companyProfileId) {

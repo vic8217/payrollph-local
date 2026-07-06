@@ -80,6 +80,11 @@ export default function PayslipView({ record }) {
       {/* Deductions */}
       <div>
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Deductions</p>
+        {(record.statutory_base_pay || record.monthly_rate) > 0 && (
+          <p className="mb-1 text-xs text-muted-foreground">
+            Statutory basis: ₱{Number(record.statutory_base_pay || record.monthly_rate || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} employee base pay
+          </p>
+        )}
         <Row label="SSS Contribution" value={record.sss_contribution} negative />
         <Row label="PhilHealth Contribution" value={record.philhealth_contribution} negative />
         <Row label="Pag-IBIG (HDMF)" value={record.pagibig_contribution} negative />

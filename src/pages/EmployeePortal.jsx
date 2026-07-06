@@ -1,6 +1,6 @@
 // @ts-nocheck
-import { useState, useEffect, useRef } from 'react';
-import { appApi, requestJson } from '@/lib/appApi';
+import { useState, useEffect } from 'react';
+import { appApi } from '@/lib/appApi';
 import { QrCode, CreditCard, User, LogOut, Building2, Scan, CheckCircle2, Camera, BookOpen, Car, Palmtree, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import EmployeeQRGate from '@/components/employee/EmployeeQRGate';
@@ -11,7 +11,6 @@ import EmployeeVehicleTripReport from '@/components/employee/EmployeeVehicleTrip
 import EmployeePersonalLeave from '@/components/employee/EmployeePersonalLeave';
 import EmployeeOvertimeRequest from '@/components/employee/EmployeeOvertimeRequest';
 import { useCompany } from '@/lib/CompanyContext';
-import { faceVerificationApi } from '@/lib/faceVerificationApi';
 import { formatManilaTime } from '@/lib/dateUtils';
 import FaceCapture from '@/components/face/FaceCapture';
 
@@ -26,7 +25,6 @@ const tabs = [
 ];
 
 const protectedTabs = new Set(['cash-advance', 'personal-leave', 'overtime-request', 'profile', 'trip-report']);
-const defaultPortalAccessModes = Object.fromEntries(Array.from(protectedTabs).map(tabId => [tabId, 'choice']));
 
 const attendancePhotoFields = {
   time_in: 'time_in_photo_url',
@@ -115,9 +113,7 @@ function captureAttendanceLocation() {
   });
 }
 
-function PortalAccessGate({ activeCompanyId, tabId, tabLabel, accessMode = 'choice', onAuthorized }) {
-  const forcedMode = accessMode === 'face' || accessMode === 'qr_face' || accessMode === 'qr_only';
-  const [mode, setMode] = useState(accessMode === 'qr_face' || accessMode === 'qr_only' ? 'qr' : 'face');
+function PortalAccessGate({ activeCompanyId, tabId, tabLabel, onAuthorized }) {
   const [qrEmployee, setQrEmployee] = useState(null);
   const [imageBase64, setImageBase64] = useState('');
   const [captureMetadata, setCaptureMetadata] = useState(null);
@@ -137,7 +133,7 @@ function PortalAccessGate({ activeCompanyId, tabId, tabLabel, accessMode = 'choi
     setError('');
   };
 
-  const verifyFace = async () => {
+  const confirmLivePhoto = async () => {
     if (!imageBase64 || !livenessConfirmed) {
       setError('Complete the live face capture before continuing.');
       return;
@@ -155,98 +151,29 @@ function PortalAccessGate({ activeCompanyId, tabId, tabLabel, accessMode = 'choi
       setSubmitting(true);
       setError('');
       setMessage('');
-      const result = await faceVerificationApi.attendance({
-        companyProfileId: qrEmployee?.company_profile_id || activeCompanyId,
-        employeeId: qrEmployee?.employee_id,
-        employeeRecordId: qrEmployee?.id,
-        imageBase64,
-        livenessConfirmed,
-        captureMetadata,
-      });
-
-      if (result.enabled === false) {
-        setError('Face verification is disabled. Please contact HR.');
-        return;
-      }
-      if (result.result !== 'verified' || (!qrEmployee && !result.employee)) {
-        setError(`Face verification ${result.result}. Access was not granted.`);
+      if (!qrEmployee) {
+        setError('Scan your QR code before taking the live confirmation photo.');
         return;
       }
 
-      const verifiedEmployee = qrEmployee
-        ? { ...qrEmployee, ...(result.employee || {}) }
-        : result.employee;
-      await onAuthorized(verifiedEmployee);
-      setMessage(`Verified ${employeeDisplayName(verifiedEmployee)}.`);
+      await onAuthorized(qrEmployee);
+      setMessage(`Confirmed ${employeeDisplayName(qrEmployee)}.`);
     } catch (verifyError) {
-      setError(verifyError?.message || 'Face verification failed. Please try again.');
+      setError(verifyError?.message || 'Live photo confirmation failed. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
   useEffect(() => {
-    setMode(accessMode === 'qr_face' || accessMode === 'qr_only' ? 'qr' : 'face');
     setQrEmployee(null);
     resetFaceState();
     setResetKey(k => k + 1);
-  }, [accessMode, tabId]);
-
-  if (accessMode === 'qr_only') {
-    return (
-      <EmployeeQRGate
-        key={`portal-access-${tabLabel}-qr-only`}
-        companyProfileId={activeCompanyId}
-        onEmployeeScanned={onAuthorized}
-        promptMessage={`Scan your QR code to access ${tabLabel}`}
-        title={tabLabel}
-        description="Scan your QR code to continue."
-      />
-    );
-  }
+  }, [tabId]);
 
   return (
     <div className="mx-auto max-w-xl p-4 space-y-4">
-      {!forcedMode && (
-        <div className="rounded-xl border border-border bg-card p-3">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setMode('face');
-                setQrEmployee(null);
-                resetFaceState();
-                setResetKey(k => k + 1);
-              }}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                mode === 'face'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Face Recognition
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('qr');
-                setQrEmployee(null);
-                resetFaceState();
-                setResetKey(k => k + 1);
-              }}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                mode === 'qr'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              QR Code + Face
-            </button>
-          </div>
-        </div>
-      )}
-
-      {mode === 'qr' && !qrEmployee ? (
+      {!qrEmployee ? (
         <EmployeeQRGate
           key={`portal-access-${tabLabel}`}
           companyProfileId={activeCompanyId}
@@ -257,16 +184,14 @@ function PortalAccessGate({ activeCompanyId, tabId, tabLabel, accessMode = 'choi
           }}
           promptMessage={`Scan your QR code to access ${tabLabel}`}
           title={tabLabel}
-          description="Scan your QR code, then verify your enrolled face."
+          description="Scan your QR code, then take a live confirmation photo."
         />
       ) : (
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-4">
           <div>
-            <h2 className="text-xl font-bold text-foreground">{tabLabel} Face Verification</h2>
+            <h2 className="text-xl font-bold text-foreground">{tabLabel} Photo Confirmation</h2>
             <p className="text-sm text-muted-foreground">
-              {qrEmployee
-                ? `Verify the enrolled face for ${employeeDisplayName(qrEmployee)}.`
-                : 'Verify your enrolled face to continue.'}
+              Take a live confirmation photo for {employeeDisplayName(qrEmployee)}.
             </p>
           </div>
           <FaceCapture
@@ -297,24 +222,22 @@ function PortalAccessGate({ activeCompanyId, tabId, tabLabel, accessMode = 'choi
           {error && <p className="text-sm font-medium text-destructive">{error}</p>}
           {message && <p className="text-sm font-medium text-emerald-700">{message}</p>}
           <div className="flex flex-wrap gap-2">
-            {qrEmployee && !forcedMode && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setQrEmployee(null);
-                  resetFaceState();
-                }}
-              >
-                Scan Different QR
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setQrEmployee(null);
+                resetFaceState();
+              }}
+            >
+              Scan Different QR
+            </Button>
             <Button
               className="flex-1"
-              onClick={verifyFace}
+              onClick={confirmLivePhoto}
               disabled={submitting || !imageBase64 || !captureMetadata || !livenessConfirmed || Boolean(captureError)}
             >
-              {submitting ? 'Verifying...' : 'Verify Face and Continue'}
+              {submitting ? 'Confirming...' : 'Confirm Photo and Continue'}
             </Button>
           </div>
         </div>
@@ -325,7 +248,6 @@ function PortalAccessGate({ activeCompanyId, tabId, tabLabel, accessMode = 'choi
 
 export default function EmployeePortal() {
   const [activeTab, setActiveTab] = useState('scan');
-  const [attendanceMode, setAttendanceMode] = useState('face');
   const [user, setUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(false);
   const [scannedEmployee, setScannedEmployee] = useState(null);
@@ -337,18 +259,9 @@ export default function EmployeePortal() {
   const [photoSubmitError, setPhotoSubmitError] = useState('');
   const [photoCaptureKey, setPhotoCaptureKey] = useState(0);
   const [livenessConfirmed, setLivenessConfirmed] = useState(false);
-  const [facePhoto, setFacePhoto] = useState('');
-  const [faceCaptureMetadata, setFaceCaptureMetadata] = useState(null);
-  const [faceCaptureError, setFaceCaptureError] = useState('');
-  const [faceLivenessConfirmed, setFaceLivenessConfirmed] = useState(false);
-  const [faceSubmitting, setFaceSubmitting] = useState(false);
-  const [faceMessage, setFaceMessage] = useState('');
-  const [faceError, setFaceError] = useState('');
-  const [faceMatchedEmployee, setFaceMatchedEmployee] = useState(null);
-  const [portalAccessModes, setPortalAccessModes] = useState(defaultPortalAccessModes);
+  const [photoCaptureMetadata, setPhotoCaptureMetadata] = useState(null);
+  const [photoCaptureError, setPhotoCaptureError] = useState('');
   const { activeCompanyId } = useCompany();
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -364,18 +277,6 @@ export default function EmployeePortal() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!activeCompanyId) return;
-    requestJson(`/api/employee-portal/access-settings?company_profile_id=${encodeURIComponent(activeCompanyId)}`)
-      .then(data => {
-        setPortalAccessModes({
-          ...defaultPortalAccessModes,
-          ...(data?.protected_tab_access_modes || {}),
-        });
-      })
-      .catch(() => setPortalAccessModes(defaultPortalAccessModes));
-  }, [activeCompanyId]);
 
   useEffect(() => {
     if (
@@ -411,52 +312,14 @@ export default function EmployeePortal() {
     return undefined;
   }, []);
 
-  // Start camera and auto-capture when modal opens
   useEffect(() => {
     if (!scanConfirm) return;
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     setPhotoDataUrl(null);
+    setPhotoCaptureMetadata(null);
+    setPhotoCaptureError('');
     setPhotoSubmitError('');
-    setPhotoStatus('capturing');
+    setPhotoStatus('idle');
     setLivenessConfirmed(false);
-
-    let stream = null;
-    const startAndCapture = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await new Promise(resolve => { videoRef.current.onloadedmetadata = resolve; });
-          videoRef.current.play();
-          // Wait a moment for camera to adjust
-          await new Promise(r => setTimeout(r, 1200));
-          capture(stream);
-        }
-      } catch {
-        setPhotoStatus('error');
-      }
-    };
-
-    const capture = (stream) => {
-      if (!videoRef.current) return;
-      const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth || 320;
-      canvas.height = videoRef.current.videoHeight || 240;
-      canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      setPhotoDataUrl(dataUrl);
-      setPhotoStatus('done');
-      // Stop stream
-      stream.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    };
-
-    startAndCapture();
-
-    return () => {
-      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    };
   }, [scanConfirm, photoCaptureKey]);
 
   const handleTabChange = (tabId) => {
@@ -530,60 +393,6 @@ export default function EmployeePortal() {
       action: attendanceActionLabels[logRes.action] || 'Attendance',
       time: timeField && logRes.log?.[timeField] ? formatManilaTime(logRes.log[timeField]) : '',
     };
-  };
-
-  const submitFaceAttendance = async () => {
-    if (!facePhoto) {
-      setFaceError('Capture your face before recording attendance.');
-      return;
-    }
-    if (!faceLivenessConfirmed) {
-      setFaceError('Please complete and confirm the live blink/head-turn check.');
-      return;
-    }
-    if (!faceCaptureMetadata) {
-      setFaceError('Retake the live face capture before recording attendance.');
-      return;
-    }
-    if (faceCaptureError) {
-      setFaceError(faceCaptureError);
-      return;
-    }
-
-    try {
-      setFaceSubmitting(true);
-      setFaceError('');
-      setFaceMessage('');
-      const faceResult = await faceVerificationApi.attendance({
-        companyProfileId: activeCompanyId,
-        imageBase64: facePhoto,
-        livenessConfirmed: faceLivenessConfirmed,
-        captureMetadata: faceCaptureMetadata,
-      });
-      if (faceResult.enabled === false) {
-        setFaceError('face verification - not on file');
-        setAttendanceMode('qr');
-        setScanKey(k => k + 1);
-        return;
-      }
-      if (faceResult.result !== 'verified' || !faceResult.employee) {
-        setFaceMatchedEmployee(null);
-        setFaceError(`Face verification ${faceResult.result}. Attendance was not recorded.`);
-        return;
-      }
-
-      const matchedEmployee = await resolveEmployeeFromFaceResult(faceResult.employee);
-      setFaceMatchedEmployee(matchedEmployee);
-      const attendance = await recordAttendanceForEmployee(matchedEmployee, facePhoto, faceResult, 'face_verification');
-      setFaceMessage(`${attendance.action} recorded for ${employeeDisplayName(matchedEmployee)}${attendance.time ? ` at ${attendance.time}` : ''}.`);
-      setFacePhoto('');
-      setFaceCaptureMetadata(null);
-      setFaceLivenessConfirmed(false);
-    } catch (error) {
-      setFaceError(error?.message || 'Face recognition attendance failed. Please try again.');
-    } finally {
-      setFaceSubmitting(false);
-    }
   };
 
   const requiresScan = protectedTabs.has(activeTab);
@@ -691,119 +500,19 @@ export default function EmployeePortal() {
       <main className="flex-1 overflow-auto">
         {activeTab === 'scan' && (
           <div className="mx-auto max-w-xl p-4 space-y-4">
-            <div className="rounded-xl border border-border bg-card p-3">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAttendanceMode('face');
-                    setFaceError('');
-                    setFaceMessage('');
-                  }}
-                  className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                    attendanceMode === 'face'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  Face Recognition
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAttendanceMode('qr');
-                    setFaceError('');
-                    setFaceMessage('');
-                  }}
-                  className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                    attendanceMode === 'qr'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  QR Code + Face
-                </button>
-              </div>
-            </div>
-
-            {attendanceMode === 'face' ? (
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-4">
-                <div>
-                  <h2 className="text-xl font-bold text-foreground">Attendance Face Recognition</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Capture your face to identify your enrolled profile and record attendance.
-                  </p>
-                </div>
-                <FaceCapture
-                  onCapture={(value, metadata) => {
-                    setFacePhoto(value);
-                    setFaceCaptureMetadata(metadata);
-                    setFaceCaptureError('');
-                    setFaceMatchedEmployee(null);
-                    setFaceError('');
-                    setFaceMessage('');
-                  }}
-                  onLivenessDetected={() => setFaceLivenessConfirmed(true)}
-                  onReset={() => {
-                    setFacePhoto('');
-                    setFaceCaptureMetadata(null);
-                    setFaceCaptureError('');
-                    setFaceLivenessConfirmed(false);
-                    setFaceMatchedEmployee(null);
-                    setFaceError('');
-                    setFaceMessage('');
-                  }}
-                  onErrorChange={setFaceCaptureError}
-                  autoStart
-                  autoCaptureOnLiveness
-                  disabled={faceSubmitting}
-                />
-                <div className={`rounded-lg border p-3 text-xs ${
-                  faceLivenessConfirmed
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                    : 'border-amber-200 bg-amber-50 text-amber-800'
-                }`}>
-                  {faceLivenessConfirmed
-                    ? 'Liveness detected. Ready to verify.'
-                    : 'Blink or turn your head slightly while your face is inside the guide.'}
-                </div>
-                {faceError && <p className="text-sm font-medium text-destructive">{faceError}</p>}
-                {faceMatchedEmployee && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Verified Employee</p>
-                    <p className="mt-1 text-base font-semibold text-foreground">{employeeDisplayName(faceMatchedEmployee)}</p>
-                    <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                      <p><span className="font-medium text-foreground">Employee ID:</span> {faceMatchedEmployee.employee_id || '-'}</p>
-                      <p><span className="font-medium text-foreground">Department:</span> {faceMatchedEmployee.department || '-'}</p>
-                      <p><span className="font-medium text-foreground">Position:</span> {faceMatchedEmployee.position || '-'}</p>
-                      <p><span className="font-medium text-foreground">Company:</span> {faceMatchedEmployee.company_profile_id || activeCompanyId || '-'}</p>
-                    </div>
-                  </div>
-                )}
-                {faceMessage && <p className="text-sm font-medium text-emerald-700">{faceMessage}</p>}
-                <Button
-                  className="w-full"
-                  onClick={submitFaceAttendance}
-                  disabled={faceSubmitting || !facePhoto || !faceCaptureMetadata || !faceLivenessConfirmed || Boolean(faceCaptureError)}
-                >
-                  {faceSubmitting ? 'Verifying...' : 'Verify Face and Record Attendance'}
-                </Button>
-              </div>
-            ) : (
-              <EmployeeQRGate
-                key={scanKey}
-                companyProfileId={activeCompanyId}
-                onEmployeeScanned={(employee) => {
-                  setScanConfirm({
-                    employee,
-                    name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),
-                  });
-                }}
-                promptMessage="Scan your QR code to start attendance face verification"
-                title="Attendance Logger"
-                description="Scan your QR code, then verify your face before attendance is recorded"
-              />
-            )}
+            <EmployeeQRGate
+              key={scanKey}
+              companyProfileId={activeCompanyId}
+              onEmployeeScanned={(employee) => {
+                setScanConfirm({
+                  employee,
+                  name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),
+                });
+              }}
+              promptMessage="Scan your QR code to start attendance photo verification"
+              title="Attendance Logger"
+              description="Scan your QR code, then complete a live photo before attendance is recorded"
+            />
           </div>
         )}
         {showGate && (
@@ -812,7 +521,6 @@ export default function EmployeePortal() {
             activeCompanyId={activeCompanyId}
             tabId={activeTab}
             tabLabel={tabs.find(t => t.id === activeTab)?.label || 'Employee Portal'}
-            accessMode={portalAccessModes[activeTab] || 'choice'}
             onAuthorized={authorizePortalEmployee}
           />
         )}
@@ -872,41 +580,43 @@ export default function EmployeePortal() {
               </p>
             </div>
 
-            {/* Photo capture preview */}
+            {/* Live photo capture */}
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Identity Photo</p>
-              <div className="relative w-full aspect-video bg-muted rounded-xl overflow-hidden flex items-center justify-center border border-border">
-                <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover ${photoStatus === 'done' ? 'hidden' : ''}`} />
-                {photoStatus === 'done' && photoDataUrl && (
-                  <img src={photoDataUrl} alt="Captured" className="w-full h-full object-cover" />
-                )}
-                {photoStatus !== 'done' && photoStatus !== 'error' && (
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                    <div className="relative h-[72%] w-[46%] min-w-32 rounded-[42%] border-2 border-emerald-400/90 shadow-[0_0_0_999px_rgba(15,23,42,0.22)]">
-                      <div className="absolute -left-1 -top-1 h-7 w-7 border-l-4 border-t-4 border-white" />
-                      <div className="absolute -right-1 -top-1 h-7 w-7 border-r-4 border-t-4 border-white" />
-                      <div className="absolute -bottom-1 -left-1 h-7 w-7 border-b-4 border-l-4 border-white" />
-                      <div className="absolute -bottom-1 -right-1 h-7 w-7 border-b-4 border-r-4 border-white" />
-                    </div>
-                    <div className="absolute bottom-3 rounded-md bg-slate-950/70 px-3 py-1 text-xs text-white">
-                      Align your whole face inside the guide
-                    </div>
-                  </div>
-                )}
-                {photoStatus === 'capturing' && !photoDataUrl && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 text-white text-xs">
-                    <Camera className="w-6 h-6 animate-pulse" />
-                    <span>Capturing photo...</span>
-                  </div>
-                )}
-                {photoStatus === 'error' && (
-                  <div className="flex flex-col items-center justify-center gap-1 text-muted-foreground text-xs p-4 text-center">
-                    <Camera className="w-6 h-6 opacity-30" />
-                    <span>Camera not available</span>
-                  </div>
-                )}
+              <div className="rounded-xl border border-border p-2">
+                <FaceCapture
+                  key={photoCaptureKey}
+                  onCapture={(value, metadata) => {
+                    setPhotoDataUrl(value);
+                    setPhotoCaptureMetadata(metadata);
+                    setPhotoCaptureError('');
+                    setPhotoSubmitError('');
+                    setPhotoStatus('done');
+                  }}
+                  onLivenessDetected={() => setLivenessConfirmed(true)}
+                  onReset={() => {
+                    setPhotoDataUrl(null);
+                    setPhotoCaptureMetadata(null);
+                    setPhotoCaptureError('');
+                    setPhotoStatus('idle');
+                    setLivenessConfirmed(false);
+                  }}
+                  onErrorChange={setPhotoCaptureError}
+                  autoStart
+                  autoCaptureOnLiveness
+                  disabled={photoStatus === 'uploading'}
+                />
               </div>
-              {(photoStatus === 'done' || photoStatus === 'error') && (
+              <div className={`rounded-lg border p-3 text-xs ${
+                livenessConfirmed
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-amber-200 bg-amber-50 text-amber-800'
+              }`}>
+                {livenessConfirmed
+                  ? 'Liveness detected. Ready to record attendance.'
+                  : 'Blink or turn your head slightly while your face is inside the guide.'}
+              </div>
+              {photoDataUrl && (
                 <Button
                   type="button"
                   variant="outline"
@@ -914,6 +624,11 @@ export default function EmployeePortal() {
                   className="w-full gap-2"
                   onClick={() => {
                     setPhotoSubmitError('');
+                    setPhotoStatus('idle');
+                    setPhotoDataUrl(null);
+                    setPhotoCaptureMetadata(null);
+                    setPhotoCaptureError('');
+                    setLivenessConfirmed(false);
                     setPhotoCaptureKey(k => k + 1);
                   }}
                 >
@@ -923,28 +638,24 @@ export default function EmployeePortal() {
               {photoSubmitError && (
                 <p className="text-xs font-medium text-destructive text-center">{photoSubmitError}</p>
               )}
-              <label className="flex items-center gap-2 rounded-lg border border-border p-3 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={livenessConfirmed}
-                  onChange={event => setLivenessConfirmed(event.target.checked)}
-                  className="h-4 w-4"
-                />
-                I blinked or turned my head slightly before this capture.
-              </label>
             </div>
 
             <Button
               className="w-full"
-              disabled={photoStatus === 'capturing' || photoStatus === 'uploading'}
+              disabled={photoStatus === 'uploading' || !photoDataUrl || !photoCaptureMetadata || !livenessConfirmed || Boolean(photoCaptureError)}
               onClick={async () => {
                 if (!photoDataUrl || photoStatus !== 'done') {
-                  setPhotoSubmitError('Photo is required. Please retake the photo to complete this attendance record.');
+                  setPhotoSubmitError('Live photo is required. Please complete the liveness capture.');
                   return;
                 }
 
-                if (!livenessConfirmed) {
-                  setPhotoSubmitError('Please complete and confirm the live blink/head-turn check.');
+                if (!livenessConfirmed || !photoCaptureMetadata) {
+                  setPhotoSubmitError('Please complete the live blink/head-turn check.');
+                  return;
+                }
+
+                if (photoCaptureError) {
+                  setPhotoSubmitError(photoCaptureError);
                   return;
                 }
 
@@ -952,18 +663,6 @@ export default function EmployeePortal() {
                   setPhotoSubmitError('');
                   setPhotoStatus('uploading');
                   const employee = scanConfirm.employee;
-                  const faceResult = await faceVerificationApi.attendance({
-                    employeeId: employee.employee_id,
-                    employeeRecordId: employee.id,
-                    companyProfileId: employee.company_profile_id || activeCompanyId,
-                    imageBase64: photoDataUrl,
-                    livenessConfirmed,
-                  });
-                  if (faceResult.enabled !== false && faceResult.result !== 'verified') {
-                    setPhotoStatus('done');
-                    setPhotoSubmitError(`Face verification ${faceResult.result}. Attendance was not recorded.`);
-                    return;
-                  }
 
                   const location = await captureAttendanceLocation();
                   const logRes = await appApi.functions.invoke('logAttendance', {
@@ -987,9 +686,9 @@ export default function EmployeePortal() {
                     ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
                     ...(action ? { [`${action}_verification_method`]: 'qr_face' } : {}),
                     photo_url: file_url,
-                    face_verification_result: faceResult.result,
-                    face_verification_confidence: faceResult.confidenceScore ?? null,
-                    face_verification_log_id: faceResult.log?.id || null,
+                    face_verification_result: 'disabled',
+                    face_verification_confidence: null,
+                    face_verification_log_id: null,
                   });
                   const actionLabels = {
                     time_in: 'Time In',
@@ -1010,14 +709,14 @@ export default function EmployeePortal() {
                   });
                 } catch {
                   setPhotoStatus('done');
-                  setPhotoSubmitError('Face verification or attendance logging failed. Please retake the photo and try again.');
+                  setPhotoSubmitError('Live photo or attendance logging failed. Please retake the photo and try again.');
                   return;
                 }
                 setScanConfirm(null);
                 setScanKey(k => k + 1);
               }}
             >
-              {photoStatus === 'capturing' ? 'Capturing photo...' : photoStatus === 'uploading' ? 'Saving photo...' : 'I Understand — Done'}
+              {photoStatus === 'uploading' ? 'Saving photo...' : 'I Understand — Done'}
             </Button>
           </div>
         </div>

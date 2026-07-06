@@ -5,7 +5,6 @@ import {
   compareTemplates,
   decryptText,
   employeeName,
-  employeeRecords,
   faceSetting,
   faceTemplateFromImage,
   findEmployeeForRequest,
@@ -81,71 +80,19 @@ export default async function handler(req, res) {
     let profile = null;
 
     if (!hasSelectedEmployee) {
-      const activeEmployees = await employeeRecords(companyProfileId);
-      const activeEmployeeById = new Map(activeEmployees.map((item) => [
-        String(item.employee_id || "").toLowerCase(),
-        item,
-      ]));
-      const profiles = await prisma.employeeFaceProfile.findMany({
-        where: {
-          companyProfileId,
-          status: "active",
-        },
-        orderBy: { updatedAt: "desc" },
-      });
-
-      let best = null;
-      for (const candidateProfile of profiles) {
-        const profileEmployee = activeEmployeeById.get(String(candidateProfile.employeeId || "").toLowerCase());
-        if (!profileEmployee) continue;
-        try {
-          const referenceTemplate = JSON.parse(decryptText(
-            candidateProfile.encryptedTemplate,
-            candidateProfile.templateIv,
-            candidateProfile.templateAuthTag,
-          ));
-          const confidenceScore = compareTemplates(referenceTemplate, candidateTemplate);
-          if (!best || confidenceScore > best.confidenceScore) {
-            best = { profile: candidateProfile, employee: profileEmployee, confidenceScore };
-          }
-        } catch {
-          // Skip unreadable legacy/corrupt templates without blocking attendance.
-        }
-      }
-
-      if (!best) {
-        const log = await logVerification({
-          employee: { employee_id: "unknown", company_profile_id: companyProfileId },
-          purpose: "attendance_test",
-          result: "no profile",
-          livenessResult: "passed",
-          livenessMessage: "No active enrolled profiles were available for face-only attendance.",
-          req,
-        });
-        return res.status(200).json({ enabled: true, result: "no profile", log });
-      }
-
-      employee = best.employee;
-      profile = best.profile;
-      const result = best.confidenceScore >= minimumConfidence ? "verified" : "failed";
       const log = await logVerification({
-        profile,
-        employee,
+        employee: { employee_id: "unknown", company_profile_id: companyProfileId },
         purpose: "attendance_test",
-        result,
-        confidenceScore: best.confidenceScore,
+        result: "failed",
         livenessResult: "passed",
-        livenessMessage: "Fresh camera capture challenge confirmed for face-only attendance.",
-        photoEvidence: setting.storePhotoEvidence ? req.body.imageBase64 : null,
+        livenessMessage: "QR employee identity is required before attendance photo verification.",
         req,
       });
 
       return res.status(200).json({
         enabled: true,
-        result,
-        confidenceScore: best.confidenceScore,
-        minimumConfidence,
-        employee: result === "verified" ? faceEmployeePayload(employee, profile) : null,
+        result: "failed",
+        error: "Use QR Code + Face so the QR code supplies the employee identity before taking the live photo.",
         log,
       });
     }

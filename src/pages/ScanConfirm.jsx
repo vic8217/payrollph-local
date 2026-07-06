@@ -18,7 +18,6 @@ import {
   capOvertimeByApprovedRequest,
   overtimeStatusForComputedHours,
 } from '@/lib/overtimeRequests';
-import { faceVerificationApi } from '@/lib/faceVerificationApi';
 
 const LABOR_CODE_INFO = {
   time_in: {
@@ -353,25 +352,7 @@ export default function ScanConfirm() {
         return;
       }
     }
-    let faceResult = null;
-    try {
-      faceResult = await faceVerificationApi.attendance({
-        employeeId: employee.employee_id,
-        employeeRecordId: employee.id,
-        companyProfileId: employee.company_profile_id,
-        imageBase64: capturedPhoto,
-        livenessConfirmed,
-      });
-      if (faceResult.enabled !== false && faceResult.result !== 'verified') {
-        setPhotoError(`Face verification ${faceResult.result}. Attendance was not recorded.`);
-        setConfirming(false);
-        return;
-      }
-    } catch {
-      setPhotoError('Face verification failed. Please retake the photo and try again.');
-      setConfirming(false);
-      return;
-    }
+    const faceResult = null;
     let photoUpdates = {};
     try {
       photoUpdates = await uploadAttendancePhoto(capturedPhoto, action);

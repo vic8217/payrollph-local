@@ -6,7 +6,7 @@ import { prisma } from "@/server/prisma";
 const ENTITY = "EmployeePortalAccessSetting";
 const ADMIN_ROLES = new Set(["super_admin", "admin", "user"]);
 const PROTECTED_TABS = ["cash-advance", "personal-leave", "overtime-request", "profile", "trip-report"];
-const ACCESS_MODES = new Set(["choice", "face", "qr_face", "qr_only"]);
+const ACCESS_MODES = new Set(["choice", "qr_face", "qr_only"]);
 
 function defaultModes() {
   return Object.fromEntries(PROTECTED_TABS.map((tabId) => [tabId, "choice"]));

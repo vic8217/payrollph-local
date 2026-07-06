@@ -104,6 +104,15 @@ export function computePagIbig(monthlyRate) {
 	};
 }
 
+/** @param {EmployeePayrollInfo} employee */
+export function employeeStatutoryBasePay(employee = {}) {
+	const monthlyRate = Number(employee.monthly_rate) || 0;
+	if (monthlyRate > 0) return monthlyRate;
+
+	const dailyRate = Number(employee.daily_rate) || 0;
+	return dailyRate > 0 ? dailyRate * 26 : 0;
+}
+
 // Withholding Tax (based on TRAIN Law, weekly taxable income)
 /** @param {number} weeklyTaxableIncome */
 export function computeWithholdingTax(weeklyTaxableIncome) {
@@ -636,13 +645,15 @@ export function computeWeeklyPayroll(
 ) {
 	const agencyFeePercentage = employee.agency_fee_percentage || 0;
 	const dailyRate = employee.daily_rate || 0;
-	const monthlyRate = employee.monthly_rate || dailyRate * 26;
+	const monthlyRate = employeeStatutoryBasePay(employee);
 	const hourlyRate = dailyRate / 8;
 
-	// Weekly deductions (monthly / 4.33)
-	const sss = computeSSS(monthlyRate);
-	const philHealth = computePhilHealth(monthlyRate);
-	const pagIbig = computePagIbig(monthlyRate);
+	// Statutory deductions use the employee's base pay from the employee profile,
+	// not gross pay, overtime, holiday pay, incentives, or other period earnings.
+	const statutoryBasePay = monthlyRate;
+	const sss = computeSSS(statutoryBasePay);
+	const philHealth = computePhilHealth(statutoryBasePay);
+	const pagIbig = computePagIbig(statutoryBasePay);
 
 	const applyStatutoryDeductions = options.applyStatutoryDeductions !== false;
 	const weeklySSS = applyStatutoryDeductions ? parseFloat((sss.employee / 4.33).toFixed(2)) : 0;
@@ -824,6 +835,7 @@ export function computeWeeklyPayroll(
 	return {
 		daily_rate: parseFloat(dailyRate.toFixed(2)),
 		monthly_rate: parseFloat(monthlyRate.toFixed(2)),
+		statutory_base_pay: parseFloat(statutoryBasePay.toFixed(2)),
 		basic_pay: parseFloat(basicPay.toFixed(2)),
 		overtime_pay: parseFloat(overtimePay.toFixed(2)),
 		holiday_pay: parseFloat(holidayPay.toFixed(2)),
