@@ -283,6 +283,12 @@ export default function EmployeePortal() {
     }
   };
 
+  const closeAttendanceLoggerWithCooldown = () => {
+    startAttendanceCooldown();
+    setScanConfirm(null);
+    setScanKey(k => k + 1);
+  };
+
   useEffect(() => {
     let cancelled = false;
     appApi.auth.me()
@@ -750,8 +756,7 @@ export default function EmployeePortal() {
                     location,
                   });
                   if (logRes.duplicate) {
-                    setPhotoStatus('done');
-                    setPhotoSubmitError(logRes.message || 'Scan already recorded. Please wait before scanning again.');
+                    closeAttendanceLoggerWithCooldown();
                     return;
                   }
 
@@ -790,9 +795,7 @@ export default function EmployeePortal() {
                   setPhotoSubmitError('Live photo or attendance logging failed. Please retake the photo and try again.');
                   return;
                 }
-                startAttendanceCooldown();
-                setScanConfirm(null);
-                setScanKey(k => k + 1);
+                closeAttendanceLoggerWithCooldown();
               }}
             >
               {photoStatus === 'uploading' ? 'Saving photo...' : 'I Understand — Done'}
