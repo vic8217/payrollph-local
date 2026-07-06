@@ -47,6 +47,9 @@ const attendanceTimeFields = {
   time_out: 'time_out',
 };
 
+const ATTENDANCE_COOLDOWN_MS = 60 * 1000;
+const ATTENDANCE_COOLDOWN_STORAGE_KEY = 'payrollph_attendance_logger_cooldown_until';
+
 function employeeDisplayName(employee) {
   return employee?.employee_name ||
     [employee?.first_name, employee?.middle_name, employee?.last_name].filter(Boolean).join(' ') ||
@@ -261,7 +264,24 @@ export default function EmployeePortal() {
   const [livenessConfirmed, setLivenessConfirmed] = useState(false);
   const [photoCaptureMetadata, setPhotoCaptureMetadata] = useState(null);
   const [photoCaptureError, setPhotoCaptureError] = useState('');
+  const [attendanceCooldownUntil, setAttendanceCooldownUntil] = useState(0);
+  const [cooldownNow, setCooldownNow] = useState(Date.now());
   const { activeCompanyId } = useCompany();
+
+  const attendanceCooldownRemainingMs = Math.max(0, attendanceCooldownUntil - cooldownNow);
+  const attendanceCooldownRemainingSeconds = Math.ceil(attendanceCooldownRemainingMs / 1000);
+  const attendanceCooldownActive = attendanceCooldownRemainingMs > 0;
+
+  const startAttendanceCooldown = () => {
+    const until = Date.now() + ATTENDANCE_COOLDOWN_MS;
+    setCooldownNow(Date.now());
+    setAttendanceCooldownUntil(until);
+    try {
+      window.localStorage.setItem(ATTENDANCE_COOLDOWN_STORAGE_KEY, String(until));
+    } catch {
+      // Cooldown still works in memory if storage is unavailable.
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -277,6 +297,38 @@ export default function EmployeePortal() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      const storedUntil = Number(window.localStorage.getItem(ATTENDANCE_COOLDOWN_STORAGE_KEY));
+      if (storedUntil && storedUntil > Date.now()) {
+        setAttendanceCooldownUntil(storedUntil);
+      } else {
+        window.localStorage.removeItem(ATTENDANCE_COOLDOWN_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage errors; the scanner still works normally.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!attendanceCooldownUntil) return undefined;
+
+    const tick = () => {
+      const now = Date.now();
+      setCooldownNow(now);
+      if (attendanceCooldownUntil <= now) {
+        setAttendanceCooldownUntil(0);
+        try {
+          window.localStorage.removeItem(ATTENDANCE_COOLDOWN_STORAGE_KEY);
+        } catch {}
+      }
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [attendanceCooldownUntil]);
 
   useEffect(() => {
     if (
@@ -323,6 +375,8 @@ export default function EmployeePortal() {
   }, [scanConfirm, photoCaptureKey]);
 
   const handleTabChange = (tabId) => {
+    if (tabId === 'scan' && attendanceCooldownActive) return;
+
     setActiveTab(tabId);
 
     if (protectedTabs.has(tabId)) {
@@ -451,23 +505,34 @@ export default function EmployeePortal() {
       {/* Tab Navigation */}
       <div className="border-b border-border bg-card">
         <div className="flex overflow-x-auto">
-          {tabs.map(tab => (
+          {tabs.map(tab => {
+            const disabled = tab.id === 'scan' && attendanceCooldownActive;
+            return (
             <button
               key={tab.id}
+              type="button"
+              disabled={disabled}
+              aria-disabled={disabled}
               onClick={() => handleTabChange(tab.id)}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
                 activeTab === tab.id
                   ? 'border-primary text-primary'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
+              } ${disabled ? 'cursor-not-allowed opacity-50 hover:text-muted-foreground' : ''}`}
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
+              {disabled && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                  {attendanceCooldownRemainingSeconds}s
+                </span>
+              )}
               {protectedTabs.has(tab.id) && (!scannedEmployee || authorizedTab !== tab.id) && (
                 <Scan className="w-3 h-3 text-muted-foreground/50" />
               )}
             </button>
-          ))}
+          );
+          })}
         </div>
       </div>
 
@@ -500,19 +565,32 @@ export default function EmployeePortal() {
       <main className="flex-1 overflow-auto">
         {activeTab === 'scan' && (
           <div className="mx-auto max-w-xl p-4 space-y-4">
-            <EmployeeQRGate
-              key={scanKey}
-              companyProfileId={activeCompanyId}
-              onEmployeeScanned={(employee) => {
-                setScanConfirm({
-                  employee,
-                  name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),
-                });
-              }}
-              promptMessage="Scan your QR code to start attendance photo verification"
-              title="Attendance Logger"
-              description="Scan your QR code, then complete a live photo before attendance is recorded"
-            />
+            {attendanceCooldownActive ? (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-5 text-center shadow-sm">
+                <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-blue-100">
+                  <Clock className="h-5 w-5 text-blue-700" />
+                </div>
+                <h2 className="text-base font-semibold text-blue-950">Attendance Logger paused</h2>
+                <p className="mt-1 text-sm text-blue-800">
+                  Please wait {attendanceCooldownRemainingSeconds} second{attendanceCooldownRemainingSeconds === 1 ? '' : 's'} before scanning again.
+                </p>
+              </div>
+            ) : (
+              <EmployeeQRGate
+                key={scanKey}
+                companyProfileId={activeCompanyId}
+                onEmployeeScanned={(employee) => {
+                  if (attendanceCooldownActive) return;
+                  setScanConfirm({
+                    employee,
+                    name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),
+                  });
+                }}
+                promptMessage="Scan your QR code to start attendance photo verification"
+                title="Attendance Logger"
+                description="Scan your QR code, then complete a live photo before attendance is recorded"
+              />
+            )}
           </div>
         )}
         {showGate && (
@@ -712,6 +790,7 @@ export default function EmployeePortal() {
                   setPhotoSubmitError('Live photo or attendance logging failed. Please retake the photo and try again.');
                   return;
                 }
+                startAttendanceCooldown();
                 setScanConfirm(null);
                 setScanKey(k => k + 1);
               }}
