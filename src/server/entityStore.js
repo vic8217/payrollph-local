@@ -103,6 +103,28 @@ export function toPublicRecord(record) {
   };
 }
 
+function normalizeFieldList(fields) {
+  if (!fields) return null;
+  const list = Array.isArray(fields) ? fields : String(fields).split(",");
+  const normalized = list
+    .map((field) => String(field || "").trim())
+    .filter(Boolean);
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function pickFields(record, fields) {
+  const fieldList = normalizeFieldList(fields);
+  if (!fieldList) return record;
+
+  return fieldList.reduce((selected, field) => {
+    if (Object.prototype.hasOwnProperty.call(record, field)) {
+      selected[field] = record[field];
+    }
+    return selected;
+  }, {});
+}
+
 function normalizeSort(sort) {
   if (!sort || typeof sort !== "string") {
     return null;
@@ -130,7 +152,7 @@ function compareValues(a, b, direction) {
   return (a > b ? 1 : -1) * (direction === "asc" ? 1 : -1);
 }
 
-export async function listRecords(entity, { filter = {}, sort, limit } = {}) {
+export async function listRecords(entity, { filter = {}, sort, limit, fields } = {}) {
   assertEntityName(entity);
   await ensureSeedData();
 
@@ -154,7 +176,8 @@ export async function listRecords(entity, { filter = {}, sort, limit } = {}) {
     );
   }
 
-  return limit ? publicRecords.slice(0, Number(limit)) : publicRecords;
+  const limitedRecords = limit ? publicRecords.slice(0, Number(limit)) : publicRecords;
+  return fields ? limitedRecords.map((record) => pickFields(record, fields)) : limitedRecords;
 }
 
 export async function createRecord(entity, data) {

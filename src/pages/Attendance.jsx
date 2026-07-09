@@ -68,6 +68,58 @@ const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
 const ATTENDANCE_PHOTO_RETENTION_DAYS = 21;
+const ATTENDANCE_LOG_LIST_FIELDS = [
+  'id',
+  'created_date',
+  'updated_date',
+  'company_profile_id',
+  'employee_record_id',
+  'employee_id',
+  'employee_name',
+  'date',
+  'time_in',
+  'break_time_out',
+  'break_time_in',
+  'time_out',
+  'work_schedule',
+  'shift_start_time',
+  'shift_end_time',
+  'shift_overtime_start_time',
+  'shift_grace_period_minutes',
+  'shift_time_in_allowance_minutes',
+  'shift_paid_break_time',
+  'status',
+  'day_type',
+  'hours_worked',
+  'undertime_minutes',
+  'ot_actual_hours',
+  'overtime_hours',
+  'ot_requested_hours',
+  'ot_status',
+  'overtime_request_id',
+  'ot_hr_approved',
+  'ot_admin_approved',
+  'ot_reviewed_at',
+  'ot_reviewed_by',
+  'ot_review_reason',
+  'night_diff_hours',
+  'late_minutes',
+  'notes',
+  'photo_url',
+  'photo_action',
+  'time_in_photo_url',
+  'break_time_out_photo_url',
+  'break_time_in_photo_url',
+  'time_out_photo_url',
+  'time_in_location',
+  'break_time_out_location',
+  'break_time_in_location',
+  'time_out_location',
+  'time_in_verification_method',
+  'break_time_out_verification_method',
+  'break_time_in_verification_method',
+  'time_out_verification_method',
+].join(',');
 
 const formatHours = (value) => `${(Number(value) || 0).toFixed(2)}h`;
 const formatMinutes = (value) => `${Math.round(Number(value) || 0)}m`;
@@ -410,11 +462,11 @@ function entityUrl(entity, params = {}) {
 }
 
 const entities = {
-  list(entity, sort, limit) {
-    return requestJson(entityUrl(entity, { sort, limit }));
+  list(entity, sort, limit, options = {}) {
+    return requestJson(entityUrl(entity, { sort, limit, ...options }));
   },
-  filter(entity, filter = {}, sort, limit) {
-    return requestJson(entityUrl(entity, { filter, sort, limit }));
+  filter(entity, filter = {}, sort, limit, options = {}) {
+    return requestJson(entityUrl(entity, { filter, sort, limit, ...options }));
   },
   create(entity, data) {
     return requestJson(entityUrl(entity), {
@@ -1431,7 +1483,9 @@ export default function Attendance() {
   const { data: attendanceData = { logs: [], periodLogs: [] }, isLoading: loadingLogs } = useQuery({
     queryKey: ['attendance', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId, startStr, endStr],
     queryFn: async () => {
-      const all = await entities.list('AttendanceLog', '-date', 5000);
+      const all = await entities.filter('AttendanceLog', { company_profile_id: activeCompanyId }, '-date', 5000, {
+        fields: ATTENDANCE_LOG_LIST_FIELDS,
+      });
       const selectedRecordId = String(selectedEmployee.id || '');
       const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
       const selectedEmployeeCode = normalizeAttendanceCode(selectedEmployee.employee_id);
@@ -1465,7 +1519,9 @@ export default function Attendance() {
 
   const { data: allAttendanceLogs = [], isLoading: loadingQuickView } = useQuery({
     queryKey: ['attendanceSummary', activeCompanyId],
-    queryFn: () => entities.filter('AttendanceLog', { company_profile_id: activeCompanyId }, '-date', 5000),
+    queryFn: () => entities.filter('AttendanceLog', { company_profile_id: activeCompanyId }, '-date', 5000, {
+      fields: ATTENDANCE_LOG_LIST_FIELDS,
+    }),
     enabled: !!activeCompanyId,
   });
 

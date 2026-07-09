@@ -43,6 +43,7 @@ export default async function handler(req, res) {
         filter,
         sort: req.query.sort,
         limit: req.query.limit,
+        fields: req.query.fields,
       });
       return res.status(200).json(records);
     }
