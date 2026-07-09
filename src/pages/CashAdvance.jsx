@@ -127,7 +127,8 @@ export default function CashAdvance() {
   const [employeeSearchInput, setEmployeeSearchInput] = useState('');
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [selectedLedgerEmployeeId, setSelectedLedgerEmployeeId] = useState(null);
-  const [adjustmentDialog, setAdjustmentDialog] = useState(null); // { cashAdvance, employee }
+  const [adjustmentDialog, setAdjustmentDialog] = useState(null); // { cashAdvance?, employee }
+  const [selectedAdjustmentCashAdvanceId, setSelectedAdjustmentCashAdvanceId] = useState('');
   const [adjustmentType, setAdjustmentType] = useState('decrease');
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
@@ -361,6 +362,7 @@ export default function CashAdvance() {
 
   const openAdjustmentDialog = (cashAdvance, employee) => {
     setAdjustmentDialog({ cashAdvance, employee });
+    setSelectedAdjustmentCashAdvanceId(cashAdvance?.id ? String(cashAdvance.id) : '');
     setAdjustmentType('decrease');
     setAdjustmentAmount('');
     setAdjustmentReason('');
@@ -370,6 +372,20 @@ export default function CashAdvance() {
   };
 
   const submitAdjustment = () => {
+    const adjustableAdvances = adjustmentDialog
+      ? cashAdvances.filter(ca =>
+        ca.employee_id === adjustmentDialog.employee.employee_id &&
+        ['approved', 'deducted'].includes(ca.status)
+      )
+      : [];
+    const selectedAdvance = adjustmentDialog?.cashAdvance ||
+      adjustableAdvances.find(ca => String(ca.id) === String(selectedAdjustmentCashAdvanceId)) ||
+      adjustableAdvances[0];
+
+    if (!selectedAdvance) {
+      setAdjustmentError('Select the cash advance to adjust.');
+      return;
+    }
     const amount = parseFloat(adjustmentAmount);
     if (!(amount > 0)) {
       setAdjustmentError('Enter a valid adjustment amount.');
@@ -386,7 +402,7 @@ export default function CashAdvance() {
 
     adjustmentMutation.mutate({
       company_profile_id: activeCompanyId,
-      cash_advance_id: adjustmentDialog.cashAdvance.id,
+      cash_advance_id: selectedAdvance.id,
       adjustment_type: adjustmentType,
       amount,
       reason: adjustmentReason.trim(),
@@ -459,11 +475,17 @@ export default function CashAdvance() {
         <div className="flex gap-2 items-center">
           <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
             <button
-              onClick={() => setActiveTab('requests')}
+              onClick={() => {
+                setSelectedLedgerEmployeeId(null);
+                setActiveTab('requests');
+              }}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${activeTab === 'requests' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             >Requests</button>
             <button
-              onClick={() => setActiveTab('schedule')}
+              onClick={() => {
+                setSelectedLedgerEmployeeId(null);
+                setActiveTab('schedule');
+              }}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'schedule' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             ><CalendarDays className="w-3.5 h-3.5" />Deduction Schedule</button>
             <button
@@ -502,7 +524,7 @@ export default function CashAdvance() {
       )}
 
       {/* Employee Summary Table */}
-      {employeeSummary.length > 0 && (
+      {employeeSummary.length > 0 && !selectedLedgerEmployeeId && (
         <div>
           <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Employee Summary</p>
@@ -635,9 +657,28 @@ export default function CashAdvance() {
               )}
             </div>
             {selectedLedgerEmployeeId && (
-              <Button size="sm" variant="outline" onClick={() => setSelectedLedgerEmployeeId(null)}>
-                View All Employees
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={!selectedLedgerEmployee || !cashAdvances.some(ca => ca.employee_id === selectedLedgerEmployeeId && ['approved', 'deducted'].includes(ca.status))}
+                  onClick={() => openAdjustmentDialog(null, selectedLedgerEmployee)}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" /> Adjust CA
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setSelectedLedgerEmployeeId(null);
+                    setActiveTab('requests');
+                  }}
+                >
+                  <XCircle className="h-3.5 w-3.5" /> Close
+                </Button>
+              </div>
             )}
           </div>
           {employeeLedgerGroups.length === 0 ? (
@@ -818,16 +859,46 @@ export default function CashAdvance() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Adjust Cash Advance Balance</DialogTitle></DialogHeader>
           {adjustmentDialog && (
+            (() => {
+              const adjustableAdvances = cashAdvances.filter(ca =>
+                ca.employee_id === adjustmentDialog.employee.employee_id &&
+                ['approved', 'deducted'].includes(ca.status)
+              );
+              const selectedAdvance = adjustmentDialog.cashAdvance ||
+                adjustableAdvances.find(ca => String(ca.id) === String(selectedAdjustmentCashAdvanceId)) ||
+                adjustableAdvances[0];
+              return (
             <div className="space-y-3">
               <div className="rounded-lg bg-muted p-3 text-sm">
                 <p className="font-semibold text-foreground">
                   {adjustmentDialog.employee.first_name} {adjustmentDialog.employee.last_name}
                 </p>
-                <p className="text-xs text-muted-foreground">{adjustmentDialog.cashAdvance.reason || 'Cash advance'}</p>
+                <p className="text-xs text-muted-foreground">{selectedAdvance?.reason || 'Cash advance'}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Current balance: <span className="font-semibold text-foreground">₱{Number(getCashAdvanceBalance(adjustmentDialog.cashAdvance) || 0).toLocaleString()}</span>
+                  Current balance: <span className="font-semibold text-foreground">₱{Number(getCashAdvanceBalance(selectedAdvance) || 0).toLocaleString()}</span>
                 </p>
               </div>
+              {!adjustmentDialog.cashAdvance && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Cash Advance Record *</Label>
+                  <Select
+                    value={selectedAdjustmentCashAdvanceId || (selectedAdvance?.id ? String(selectedAdvance.id) : '')}
+                    onValueChange={value => {
+                      setSelectedAdjustmentCashAdvanceId(value);
+                      setAdjustmentError('');
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select cash advance" /></SelectTrigger>
+                    <SelectContent>
+                      {adjustableAdvances.map(ca => (
+                        <SelectItem key={ca.id} value={String(ca.id)}>
+                          {ca.request_date || ca.created_date?.slice(0, 10) || 'No date'} · ₱{Number(getCashAdvanceBalance(ca) || 0).toLocaleString()} · {ca.reason || 'Cash advance'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-1">
                 <Label className="text-xs">Adjustment Type *</Label>
                 <Select value={adjustmentType} onValueChange={setAdjustmentType}>
@@ -902,6 +973,8 @@ export default function CashAdvance() {
                 </Button>
               </div>
             </div>
+              );
+            })()
           )}
         </DialogContent>
       </Dialog>
