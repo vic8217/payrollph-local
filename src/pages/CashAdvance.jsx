@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search } from 'lucide-react';
+import { Plus, CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search, SlidersHorizontal } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
 import { ensureCashAdvanceAdditionLedger, ensureCashAdvanceBeginningLedger, ensureCashAdvanceDeductionBackfill } from '@/lib/cashAdvanceLedger';
@@ -38,6 +38,11 @@ const ledgerTypeLabels = {
   addition: 'Advance Availed',
   deduction: 'Payroll Deduction',
 };
+
+function ledgerTypeLabel(row) {
+  if (row.source === 'manual_adjustment') return 'Manual Adjustment';
+  return ledgerTypeLabels[row.transaction_type] || row.transaction_type;
+}
 
 const ledgerSortKey = (row) => `${row.transaction_date || ''}${row.created_date || ''}${row.id || ''}`;
 
@@ -122,6 +127,13 @@ export default function CashAdvance() {
   const [employeeSearchInput, setEmployeeSearchInput] = useState('');
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [selectedLedgerEmployeeId, setSelectedLedgerEmployeeId] = useState(null);
+  const [adjustmentDialog, setAdjustmentDialog] = useState(null); // { cashAdvance, employee }
+  const [adjustmentType, setAdjustmentType] = useState('decrease');
+  const [adjustmentAmount, setAdjustmentAmount] = useState('');
+  const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [adjustmentHrPasscode, setAdjustmentHrPasscode] = useState('');
+  const [adjustmentAdminPasscode, setAdjustmentAdminPasscode] = useState('');
+  const [adjustmentError, setAdjustmentError] = useState('');
   const { user } = useAuth();
   const qc = useQueryClient();
 
@@ -232,6 +244,27 @@ export default function CashAdvance() {
     },
   });
 
+  const adjustmentMutation = useMutation({
+    mutationFn: (data) => requestJson('/api/functions/adjustCashAdvanceBalance', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cashAdvances'] });
+      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
+      qc.invalidateQueries({ queryKey: ['passcodeAudit'] });
+      setAdjustmentDialog(null);
+      setAdjustmentAmount('');
+      setAdjustmentReason('');
+      setAdjustmentHrPasscode('');
+      setAdjustmentAdminPasscode('');
+      setAdjustmentError('');
+    },
+    onError: (error) => {
+      setAdjustmentError(error?.message || 'Unable to adjust cash advance balance.');
+    },
+  });
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!currentEmployee) return alert('Your profile is not linked to an employee record. Ask HR to set your user email.');
@@ -324,6 +357,42 @@ export default function CashAdvance() {
       passcode_audit_summary: 'Cash advance rejected',
       ...(notesText ? { hr_notes: notesText } : {}),
     } });
+  };
+
+  const openAdjustmentDialog = (cashAdvance, employee) => {
+    setAdjustmentDialog({ cashAdvance, employee });
+    setAdjustmentType('decrease');
+    setAdjustmentAmount('');
+    setAdjustmentReason('');
+    setAdjustmentHrPasscode('');
+    setAdjustmentAdminPasscode('');
+    setAdjustmentError('');
+  };
+
+  const submitAdjustment = () => {
+    const amount = parseFloat(adjustmentAmount);
+    if (!(amount > 0)) {
+      setAdjustmentError('Enter a valid adjustment amount.');
+      return;
+    }
+    if (adjustmentReason.trim().length < 3) {
+      setAdjustmentError('Enter a reason for the adjustment.');
+      return;
+    }
+    if (!adjustmentHrPasscode.trim() || !adjustmentAdminPasscode.trim()) {
+      setAdjustmentError('Both HR Officer and Admin passcodes are required.');
+      return;
+    }
+
+    adjustmentMutation.mutate({
+      company_profile_id: activeCompanyId,
+      cash_advance_id: adjustmentDialog.cashAdvance.id,
+      adjustment_type: adjustmentType,
+      amount,
+      reason: adjustmentReason.trim(),
+      hr_passcode: adjustmentHrPasscode.trim(),
+      admin_passcode: adjustmentAdminPasscode.trim(),
+    });
   };
 
   const filtered = (filterStatus === 'all' ? cashAdvances : cashAdvances.filter(ca => ca.status === filterStatus))
@@ -511,8 +580,24 @@ export default function CashAdvance() {
                           <tr key={ca.id} className="bg-muted/30 border-b border-border last:border-0">
                             <td className="px-6 py-2 text-xs text-muted-foreground" colSpan={2}>{ca.reason}</td>
                             <td className="px-4 py-2 text-xs text-right text-foreground">₱{(ca.amount_requested || 0).toLocaleString()}</td>
-                            <td className="px-4 py-2 text-xs text-right" colSpan={3}>
+                            <td className="px-4 py-2 text-xs text-right" colSpan={2}>
                               <Badge variant="outline" className={`text-xs ${statusColors[ca.status]}`}>{ca.status?.replace(/_/g, ' ')}</Badge>
+                            </td>
+                            <td className="px-4 py-2 text-xs text-right">
+                              {['approved', 'deducted'].includes(ca.status) && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 gap-1.5 text-xs"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openAdjustmentDialog(ca, e);
+                                  }}
+                                >
+                                  <SlidersHorizontal className="h-3.5 w-3.5" /> Adjust
+                                </Button>
+                              )}
                             </td>
                             <td className="px-4 py-2 text-xs text-right text-muted-foreground">{ca.request_date}</td>
                           </tr>
@@ -594,7 +679,7 @@ export default function CashAdvance() {
                             return (
                               <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                                 <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{row.transaction_date || '—'}</td>
-                                <td className="px-3 py-2 text-foreground whitespace-nowrap">{ledgerTypeLabels[row.transaction_type] || row.transaction_type}</td>
+                                <td className="px-3 py-2 text-foreground whitespace-nowrap">{ledgerTypeLabel(row)}</td>
                                 <td className="px-3 py-2 text-muted-foreground min-w-56">
                                   {row.period_name ? `${row.period_name} — ` : ''}{row.description || '—'}
                                 </td>
@@ -722,6 +807,102 @@ export default function CashAdvance() {
               <Button type="submit" size="sm">Submit Request</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cash Advance Adjustment Dialog */}
+      <Dialog open={!!adjustmentDialog} onOpenChange={() => {
+        setAdjustmentDialog(null);
+        setAdjustmentError('');
+      }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Adjust Cash Advance Balance</DialogTitle></DialogHeader>
+          {adjustmentDialog && (
+            <div className="space-y-3">
+              <div className="rounded-lg bg-muted p-3 text-sm">
+                <p className="font-semibold text-foreground">
+                  {adjustmentDialog.employee.first_name} {adjustmentDialog.employee.last_name}
+                </p>
+                <p className="text-xs text-muted-foreground">{adjustmentDialog.cashAdvance.reason || 'Cash advance'}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Current balance: <span className="font-semibold text-foreground">₱{Number(getCashAdvanceBalance(adjustmentDialog.cashAdvance) || 0).toLocaleString()}</span>
+                </p>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Adjustment Type *</Label>
+                <Select value={adjustmentType} onValueChange={setAdjustmentType}>
+                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="decrease">Decrease balance</SelectItem>
+                    <SelectItem value="increase">Increase balance</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Amount (₱) *</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={adjustmentAmount}
+                  onChange={event => {
+                    setAdjustmentAmount(event.target.value);
+                    setAdjustmentError('');
+                  }}
+                  className="h-8 text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Reason *</Label>
+                <Textarea
+                  value={adjustmentReason}
+                  onChange={event => {
+                    setAdjustmentReason(event.target.value);
+                    setAdjustmentError('');
+                  }}
+                  className="text-sm min-h-[70px]"
+                  placeholder="Explain why this CA balance is being adjusted"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">HR Officer Passcode *</Label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={adjustmentHrPasscode}
+                    onChange={event => {
+                      setAdjustmentHrPasscode(event.target.value);
+                      setAdjustmentError('');
+                    }}
+                    className="h-8 text-center font-mono tracking-widest"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Admin Passcode *</Label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={adjustmentAdminPasscode}
+                    onChange={event => {
+                      setAdjustmentAdminPasscode(event.target.value);
+                      setAdjustmentError('');
+                    }}
+                    className="h-8 text-center font-mono tracking-widest"
+                  />
+                </div>
+              </div>
+              {adjustmentError && <p className="text-xs text-destructive">{adjustmentError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setAdjustmentDialog(null)}>Cancel</Button>
+                <Button type="button" size="sm" onClick={submitAdjustment} disabled={adjustmentMutation.isPending}>
+                  {adjustmentMutation.isPending ? 'Saving...' : 'Save Adjustment'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
