@@ -493,6 +493,26 @@ export default function Payroll() {
     },
   });
 
+  const suspendCashAdvancePeriodDeduction = useMutation({
+    /** @param {{ period?: PayrollEntity | null, periodConfig: any, periodName: string }} args */
+    mutationFn: ({ period, periodConfig, periodName }) => appApi.functions.invoke('suspendCashAdvancePeriodDeduction', {
+      payroll_period_id: period?.id,
+      period_name: period?.period_name || periodName,
+      start_date: period?.start_date || periodConfig.start_date,
+      end_date: period?.end_date || periodConfig.end_date,
+      company_profile_id: activeCompanyId,
+    }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+      qc.invalidateQueries({ queryKey: ['payrollRecords'] });
+      qc.invalidateQueries({ queryKey: ['cashAdvances'] });
+      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
+      if (result?.period) {
+        setSelectedPeriod(result.period);
+      }
+    },
+  });
+
   const previewEmployeePay = async () => {
     setPayPreviewError('');
     setPayPreview(null);
@@ -672,6 +692,7 @@ export default function Payroll() {
       }));
     }
 
+    const periodCashAdvanceDeductionSuspended = Boolean(period.cash_advance_deduction_suspended);
     const activeEmployees = employees.filter(e => e.status === 'active');
     const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.list('-date', 1000));
     const existingLedger = /** @type {CashAdvanceLedgerEntity[]} */ (await entities.CashAdvanceLedger.filter({
@@ -699,7 +720,7 @@ export default function Payroll() {
         }
       }
     }
-    if (missingCASetup.length > 0) {
+    if (!periodCashAdvanceDeductionSuspended && missingCASetup.length > 0) {
       setGenerating(false);
       setIncompleteLogsError(missingCASetup.map(m => ({ employeeName: m.employeeName, date: 'Cash advance missing deduction period/amount setup' })));
       return;
@@ -741,7 +762,7 @@ export default function Payroll() {
       ];
       const existing = await entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });
       const existingRecord = existing[0];
-      const cashAdvanceDeductionSuspended = Boolean(existingRecord?.cash_advance_deduction_suspended);
+      const cashAdvanceDeductionSuspended = Boolean(periodCashAdvanceDeductionSuspended || existingRecord?.cash_advance_deduction_suspended);
 
       // Find all active CAs for this employee (can have multiple)
       const empCAs = cashAdvanceDeductionSuspended
@@ -846,10 +867,10 @@ export default function Payroll() {
         cash_advance_deduction_details: cashAdvanceDeductionDetails,
         cash_advance_deduction_suspended: cashAdvanceDeductionSuspended,
         ...(cashAdvanceDeductionSuspended ? {
-          cash_advance_suspended_amount: existingRecord.cash_advance_suspended_amount || 0,
-          cash_advance_suspended_details: existingRecord.cash_advance_suspended_details || [],
-          cash_advance_suspended_at: existingRecord.cash_advance_suspended_at || null,
-          cash_advance_suspended_by: existingRecord.cash_advance_suspended_by || null,
+          cash_advance_suspended_amount: existingRecord?.cash_advance_suspended_amount || 0,
+          cash_advance_suspended_details: existingRecord?.cash_advance_suspended_details || [],
+          cash_advance_suspended_at: existingRecord?.cash_advance_suspended_at || period.cash_advance_suspended_at || null,
+          cash_advance_suspended_by: existingRecord?.cash_advance_suspended_by || period.cash_advance_suspended_by || null,
         } : {
           cash_advance_suspended_amount: 0,
           cash_advance_suspended_details: [],
@@ -927,6 +948,8 @@ export default function Payroll() {
       end_date: configuredPeriod.end_date,
       employee_count: generatedEmployeeCount,
       total_net: savedPeriod?.total_net || 0,
+      cash_advance_deduction_suspended: Boolean(savedPeriod?.cash_advance_deduction_suspended),
+      cash_advance_suspended_by: savedPeriod?.cash_advance_suspended_by,
       workflow_status: savedPeriod?.status || 'not generated',
       generation_status: savedPeriod ? (isComplete ? 'complete' : 'incomplete') : 'missing',
       generation_label: savedPeriod ? (isComplete ? 'Complete' : 'Incomplete') : 'Not generated',
@@ -934,10 +957,13 @@ export default function Payroll() {
   });
   const selectedSummaryPeriod = summaryPeriods.find(period => period.start_date === startStr && period.end_date === endStr);
   const targetPeriodLabel = selectedSummaryPeriod?.period_name?.replace(/^Payroll Period:\s*/, '') || activePeriodConfig.label;
-  const generateDisabled = generating || (!!targetPeriod && targetPeriod.status !== 'approved');
+  const targetPeriodIsComplete = selectedSummaryPeriod?.generation_status === 'complete';
+  const generateDisabled = generating ||
+    targetPeriod?.status === 'released' ||
+    (!!targetPeriod && targetPeriodIsComplete && targetPeriod.status !== 'approved');
   const generateTitle = targetPeriod?.status === 'released'
     ? 'Released payroll periods cannot be regenerated'
-    : targetPeriod?.status === 'processing'
+    : targetPeriod?.status === 'processing' && targetPeriodIsComplete
       ? 'Approve this payroll period before regenerating'
       : undefined;
   const knownEmployeeIds = new Set(employees.map(employee => String(employee.employee_id || '').toLowerCase()));
@@ -970,6 +996,7 @@ export default function Payroll() {
   const selectedPeriodGross = eligibleRecords.length ? payrollRecordTotals.gross : (selectedPeriod?.total_gross || 0);
   const selectedPeriodNet = eligibleRecords.length ? payrollRecordTotals.net : (selectedPeriod?.total_net || 0);
   const canSuspendCashAdvanceDeduction = user?.role === 'super_admin' && selectedPeriod && selectedPeriod.status !== 'released';
+  const canSuspendCashAdvancePeriodDeduction = user?.role === 'super_admin';
 
   const handleDeleteAttendancePhotos = () => {
     if (!selectedPeriod) return;
@@ -981,6 +1008,20 @@ export default function Payroll() {
   const handleBackupAttendancePhotos = (/** @type {PayrollEntity} */ period) => {
     if (!period || period.status !== 'released') return;
     backupAttendancePeriodPhotos.mutate(period);
+  };
+
+  const handleSuspendCashAdvancePeriodDeduction = (periodSummary) => {
+    if (!canSuspendCashAdvancePeriodDeduction || !periodSummary) return;
+    if (periodSummary.savedPeriod?.status === 'released') return;
+    if (periodSummary.cash_advance_deduction_suspended) return;
+
+    const confirmed = window.confirm(`Suspend cash advance deductions for all employees in ${periodSummary.period_name}? This applies even if payroll has not been generated yet.`);
+    if (!confirmed) return;
+    suspendCashAdvancePeriodDeduction.mutate({
+      period: periodSummary.savedPeriod,
+      periodConfig: periodSummary,
+      periodName: periodSummary.period_name,
+    });
   };
 
   return (
@@ -1164,6 +1205,12 @@ export default function Payroll() {
         </div>
       )}
 
+      {suspendCashAdvancePeriodDeduction.error && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          {suspendCashAdvancePeriodDeduction.error.message || 'Unable to suspend cash advance deductions for this payroll period.'}
+        </div>
+      )}
+
       <PayrollCard className="border border-border shadow-sm overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card">
           <div>
@@ -1184,6 +1231,7 @@ export default function Payroll() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Employees</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Net Pay</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
@@ -1191,6 +1239,9 @@ export default function Payroll() {
                 const isSelected = selectedPeriod?.id === period.savedPeriod?.id;
                 const isTarget = period.start_date === startStr && period.end_date === endStr;
                 const isCurrent = period.start_date === currentPeriodConfig.start_date && period.end_date === currentPeriodConfig.end_date;
+                const canSuspendPeriod = canSuspendCashAdvancePeriodDeduction &&
+                  period.savedPeriod?.status !== 'released' &&
+                  !period.cash_advance_deduction_suspended;
 
                 return (
                   <tr
@@ -1276,6 +1327,33 @@ export default function Payroll() {
                     <td className="px-4 py-3 text-right font-medium text-foreground">
                       {period.savedPeriod ? `₱${Number(period.total_net || 0).toLocaleString()}` : '—'}
                     </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end">
+                        {period.cash_advance_deduction_suspended ? (
+                          <Badge variant="outline" className="bg-blue-100 text-blue-700 text-xs">
+                            CA suspended
+                          </Badge>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5"
+                            disabled={!canSuspendPeriod || suspendCashAdvancePeriodDeduction.isPending}
+                            title={period.savedPeriod?.status === 'released'
+                              ? 'Released payroll periods can no longer be changed'
+                              : 'Suspend cash advance deductions for all employees in this payroll period'}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleSuspendCashAdvancePeriodDeduction(period);
+                            }}
+                          >
+                            <PauseCircle className="h-4 w-4" />
+                            {suspendCashAdvancePeriodDeduction.isPending ? 'Suspending...' : 'Suspend CA'}
+                          </Button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -1316,6 +1394,11 @@ export default function Payroll() {
                     <Badge variant="outline" className={`text-xs capitalize ${statusColors[selectedPeriod.status] || 'bg-gray-100 text-gray-600'}`}>
                       {selectedPeriod.status === 'released' ? 'Released to employees' : `${selectedPeriod.status || 'draft'} - not released`}
                     </Badge>
+                    {selectedPeriod.cash_advance_deduction_suspended && (
+                      <Badge variant="outline" className="bg-blue-100 text-blue-700 text-xs">
+                        CA deductions suspended for all employees
+                      </Badge>
+                    )}
                     <Button
                       type="button"
                       size="sm"
