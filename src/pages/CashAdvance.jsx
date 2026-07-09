@@ -856,7 +856,7 @@ export default function CashAdvance() {
         setAdjustmentDialog(null);
         setAdjustmentError('');
       }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg">
           <DialogHeader><DialogTitle>Adjust Cash Advance Balance</DialogTitle></DialogHeader>
           {adjustmentDialog && (
             (() => {
@@ -868,18 +868,18 @@ export default function CashAdvance() {
                 adjustableAdvances.find(ca => String(ca.id) === String(selectedAdjustmentCashAdvanceId)) ||
                 adjustableAdvances[0];
               return (
-            <div className="space-y-3">
-              <div className="rounded-lg bg-muted p-3 text-sm">
+            <div className="min-w-0 space-y-3">
+              <div className="min-w-0 rounded-lg bg-muted p-3 text-sm">
                 <p className="font-semibold text-foreground">
                   {adjustmentDialog.employee.first_name} {adjustmentDialog.employee.last_name}
                 </p>
-                <p className="text-xs text-muted-foreground">{selectedAdvance?.reason || 'Cash advance'}</p>
+                <p className="break-words text-xs text-muted-foreground">{selectedAdvance?.reason || 'Cash advance'}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Current balance: <span className="font-semibold text-foreground">₱{Number(getCashAdvanceBalance(selectedAdvance) || 0).toLocaleString()}</span>
                 </p>
               </div>
               {!adjustmentDialog.cashAdvance && (
-                <div className="space-y-1">
+                <div className="min-w-0 space-y-1">
                   <Label className="text-xs">Cash Advance Record *</Label>
                   <Select
                     value={selectedAdjustmentCashAdvanceId || (selectedAdvance?.id ? String(selectedAdvance.id) : '')}
@@ -888,7 +888,7 @@ export default function CashAdvance() {
                       setAdjustmentError('');
                     }}
                   >
-                    <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select cash advance" /></SelectTrigger>
+                    <SelectTrigger className="h-8 min-w-0 text-sm"><SelectValue placeholder="Select cash advance" /></SelectTrigger>
                     <SelectContent>
                       {adjustableAdvances.map(ca => (
                         <SelectItem key={ca.id} value={String(ca.id)}>
@@ -899,10 +899,10 @@ export default function CashAdvance() {
                   </Select>
                 </div>
               )}
-              <div className="space-y-1">
+              <div className="min-w-0 space-y-1">
                 <Label className="text-xs">Adjustment Type *</Label>
                 <Select value={adjustmentType} onValueChange={setAdjustmentType}>
-                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-8 min-w-0 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="decrease">Decrease balance</SelectItem>
                     <SelectItem value="increase">Increase balance</SelectItem>
@@ -935,8 +935,8 @@ export default function CashAdvance() {
                   placeholder="Explain why this CA balance is being adjusted"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="min-w-0 space-y-1">
                   <Label className="text-xs">HR Officer Passcode *</Label>
                   <Input
                     type="password"
@@ -950,7 +950,7 @@ export default function CashAdvance() {
                     className="h-8 text-center font-mono tracking-widest"
                   />
                 </div>
-                <div className="space-y-1">
+                <div className="min-w-0 space-y-1">
                   <Label className="text-xs">Admin Passcode *</Label>
                   <Input
                     type="password"
