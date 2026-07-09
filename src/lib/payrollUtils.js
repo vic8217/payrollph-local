@@ -622,6 +622,58 @@ export function computeOvertimeHours(
 	return parseFloat(Math.max(0, overtimeHours).toFixed(2));
 }
 
+export function computeRequestExemptOvertimeHours(
+	/** @type {PayrollLog} */
+	log,
+	/** @type {HoursComputationOptions & { shiftEndTime?: string }} */
+	{
+		shiftStartTime = '08:00',
+		shiftEndTime,
+		overtimeStartTime,
+		breakInGraceMinutes = 0,
+		breakDurationMinutes = 60,
+		paidBreakTime = false,
+	} = {},
+) {
+	if (!shiftEndTime || !overtimeStartTime) return 0;
+
+	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
+	let scheduledEnd = resolveScheduledTime(log.date, shiftEndTime);
+	let overtimeStart = resolveScheduledTime(log.date, overtimeStartTime);
+	const timeOut = toValidDate(log.time_out);
+	if (!scheduledStart || !scheduledEnd || !overtimeStart || !timeOut) return 0;
+
+	if (scheduledEnd.getTime() <= scheduledStart.getTime()) {
+		scheduledEnd = addDays(scheduledEnd, 1);
+	}
+	if (overtimeStart.getTime() <= scheduledStart.getTime()) {
+		overtimeStart = addDays(overtimeStart, 1);
+	}
+
+	const shiftDurationHours = (scheduledEnd.getTime() - scheduledStart.getTime()) / 36e5;
+	const overtimeOffsetHours = (overtimeStart.getTime() - scheduledStart.getTime()) / 36e5;
+	const isExtendedShift =
+		shiftDurationHours >= 12 &&
+		overtimeOffsetHours >= 8 &&
+		overtimeStart.getTime() < scheduledEnd.getTime();
+	if (!isExtendedShift) return 0;
+
+	const cappedTimeOut = new Date(Math.min(timeOut.getTime(), scheduledEnd.getTime()));
+	if (cappedTimeOut.getTime() <= overtimeStart.getTime()) return 0;
+
+	return computeOvertimeHours(
+		{ ...log, time_out: cappedTimeOut },
+		0,
+		{
+			shiftStartTime,
+			overtimeStartTime,
+			breakInGraceMinutes,
+			breakDurationMinutes,
+			paidBreakTime,
+		},
+	);
+}
+
 // Compute full weekly payroll for an employee
 // cashAdvanceDeduction: the fixed per-payroll deduction amount for this period
 // noWorkDays: array of NoWorkDay records { date, reason }

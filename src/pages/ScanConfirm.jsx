@@ -5,6 +5,7 @@ import {
   computeLateMinutes,
   computeNightDifferentialHours,
   computeOvertimeHours,
+  computeRequestExemptOvertimeHours,
 } from '@/lib/payrollUtils';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -460,7 +461,12 @@ export default function ScanConfirm() {
         break_time_in: effectiveBreakIn,
       };
       const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, employee);
-      const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
+      const requestExemptOvertimeHours = computeRequestExemptOvertimeHours(completedLog, {
+        ...shiftOptions,
+        breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: shiftOptions.paidBreakTime,
+      });
+      const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest, requestExemptOvertimeHours);
       const nightDiffHours = computeNightDifferentialHours(completedLog, {
         shiftStartTime: shiftOptions.shiftStartTime,
         breakDurationMinutes: getBreakDurationMinutes(employee),

@@ -16,6 +16,7 @@ const entityLabels = {
   CashAdvance: 'Cash Advance',
   Employee: 'Employee Setup',
   OvertimeRequest: 'OT Request',
+  Settings: 'Shift Settings',
 };
 
 const actionLabels = {
@@ -36,6 +37,10 @@ const actionLabels = {
   employee_number_changed: 'Employee Number Changed',
   employee_shift_changed: 'Shift Changed',
   employee_shift_change_cancelled: 'Shift Change Cancelled',
+  shift_setting_create: 'Shift Added',
+  shift_setting_update: 'Shift Edited',
+  shift_setting_delete: 'Shift Removed',
+  shift_setting_set_default: 'Default Shift Changed',
 };
 
 const actionStyles = {
@@ -50,6 +55,10 @@ const actionStyles = {
   attendance_manual_edit: 'bg-blue-100 text-blue-700',
   employee_shift_changed: 'bg-blue-100 text-blue-700',
   employee_shift_change_cancelled: 'bg-amber-100 text-amber-700',
+  shift_setting_create: 'bg-blue-100 text-blue-700',
+  shift_setting_update: 'bg-blue-100 text-blue-700',
+  shift_setting_delete: 'bg-red-100 text-red-700',
+  shift_setting_set_default: 'bg-violet-100 text-violet-700',
 };
 
 function subjectFor(entity, record) {
@@ -69,6 +78,9 @@ function subjectFor(entity, record) {
   }
   if (entity === 'CashAdvance') {
     return `${record.employee_name || record.employee_id || 'Employee'} · ₱${Number(record.amount_requested || record.amount_approved || 0).toLocaleString('en-PH')}`;
+  }
+  if (entity === 'Settings') {
+    return record.summary || `Shift setting · ${record.record_date || 'No date'}`;
   }
   return record.first_name || record.last_name
     ? [record.first_name, record.middle_name, record.last_name].filter(Boolean).join(' ')

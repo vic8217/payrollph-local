@@ -92,7 +92,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         enabled: true,
         result: "failed",
-        error: "Use QR Code + Face so the QR code supplies the employee identity before taking the live photo.",
+        error: "Use QR Code + Photo so the QR code supplies the employee identity before taking the live photo.",
         log,
       });
     }

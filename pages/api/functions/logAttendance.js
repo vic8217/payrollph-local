@@ -7,6 +7,7 @@ import {
   computeLateMinutes,
   computeNightDifferentialHours,
   computeOvertimeHours,
+  computeRequestExemptOvertimeHours,
 } from "@/lib/payrollUtils";
 import {
   approvedOvertimeRequestForLog,
@@ -455,8 +456,13 @@ export default async function handler(req, res) {
       breakDurationMinutes: getBreakDurationMinutes(employee),
       paidBreakTime: shiftOptions.paidBreakTime,
     });
+    const requestExemptOvertimeHours = computeRequestExemptOvertimeHours(completedLog, {
+      ...shiftOptions,
+      breakDurationMinutes: getBreakDurationMinutes(employee),
+      paidBreakTime: shiftOptions.paidBreakTime,
+    });
     const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, employee);
-    const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
+    const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest, requestExemptOvertimeHours);
     const nightDiffHours = computeNightDifferentialHours(completedLog, {
       shiftStartTime: shiftOptions.shiftStartTime,
       breakDurationMinutes: getBreakDurationMinutes(employee),

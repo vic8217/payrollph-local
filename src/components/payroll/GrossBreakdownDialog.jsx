@@ -161,6 +161,14 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
               )}
             </>
           )}
+          {record.cash_advance_deduction_suspended && (
+            <div className="mt-1 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              Cash advance deduction suspended for this payroll period
+              {record.cash_advance_suspended_amount > 0
+                ? `: ₱${Number(record.cash_advance_suspended_amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                : '.'}
+            </div>
+          )}
           <Separator className="my-1" />
           <Row label="Total Deductions" value={record.total_deductions} bold negative />
         </div>

@@ -93,6 +93,11 @@ export default function PayslipView({ record }) {
         {record.undertime_deduction > 0 && <Row label="Undertime Deduction" value={record.undertime_deduction} negative />}
         {record.absent_deduction > 0 && <Row label="Absent Deduction" value={record.absent_deduction} negative />}
         {record.cash_advance_deduction > 0 && <Row label="Cash Advance (Vale)" value={record.cash_advance_deduction} negative />}
+        {record.cash_advance_deduction_suspended && (
+          <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+            Cash advance deduction suspended for this payroll period.
+          </p>
+        )}
         <Separator className="my-1" />
         <Row label="Total Deductions" value={record.total_deductions} bold negative />
       </div>

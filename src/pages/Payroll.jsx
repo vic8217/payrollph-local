@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Play, CheckCircle2, FileText, Printer, Search, Calculator, Trash2, Download } from 'lucide-react';
+import { Play, CheckCircle2, FileText, Printer, Search, Calculator, Trash2, Download, PauseCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCompany } from '@/lib/CompanyContext';
+import { useAuth } from '@/lib/AuthContext';
 import { computeWeeklyPayroll } from '@/lib/payrollUtils';
 import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
@@ -376,6 +377,7 @@ export default function Payroll() {
   const [pendingAttendanceError, setPendingAttendanceError] = useState(/** @type {Array<{ employeeName: string, count: number }> | null} */ (null));
   const qc = useQueryClient();
   const { activeCompanyId, activeCompany } = useCompany();
+  const { user } = useAuth();
   const entities = /** @type {Record<string, any>} */ (appApi.entities);
 
   const baseWeek = new Date();
@@ -473,6 +475,21 @@ export default function Payroll() {
       link.click();
       URL.revokeObjectURL(url);
       qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+    },
+  });
+
+  const suspendCashAdvanceDeduction = useMutation({
+    /** @param {{ record: PayrollEntity, period: PayrollEntity }} args */
+    mutationFn: ({ record, period }) => appApi.functions.invoke('suspendCashAdvanceDeduction', {
+      payroll_record_id: record.id,
+      payroll_period_id: period.id,
+      company_profile_id: activeCompanyId,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+      qc.invalidateQueries({ queryKey: ['payrollRecords'] });
+      qc.invalidateQueries({ queryKey: ['cashAdvances'] });
+      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
     },
   });
 
@@ -722,9 +739,14 @@ export default function Payroll() {
             is_absent: false,
           })),
       ];
+      const existing = await entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });
+      const existingRecord = existing[0];
+      const cashAdvanceDeductionSuspended = Boolean(existingRecord?.cash_advance_deduction_suspended);
 
       // Find all active CAs for this employee (can have multiple)
-      const empCAs = approvedCA.filter(cashAdvance => cashAdvance.employee_id === emp.employee_id);
+      const empCAs = cashAdvanceDeductionSuspended
+        ? []
+        : approvedCA.filter(cashAdvance => cashAdvance.employee_id === emp.employee_id);
       // Sum up the per-payroll deduction amounts for this period, capped by remaining balance when available.
       /** @type {CashAdvanceDeduction[]} */
       const caDeductions = empCAs.map(cashAdvance => {
@@ -807,7 +829,6 @@ export default function Payroll() {
       };
 
       // Upsert payroll record
-      const existing = await entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });
       const recordStatus = period.status === 'released'
         ? 'released'
         : period.status === 'approved'
@@ -823,6 +844,18 @@ export default function Payroll() {
         company_profile_id: activeCompanyId,
         incentive_settings: emp.incentive_settings || {},
         cash_advance_deduction_details: cashAdvanceDeductionDetails,
+        cash_advance_deduction_suspended: cashAdvanceDeductionSuspended,
+        ...(cashAdvanceDeductionSuspended ? {
+          cash_advance_suspended_amount: existingRecord.cash_advance_suspended_amount || 0,
+          cash_advance_suspended_details: existingRecord.cash_advance_suspended_details || [],
+          cash_advance_suspended_at: existingRecord.cash_advance_suspended_at || null,
+          cash_advance_suspended_by: existingRecord.cash_advance_suspended_by || null,
+        } : {
+          cash_advance_suspended_amount: 0,
+          cash_advance_suspended_details: [],
+          cash_advance_suspended_at: null,
+          cash_advance_suspended_by: null,
+        }),
         ...computedWithIncentives,
       };
 
@@ -936,6 +969,7 @@ export default function Payroll() {
   }), { gross: 0, cashAdvance: 0, deductions: 0, net: 0 });
   const selectedPeriodGross = eligibleRecords.length ? payrollRecordTotals.gross : (selectedPeriod?.total_gross || 0);
   const selectedPeriodNet = eligibleRecords.length ? payrollRecordTotals.net : (selectedPeriod?.total_net || 0);
+  const canSuspendCashAdvanceDeduction = user?.role === 'super_admin' && selectedPeriod && selectedPeriod.status !== 'released';
 
   const handleDeleteAttendancePhotos = () => {
     if (!selectedPeriod) return;
@@ -1316,6 +1350,11 @@ export default function Payroll() {
                       {deleteAttendancePeriodPhotos.error.message || 'Unable to delete attendance photos.'}
                     </p>
                   )}
+                  {suspendCashAdvanceDeduction.error && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {suspendCashAdvanceDeduction.error.message || 'Unable to suspend cash advance deduction.'}
+                    </p>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   {selectedPeriod.status === 'processing' && (() => {
@@ -1379,6 +1418,13 @@ export default function Payroll() {
                        <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No employees match your search.</td></tr>
                       ) : filteredRecords.map(rec => {
                        const hasPending = periodAttendanceLogs.some(l => l.employee_id === rec.employee_id && l.status === 'pending');
+                       const isCashAdvanceSuspended = Boolean(rec.cash_advance_deduction_suspended);
+                       const canSuspendThisRecord = Boolean(
+                         canSuspendCashAdvanceDeduction &&
+                         !hasPending &&
+                         !isCashAdvanceSuspended &&
+                         (Number(rec.cash_advance_deduction) || 0) > 0
+                       );
                        return (
                        <tr key={rec.id} className={`border-b border-border last:border-0 hover:bg-muted/20 ${hasPending ? 'bg-amber-50/50' : ''}`}>
                          <td className="px-4 py-3">
@@ -1392,6 +1438,11 @@ export default function Payroll() {
                            {hasPending && (
                              <span className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 mt-1">
                                ⚠️ Attendance needs approval
+                             </span>
+                           )}
+                           {isCashAdvanceSuspended && (
+                             <span className="inline-flex items-center gap-1 text-xs text-blue-700 bg-blue-100 rounded px-1.5 py-0.5 mt-1">
+                               CA deduction suspended
                              </span>
                            )}
                          </td>
@@ -1417,6 +1468,21 @@ export default function Payroll() {
                                   <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setSelectedRecord(rec)}>
                                     <Printer className="w-4 h-4" />
                                   </Button>
+                                  {canSuspendThisRecord && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs gap-1 px-2"
+                                      disabled={suspendCashAdvanceDeduction.isPending}
+                                      onClick={() => {
+                                        const confirmed = window.confirm(`Suspend the cash advance deduction for ${rec.employee_name} in ${selectedPeriod.period_name}? This will restore the cash advance balance and update this payroll period totals.`);
+                                        if (!confirmed) return;
+                                        suspendCashAdvanceDeduction.mutate({ record: rec, period: selectedPeriod });
+                                      }}
+                                    >
+                                      <PauseCircle className="w-3 h-3" /> Suspend CA
+                                    </Button>
+                                  )}
                                 </>
                               )}
                             </div>

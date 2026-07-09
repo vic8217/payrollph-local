@@ -13,6 +13,41 @@ import { manilaDateString } from '@/lib/dateUtils';
 import { effectiveShiftSetting, pendingShiftVersion } from '@/lib/shiftSettings';
 import { Textarea } from '@/components/ui/textarea';
 
+function timeToMinutes(value) {
+  const [hours, minutes] = String(value || '').split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function overtimeStartValidationMessage(shiftStartTime, shiftEndTime, overtimeStartTime) {
+  const start = timeToMinutes(shiftStartTime);
+  const end = timeToMinutes(shiftEndTime);
+  const overtime = timeToMinutes(overtimeStartTime);
+  if (start == null || end == null || overtime == null) return 'Enter valid shift and overtime times.';
+  if (start === end) return 'Shift start and end time cannot be the same.';
+
+  const shiftDurationMinutes = start < end
+    ? end - start
+    : (24 * 60 - start) + end;
+  const overtimeOffsetMinutes = overtime >= start
+    ? overtime - start
+    : (24 * 60 - start) + overtime;
+  const isExtendedShift = shiftDurationMinutes >= 12 * 60;
+  if (isExtendedShift && overtimeOffsetMinutes >= 8 * 60 && overtimeOffsetMinutes < shiftDurationMinutes) {
+    return '';
+  }
+
+  const isWithinShift = start < end
+    ? overtime >= start && overtime < end
+    : overtime >= start || overtime < end;
+
+  if (isWithinShift) {
+    return 'Overtime start must be outside regular shift hours. Use the shift end time or later.';
+  }
+
+  return '';
+}
+
 function ShiftForm({ shift, onSave, onClose }) {
   const [form, setForm] = useState({
     setting_name: shift?.setting_name || '',
@@ -30,6 +65,7 @@ function ShiftForm({ shift, onSave, onClose }) {
   const [approvalFile, setApprovalFile] = useState(null);
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [validationError, setValidationError] = useState('');
   const approvalPreviewUrl = useMemo(() => (
     approvalFile ? URL.createObjectURL(approvalFile) : null
   ), [approvalFile]);
@@ -41,6 +77,17 @@ function ShiftForm({ shift, onSave, onClose }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setUploadError('');
+    setValidationError('');
+
+    const shiftTimeError = overtimeStartValidationMessage(
+      form.shift_start_time,
+      form.shift_end_time,
+      form.overtime_start_time,
+    );
+    if (shiftTimeError) {
+      setValidationError(shiftTimeError);
+      return;
+    }
 
     let payload = { ...form };
     if (payload.paid_break_time) {
@@ -134,6 +181,7 @@ function ShiftForm({ shift, onSave, onClose }) {
             />
             <p className="text-xs text-muted-foreground mt-1">Time after which completed work is counted as overtime</p>
           </div>
+          {validationError && <p className="text-xs text-destructive">{validationError}</p>}
           <div>
             <label className="text-sm font-medium">Grace Period (minutes)</label>
             <Input

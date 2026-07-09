@@ -30,8 +30,52 @@ function appendVersion(shift, effectiveDate, values, audit) {
   return versions.sort((a, b) => a.effective_date.localeCompare(b.effective_date));
 }
 
+function timeToMinutes(value) {
+  const [hours, minutes] = String(value || '').split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function overtimeStartValidationMessage(shiftStartTime, shiftEndTime, overtimeStartTime) {
+  const start = timeToMinutes(shiftStartTime);
+  const end = timeToMinutes(shiftEndTime);
+  const overtime = timeToMinutes(overtimeStartTime);
+  if (start == null || end == null || overtime == null) return 'Enter valid shift and overtime times.';
+  if (start === end) return 'Shift start and end time cannot be the same.';
+
+  const shiftDurationMinutes = start < end
+    ? end - start
+    : (24 * 60 - start) + end;
+  const overtimeOffsetMinutes = overtime >= start
+    ? overtime - start
+    : (24 * 60 - start) + overtime;
+  const isExtendedShift = shiftDurationMinutes >= 12 * 60;
+  if (isExtendedShift && overtimeOffsetMinutes >= 8 * 60 && overtimeOffsetMinutes < shiftDurationMinutes) {
+    return '';
+  }
+
+  const isWithinShift = start < end
+    ? overtime >= start && overtime < end
+    : overtime >= start || overtime < end;
+
+  if (isWithinShift) {
+    return 'Overtime start must be outside regular shift hours. Use the shift end time or later.';
+  }
+
+  return '';
+}
+
 function normalizeShiftData(data = {}) {
   const normalized = { ...data };
+  const shiftTimeError = overtimeStartValidationMessage(
+    normalized.shift_start_time,
+    normalized.shift_end_time,
+    normalized.overtime_start_time,
+  );
+  if (shiftTimeError) {
+    throw new Error(shiftTimeError);
+  }
+
   if (normalized.paid_break_time) {
     if (!normalized.paid_breaktime_approval_document_url) {
       throw new Error('Director approval document is required for paid breaktime.');

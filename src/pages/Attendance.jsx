@@ -10,6 +10,7 @@ import {
   computeLateMinutes,
   computeNightDifferentialHours,
   computeOvertimeHours,
+  computeRequestExemptOvertimeHours,
   normalizeOvernightBreakPunches,
 } from '@/lib/payrollUtils';
 import {
@@ -626,6 +627,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         time_out: effTimeOut,
       }, hrs, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
+        shiftEndTime: selectedShift.shift_end_time || fallbackShift.shift_end_time,
         overtimeStartTime: selectedShift.overtime_start_time || fallbackShift.overtime_start_time,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee),
@@ -640,7 +642,15 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         time_out: effTimeOut,
       };
       const approvedOtRequest = approvedOvertimeRequestForLog(attendanceMetrics, overtimeRequests, employee);
-      const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest);
+      const requestExemptOvertime = computeRequestExemptOvertimeHours(attendanceMetrics, {
+        shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
+        shiftEndTime: selectedShift.shift_end_time || fallbackShift.shift_end_time,
+        overtimeStartTime: selectedShift.overtime_start_time || fallbackShift.overtime_start_time,
+        breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
+        breakDurationMinutes: getBreakDurationMinutes(employee),
+        paidBreakTime: Boolean(selectedShift.paid_break_time),
+      });
+      const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest, requestExemptOvertime);
       updates.ot_actual_hours = Number(recomputedOvertime.toFixed(2));
       updates.overtime_hours = cappedOvertime;
       updates.ot_requested_hours = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
@@ -1547,7 +1557,8 @@ export default function Attendance() {
       const requestForCredit = reviewedRequest.status === 'approved' || reviewedRequest.status === 'denied'
         ? reviewedRequest
         : null;
-      const creditedOvertime = capOvertimeByApprovedRequest(actualOvertime, requestForCredit);
+      const requestExemptOvertime = computeRequestExemptOvertimeHours(log, computationOptions);
+      const creditedOvertime = capOvertimeByApprovedRequest(actualOvertime, requestForCredit, requestExemptOvertime);
       const nightDiffHours = computeNightDifferentialHours(log, computationOptions);
       const lateMinutes = computeLateMinutes(log, computationOptions);
 
@@ -1599,6 +1610,7 @@ export default function Attendance() {
     const fallbackShift = legacyShiftTimes(shift.value);
     return {
       shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
+      shiftEndTime: shift.shift_end_time || fallbackShift.shift_end_time,
       overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
       timeInAllowanceMinutes: shift.time_in_allowance_minutes || 0,
       lateGraceMinutes: shift.grace_period_minutes || 0,
@@ -1734,7 +1746,8 @@ export default function Attendance() {
             break_time_in: effectiveBreakIn,
           };
           const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, selectedEmployee);
-          const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest);
+          const requestExemptOvertime = computeRequestExemptOvertimeHours(completedLog, computationOptions);
+          const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest, requestExemptOvertime);
           updates.ot_actual_hours = Number(recomputedOvertime.toFixed(2));
           updates.overtime_hours = cappedOvertime;
           updates.ot_requested_hours = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
@@ -1769,7 +1782,8 @@ export default function Attendance() {
         const hoursWorked = computeCreditedHoursWorked(normalizedLog, computationOptions);
         const overtimeHours = computeOvertimeHours(normalizedLog, hoursWorked, computationOptions);
         const approvedOtRequest = approvedOvertimeRequestForLog(normalizedLog, overtimeRequests, selectedEmployee);
-        const cappedOvertime = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
+        const requestExemptOvertime = computeRequestExemptOvertimeHours(normalizedLog, computationOptions);
+        const cappedOvertime = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest, requestExemptOvertime);
         const nightDiffHours = computeNightDifferentialHours(normalizedLog, computationOptions);
         const lateMinutes = computeLateMinutes(normalizedLog, computationOptions);
         const nextHours = Number(hoursWorked.toFixed(2));
@@ -1978,6 +1992,68 @@ export default function Attendance() {
     nightDiffHours: 0,
   });
 
+  const filteredEmployeeIds = new Set(filteredEmployees.map(employee => String(employee.id || '')));
+  const filteredEmployeeCodes = new Set(filteredEmployees.map(employee => normalizeAttendanceKey(employee.employee_id)));
+  const approvedOvertimeSummaryRows = overtimeRequests
+    .filter(request => request.status === 'approved')
+    .filter(request => {
+      if (!activePeriod) return true;
+      return request.date >= activePeriod.start_date && request.date <= activePeriod.end_date;
+    })
+    .map(request => {
+      const employee = employees.find(emp =>
+        String(request.employee_record_id || '') === String(emp.id || '') ||
+        normalizeAttendanceKey(request.employee_id) === normalizeAttendanceKey(emp.employee_id)
+      );
+      const log = allAttendanceLogs.find(item =>
+        item.date === request.date &&
+        employeeRequestMatchesLog(request, item, employee)
+      );
+      const approvedHours = Number((request.approved_hours ?? request.requested_hours) || 0);
+      const actualOvertimeHours = Number(log?.ot_actual_hours ?? log?.overtime_hours ?? 0) || 0;
+      const creditedOvertimeHours = Number(log?.overtime_hours || 0);
+      const lateMinutes = Number(log?.late_minutes || 0);
+      const employeeName = employee
+        ? employeeFullName(employee)
+        : request.employee_name || request.employee_id || 'Unknown employee';
+
+      return {
+        request,
+        employee,
+        log,
+        employeeName,
+        department: employee?.department || request.department || '—',
+        approvedHours,
+        actualOvertimeHours,
+        creditedOvertimeHours,
+        lateMinutes,
+        conductedOvertime: actualOvertimeHours > 0 || creditedOvertimeHours > 0,
+        period: displayedPayrollPeriods.find(period => request.date >= period.start_date && request.date <= period.end_date),
+      };
+    })
+    .filter(row => {
+      if (!row.employee) return filterDept === 'all';
+      return filteredEmployeeIds.has(String(row.employee.id || '')) ||
+        filteredEmployeeCodes.has(normalizeAttendanceKey(row.employee.employee_id));
+    })
+    .sort((a, b) =>
+      String(b.request.date || '').localeCompare(String(a.request.date || '')) ||
+      String(a.employeeName || '').localeCompare(String(b.employeeName || ''))
+    );
+  const approvedOvertimeSummaryTotals = approvedOvertimeSummaryRows.reduce((totals, row) => ({
+    count: totals.count + 1,
+    approvedHours: totals.approvedHours + row.approvedHours,
+    creditedHours: totals.creditedHours + row.creditedOvertimeHours,
+    lateCount: totals.lateCount + (row.lateMinutes > 0 ? 1 : 0),
+    conductedCount: totals.conductedCount + (row.conductedOvertime ? 1 : 0),
+  }), {
+    count: 0,
+    approvedHours: 0,
+    creditedHours: 0,
+    lateCount: 0,
+    conductedCount: 0,
+  });
+
   const handleDownloadCSV = async () => {
     setDownloading(true);
     try {
@@ -2016,14 +2092,16 @@ export default function Attendance() {
     ? sortedLogs
       .map(log => {
         let actualOvertime = Number(log.ot_actual_hours) || 0;
+        const computationOptions = getLogComputationOptions(log);
         if (!actualOvertime && log.time_in && log.time_out) {
-          const computationOptions = getLogComputationOptions(log);
           const hoursWorked = Number(log.hours_worked) || computeCreditedHoursWorked(log, computationOptions);
           actualOvertime = computeOvertimeHours(log, hoursWorked, computationOptions);
         }
         const approvedRequest = approvedOvertimeRequestForLog(log, overtimeRequests, selectedEmployee);
-        return actualOvertime > 0 && !approvedRequest
-          ? { ...log, actualOvertime: Number(actualOvertime.toFixed(2)) }
+        const requestExemptOvertime = computeRequestExemptOvertimeHours(log, computationOptions);
+        const requestRequiredOvertime = Math.max(0, actualOvertime - requestExemptOvertime);
+        return requestRequiredOvertime > 0.005 && !approvedRequest
+          ? { ...log, actualOvertime: Number(requestRequiredOvertime.toFixed(2)) }
           : null;
       })
       .filter(Boolean)
@@ -2228,6 +2306,110 @@ export default function Attendance() {
                 </div>
               </Card>
             )}
+
+            <Card className="border border-border shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                  <div>
+                    <p className="font-semibold text-sm text-foreground">Approved OT Summary</p>
+                    <p className="text-xs text-muted-foreground">
+                      {activePeriod ? `${activePeriod.period_name}: ${activePeriod.start_date} to ${activePeriod.end_date}` : 'All payroll periods'}
+                      {filterDept !== 'all' ? ` · ${filterDept}` : ' · All departments'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                    {approvedOvertimeSummaryTotals.count} approved
+                  </Badge>
+                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                    {formatHours(approvedOvertimeSummaryTotals.approvedHours)} approved
+                  </Badge>
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                    {approvedOvertimeSummaryTotals.lateCount} late
+                  </Badge>
+                  <Badge variant="outline" className="bg-violet-50 text-violet-700 border-violet-200">
+                    {approvedOvertimeSummaryTotals.conductedCount} conducted OT
+                  </Badge>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-muted/50 border-b border-border">
+                      <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Date</th>
+                      <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Employee</th>
+                      <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Department</th>
+                      <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Approved OT</th>
+                      <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Credited OT</th>
+                      <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Late</th>
+                      <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">OT Conducted</th>
+                      <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {approvedOvertimeSummaryRows.slice(0, 12).map(row => (
+                      <tr key={row.request.id} className="border-b border-border last:border-0">
+                        <td className="px-4 py-2 text-xs">{row.request.date}</td>
+                        <td className="px-4 py-2">
+                          <p className="font-medium text-foreground text-sm">{row.employeeName}</p>
+                          <p className="text-xs text-muted-foreground">{row.employee?.employee_id || row.request.employee_id || '—'}</p>
+                        </td>
+                        <td className="px-4 py-2 text-muted-foreground">{row.department}</td>
+                        <td className="px-4 py-2 text-right font-mono">{formatHours(row.approvedHours)}</td>
+                        <td className="px-4 py-2 text-right font-mono text-blue-700">{formatHours(row.creditedOvertimeHours)}</td>
+                        <td className="px-4 py-2">
+                          {row.lateMinutes > 0 ? (
+                            <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
+                              Late {formatMinutes(row.lateMinutes)}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                              Not late
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          {row.conductedOvertime ? (
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                              Conducted {formatHours(row.actualOvertimeHours || row.creditedOvertimeHours)}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-muted text-muted-foreground border-border">
+                              No rendered OT
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">
+                          {!row.log
+                            ? 'No matching attendance log found.'
+                            : row.lateMinutes > 0 && row.conductedOvertime
+                              ? 'Employee was late and still rendered OT.'
+                              : row.lateMinutes > 0
+                                ? 'Employee was late; no rendered OT recorded.'
+                                : row.conductedOvertime
+                                  ? 'Employee was not late and rendered OT.'
+                                  : 'Approved OT exists but no rendered OT is recorded.'}
+                        </td>
+                      </tr>
+                    ))}
+                    {approvedOvertimeSummaryRows.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="text-center py-8 text-muted-foreground">
+                          No approved OT found for this filter.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {approvedOvertimeSummaryRows.length > 12 && (
+                <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
+                  Showing 12 of {approvedOvertimeSummaryRows.length} approved OT records.
+                </p>
+              )}
+            </Card>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {filteredEmployees.map(emp => (
                 <button
@@ -2521,7 +2703,9 @@ export default function Attendance() {
 	                    const timeOutLocation = attendanceLocationItem(displayLog, 'time_out');
 	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || 0);
 	                    const creditedOvertimeHours = Number(log.overtime_hours || 0);
-	                    const hasUnapprovedOvertime = actualOvertimeHours > 0 && creditedOvertimeHours <= 0 && !log.overtime_request_id;
+	                    const requestExemptOvertimeHours = computeRequestExemptOvertimeHours(log, computationOptions);
+	                    const requestRequiredOvertimeHours = Math.max(0, actualOvertimeHours - requestExemptOvertimeHours);
+	                    const hasUnapprovedOvertime = requestRequiredOvertimeHours > 0.005 && creditedOvertimeHours <= requestExemptOvertimeHours + 0.005 && !log.overtime_request_id;
 	                    const displayedNightDiffHours = displayLog.time_in && displayLog.time_out
 	                      ? Number(computeNightDifferentialHours(displayLog, computationOptions).toFixed(2))
 	                      : Number(log.night_diff_hours) || 0;
