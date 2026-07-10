@@ -356,7 +356,20 @@ export default function Settings() {
   const [editingShift, setEditingShift] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const { activeCompanyId } = useCompany();
-  const today = manilaDateString();
+  const [today, setToday] = useState(() => manilaDateString());
+
+  useEffect(() => {
+    const refreshToday = () => setToday(manilaDateString());
+    const intervalId = window.setInterval(refreshToday, 60000);
+    window.addEventListener('focus', refreshToday);
+    document.addEventListener('visibilitychange', refreshToday);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshToday);
+      document.removeEventListener('visibilitychange', refreshToday);
+    };
+  }, []);
 
   const { data: shifts = [], isLoading } = useQuery({
     queryKey: ['settings', activeCompanyId],

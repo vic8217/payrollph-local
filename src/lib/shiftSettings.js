@@ -17,6 +17,10 @@ const VERSION_FIELDS = [
   'is_active',
 ];
 
+function effectiveDateString(value) {
+  return String(value || '').slice(0, 10);
+}
+
 export function shiftVersionSnapshot(shift, overrides = {}) {
   const snapshot = {};
   VERSION_FIELDS.forEach((field) => {
@@ -29,10 +33,14 @@ export function shiftVersionSnapshot(shift, overrides = {}) {
 
 export function effectiveShiftSetting(shift, date = manilaDateString()) {
   if (!shift) return null;
+  const targetDate = effectiveDateString(date);
   const versions = Array.isArray(shift.effective_versions)
     ? [...shift.effective_versions]
-      .filter(version => version?.effective_date && version.effective_date <= date)
-      .sort((a, b) => a.effective_date.localeCompare(b.effective_date))
+      .filter(version => {
+        const effectiveDate = effectiveDateString(version?.effective_date);
+        return effectiveDate && effectiveDate <= targetDate;
+      })
+      .sort((a, b) => effectiveDateString(a.effective_date).localeCompare(effectiveDateString(b.effective_date)))
     : [];
   if (versions.length === 0) return { ...shift, is_active: shift.is_active !== false };
   return { ...shift, ...versions.at(-1) };
@@ -40,9 +48,13 @@ export function effectiveShiftSetting(shift, date = manilaDateString()) {
 
 export function pendingShiftVersion(shift, date = manilaDateString()) {
   if (!Array.isArray(shift?.effective_versions)) return null;
+  const targetDate = effectiveDateString(date);
   return [...shift.effective_versions]
-    .filter(version => version?.effective_date > date)
-    .sort((a, b) => a.effective_date.localeCompare(b.effective_date))[0] || null;
+    .filter(version => {
+      const effectiveDate = effectiveDateString(version?.effective_date);
+      return effectiveDate && effectiveDate > targetDate;
+    })
+    .sort((a, b) => effectiveDateString(a.effective_date).localeCompare(effectiveDateString(b.effective_date)))[0] || null;
 }
 
 export function nextBusinessDate(date = manilaDateString()) {
