@@ -704,7 +704,7 @@ export default function Payroll() {
     const currentCashAdvances = /** @type {CashAdvanceEntity[]} */ (await entities.CashAdvance.filter({
       company_profile_id: activeCompanyId,
     }));
-    const activeEmployees = employees.filter(e => e.status === 'active');
+    const activeEmployees = employees.filter(e => e.status === 'active' && !e.special_rate_enabled);
     const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.list('-date', 1000));
     const existingLedger = /** @type {CashAdvanceLedgerEntity[]} */ (await entities.CashAdvanceLedger.filter({
       company_profile_id: activeCompanyId,
@@ -977,7 +977,9 @@ export default function Payroll() {
     : targetPeriod?.status === 'processing' && targetPeriodIsComplete
       ? 'Approve this payroll period before regenerating'
       : undefined;
-  const knownEmployeeIds = new Set(employees.map(employee => String(employee.employee_id || '').toLowerCase()));
+  const knownEmployeeIds = new Set(employees
+    .filter(employee => !employee.special_rate_enabled)
+    .map(employee => String(employee.employee_id || '').toLowerCase()));
   const eligibleRecords = employeesQuery.isSuccess
     ? records.filter(record => knownEmployeeIds.has(String(record.employee_id || '').toLowerCase()))
     : records;

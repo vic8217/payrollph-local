@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
 		  LayoutDashboard, Users, Clock, CreditCard,
 		  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText
+		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText, BadgeDollarSign
 		} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,7 @@ const navItems = [
   { label: 'Attendance',      icon: Clock,             path: '/attendance',         roles: ['super_admin', 'admin', 'user'] },
   { label: 'Work Schedule',   icon: CalendarClock,     path: '/work-schedule',      roles: ['super_admin', 'admin', 'user'] },
   { label: 'Payroll',         icon: FileText,          path: '/payroll',            roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Special Rates',   icon: BadgeDollarSign,   path: '/special-rates',      roles: ['super_admin', 'admin'] },
   { label: '13th Month Pay',  icon: Gift,              path: '/thirteenth-month-pay', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Separation Pay',  icon: DoorOpen,          path: '/separation-pay',     roles: ['super_admin', 'admin', 'user'] },
   { label: 'Statutory Rates', icon: Landmark,          path: '/statutory-rates',    roles: ['super_admin', 'admin', 'user'] },

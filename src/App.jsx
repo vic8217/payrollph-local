@@ -35,6 +35,7 @@ import UsersLog from '@/pages/UsersLog';
 import PasscodeAudit from '@/pages/PasscodeAudit';
 import Landing from '@/pages/Landing';
 import PayslipAcknowledgements from '@/pages/PayslipAcknowledgements';
+import SpecialRates from '@/pages/SpecialRates';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
@@ -85,6 +86,7 @@ const AuthenticatedApp = () => {
         <Route path="/scan" element={<QRScanner />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/payroll" element={<Payroll />} />
+        <Route path="/special-rates" element={<SpecialRates />} />
         <Route path="/payroll-dashboard" element={<PayrollDashboard />} />
         <Route path="/thirteenth-month-pay" element={<ThirteenthMonthPay />} />
         <Route path="/separation-pay" element={<SeparationPay />} />

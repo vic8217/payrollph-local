@@ -1474,11 +1474,12 @@ export default function Attendance() {
   const startStr = activePeriodConfig.start_date;
   const endStr = activePeriodConfig.end_date;
 
-  const { data: employees = [], isLoading: loadingEmployees } = useQuery({
+  const { data: employeeRecords = [], isLoading: loadingEmployees } = useQuery({
     queryKey: ['employees', activeCompanyId],
     queryFn: () => entities.filter('Employee', { status: 'active', company_profile_id: activeCompanyId }),
     enabled: !!activeCompanyId,
   });
+  const employees = employeeRecords.filter(employee => !employee.special_rate_enabled);
 
   const { data: attendanceData = { logs: [], periodLogs: [] }, isLoading: loadingLogs } = useQuery({
     queryKey: ['attendance', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId, startStr, endStr],

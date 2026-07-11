@@ -84,6 +84,39 @@ function fieldsForListRequest(entity, query) {
   return undefined;
 }
 
+function normalizedId(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+async function requireTimeInForOvertimeRequest(data = {}) {
+  const companyProfileId = data.company_profile_id;
+  const requestDate = String(data.date || "").slice(0, 10);
+  const employeeRecordId = normalizedId(data.employee_record_id);
+  const employeeId = normalizedId(data.employee_id);
+
+  if (!companyProfileId || !requestDate || (!employeeRecordId && !employeeId)) {
+    const error = new Error("Employee and OT date are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const logs = await listRecords("AttendanceLog", {
+    filter: { company_profile_id: companyProfileId, date: requestDate },
+  });
+  const hasTimeIn = logs.some(log => {
+    const sameEmployee =
+      (employeeRecordId && normalizedId(log.employee_record_id) === employeeRecordId) ||
+      (employeeId && normalizedId(log.employee_id) === employeeId);
+    return sameEmployee && Boolean(String(log.time_in || "").trim());
+  });
+
+  if (!hasTimeIn) {
+    const error = new Error("You can only file an OT request after recording Time In for the selected date.");
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 export default async function handler(req, res) {
   const entity = entityNameFromQuery(req.query);
   if (!entity) {
@@ -112,6 +145,9 @@ export default async function handler(req, res) {
         });
       }
       let data = req.body;
+      if (entity === "OvertimeRequest") {
+        await requireTimeInForOvertimeRequest(data);
+      }
       if (entity === "CompanyProfile") {
         const session = await getServerSession(req, res, authOptions);
         data = {

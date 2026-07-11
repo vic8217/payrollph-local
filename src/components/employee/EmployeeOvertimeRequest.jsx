@@ -63,6 +63,23 @@ export default function EmployeeOvertimeRequest({ employee }) {
     setSaving(true);
     setError('');
     try {
+      const attendanceLogs = await appApi.entities.AttendanceLog.filter({
+        company_profile_id: employee.company_profile_id,
+        date,
+      });
+      const employeeRecordId = String(employee.id || '').trim().toLowerCase();
+      const employeeId = String(employee.employee_id || '').trim().toLowerCase();
+      const hasTimeIn = attendanceLogs.some(log => {
+        const sameEmployee =
+          (employeeRecordId && String(log.employee_record_id || '').trim().toLowerCase() === employeeRecordId) ||
+          (employeeId && String(log.employee_id || '').trim().toLowerCase() === employeeId);
+        return sameEmployee && Boolean(String(log.time_in || '').trim());
+      });
+      if (!hasTimeIn) {
+        setError('You can only file an OT request after recording Time In for the selected date.');
+        return;
+      }
+
       await appApi.entities.OvertimeRequest.create({
         company_profile_id: employee.company_profile_id,
         employee_record_id: employee.id,
