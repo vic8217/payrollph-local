@@ -52,11 +52,11 @@ function entityUrl(entity, params = {}) {
 
 function entityClient(entity) {
   return {
-    list(sort, limit) {
-      return requestJson(entityUrl(entity, { sort, limit }));
+    list(sort, limit, options = {}) {
+      return requestJson(entityUrl(entity, { sort, limit, ...options }));
     },
-    filter(filter = {}, sort, limit) {
-      return requestJson(entityUrl(entity, { filter, sort, limit }));
+    filter(filter = {}, sort, limit, options = {}) {
+      return requestJson(entityUrl(entity, { filter, sort, limit, ...options }));
     },
     create(data) {
       return requestJson(entityUrl(entity), {

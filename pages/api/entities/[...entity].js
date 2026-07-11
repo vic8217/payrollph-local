@@ -27,6 +27,63 @@ function entityNameFromQuery(query) {
   return raw;
 }
 
+const ATTENDANCE_LOG_LIST_FIELDS = [
+  "id",
+  "created_date",
+  "updated_date",
+  "company_profile_id",
+  "employee_record_id",
+  "employee_id",
+  "employee_name",
+  "date",
+  "time_in",
+  "break_time_out",
+  "break_time_in",
+  "time_out",
+  "work_schedule",
+  "shift_start_time",
+  "shift_end_time",
+  "shift_overtime_start_time",
+  "shift_grace_period_minutes",
+  "shift_time_in_allowance_minutes",
+  "shift_paid_break_time",
+  "status",
+  "day_type",
+  "hours_worked",
+  "undertime_minutes",
+  "ot_actual_hours",
+  "overtime_hours",
+  "ot_requested_hours",
+  "ot_status",
+  "overtime_request_id",
+  "ot_hr_approved",
+  "ot_admin_approved",
+  "ot_reviewed_at",
+  "ot_reviewed_by",
+  "ot_review_reason",
+  "night_diff_hours",
+  "late_minutes",
+  "photo_url",
+  "photo_action",
+  "time_in_photo_url",
+  "break_time_out_photo_url",
+  "break_time_in_photo_url",
+  "time_out_photo_url",
+  "time_in_verification_method",
+  "break_time_out_verification_method",
+  "break_time_in_verification_method",
+  "time_out_verification_method",
+].join(",");
+
+function fieldsForListRequest(entity, query) {
+  if (query.fields) return query.fields;
+  if (entity !== "AttendanceLog") return undefined;
+
+  const limit = Number(query.limit) || 0;
+  if (limit >= 1000) return ATTENDANCE_LOG_LIST_FIELDS;
+  return undefined;
+}
+
 export default async function handler(req, res) {
   const entity = entityNameFromQuery(req.query);
   if (!entity) {
@@ -43,7 +100,7 @@ export default async function handler(req, res) {
         filter,
         sort: req.query.sort,
         limit: req.query.limit,
-        fields: req.query.fields,
+        fields: fieldsForListRequest(entity, req.query),
       });
       return res.status(200).json(records);
     }

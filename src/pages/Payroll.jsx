@@ -127,12 +127,12 @@ const ATTENDANCE_PHOTO_RETENTION_DAYS = 21;
 
 /**
  * @param {CashAdvanceEntity} ca
- * @param {string} periodStartDate
+ * @param {string} periodEndDate
  */
-function isCashAdvanceDeductibleForPeriod(ca, periodStartDate) {
+function isCashAdvanceDeductibleForPeriod(ca, periodEndDate) {
   const approvalDate = ca.approved_date || (ca.advance_type === 'beginning_balance' ? ca.request_date : null);
   if (!approvalDate) return true;
-  return String(approvalDate).slice(0, 10) < periodStartDate;
+  return String(approvalDate).slice(0, 10) <= periodEndDate;
 }
 
 /** @param {number | string | null | undefined} value */
@@ -705,7 +705,7 @@ export default function Payroll() {
     const approvedCA = cashAdvances.filter(cashAdvance =>
       (cashAdvance.status === 'approved' &&
         (cashAdvance.deduction_periods_remaining == null || cashAdvance.deduction_periods_remaining > 0) &&
-        isCashAdvanceDeductibleForPeriod(cashAdvance, startStr)) ||
+        isCashAdvanceDeductibleForPeriod(cashAdvance, endStr)) ||
       postedCashAdvanceIds.has(cashAdvance.id)
     );
 
