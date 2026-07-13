@@ -39,7 +39,7 @@ const navItems = [
   { label: 'Personal Leave',  icon: Palmtree,         path: '/personal-leave',     roles: ['super_admin', 'admin', 'user'] },
   { label: 'Holidays',        icon: CalendarDays,      path: '/holidays',           roles: ['super_admin', 'admin', 'user'] },
   { label: 'No-Work Days',    icon: CalendarOff,       path: '/no-work-days',       roles: ['super_admin', 'admin', 'user'] },
-  { label: 'Daily Passcode',  icon: KeyRound,          path: '/passcode-manager',   roles: ['super_admin'] },
+  { label: 'Daily Passcode',  icon: KeyRound,          path: '/passcode-manager',   roles: ['super_admin', 'admin', 'user'] },
   { label: 'User Management', icon: Users,             path: '/user-management',    roles: ['super_admin', 'admin'] },
   { label: 'Users Log',       icon: Activity,          path: '/users-log',          roles: ['super_admin'] },
   { label: 'Passcode Audit',  icon: ShieldCheck,       path: '/passcode-audit',     roles: ['super_admin', 'admin'] },
