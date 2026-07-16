@@ -113,6 +113,12 @@ export default function GrossBreakdownDialog({ record, open, onClose }) {
           )}
           <Separator className="my-1" />
           <Row label="Gross Pay" value={record.gross_pay} bold highlight />
+          {record.cash_advance_received > 0 && (
+            <>
+              <Row label="Cash Advance Released (non-wage)" value={record.cash_advance_received} />
+              <p className="text-xs text-muted-foreground">Added to net pay for this period; scheduled deductions begin in the following payroll period.</p>
+            </>
+          )}
         </div>
 
         <Separator />

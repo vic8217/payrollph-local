@@ -16,6 +16,8 @@ function Row({ label, value, bold, negative }) {
 export default function PayslipView({ record }) {
   const handlePrint = () => window.print();
   const incentiveDetails = Array.isArray(record.incentive_details) ? record.incentive_details : [];
+  const cashAdvanceReleaseDetails = Array.isArray(record.cash_advance_release_details) ? record.cash_advance_release_details : [];
+  const cashAdvanceDeductionDetails = Array.isArray(record.cash_advance_deduction_details) ? record.cash_advance_deduction_details : [];
 
   return (
     <div className="space-y-4" id="payslip-content">
@@ -75,6 +77,18 @@ export default function PayslipView({ record }) {
         )}
         <Separator className="my-1" />
         <Row label="Gross Pay" value={record.gross_pay} bold />
+        {record.cash_advance_received > 0 && (
+          <>
+            <Row label="Cash Advance Released" value={record.cash_advance_received} />
+            {cashAdvanceReleaseDetails.map((item, index) => (
+              <p key={`${item.cash_advance_id || 'advance'}-${index}`} className="flex justify-between gap-3 px-2 text-xs text-muted-foreground">
+                <span>{item.description || 'Approved cash advance'} · {item.approved_date}</span>
+                <span className="font-mono">₱{Number(item.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+              </p>
+            ))}
+            <p className="mt-1 text-xs text-muted-foreground">Cash advances are non-wage additions and are not included in gross pay.</p>
+          </>
+        )}
       </div>
 
       {/* Deductions */}
@@ -93,6 +107,12 @@ export default function PayslipView({ record }) {
         {record.undertime_deduction > 0 && <Row label="Undertime Deduction" value={record.undertime_deduction} negative />}
         {record.absent_deduction > 0 && <Row label="Absent Deduction" value={record.absent_deduction} negative />}
         {record.cash_advance_deduction > 0 && <Row label="Cash Advance (Vale)" value={record.cash_advance_deduction} negative />}
+        {cashAdvanceDeductionDetails.map((item, index) => (
+          <p key={`${item.cash_advance_id || 'deduction'}-${index}`} className="flex justify-between gap-3 px-2 text-xs text-muted-foreground">
+            <span>{item.description || 'Cash advance'} · installment {item.deduction_number || '—'} of {item.deduction_total || '—'}</span>
+            <span className="font-mono">-₱{Number(item.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+          </p>
+        ))}
         {record.cash_advance_deduction_suspended && (
           <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
             Cash advance deduction suspended for this payroll period.

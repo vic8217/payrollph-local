@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Play, CheckCircle2, FileText, Printer, Search, Calculator, Trash2, Download, PauseCircle } from 'lucide-react';
+import { Play, CheckCircle2, FileText, Printer, Search, Calculator, Trash2, Download, PauseCircle, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -130,10 +130,12 @@ const ATTENDANCE_PHOTO_RETENTION_DAYS = 21;
  * @param {CashAdvanceEntity} ca
  * @param {string} periodEndDate
  */
-function isCashAdvanceDeductibleForPeriod(ca, periodEndDate) {
+function isCashAdvanceDeductibleForPeriod(ca, periodStartDate) {
   const approvalDate = ca.approved_date || (ca.advance_type === 'beginning_balance' ? ca.request_date : null);
   if (!approvalDate) return true;
-  return String(approvalDate).slice(0, 10) <= periodEndDate;
+  // An advance is shown as a payslip addition in the period when it is approved.
+  // Its scheduled repayments begin in the following payroll period.
+  return String(approvalDate).slice(0, 10) < periodStartDate;
 }
 
 /** @param {number | string | null | undefined} value */
@@ -371,6 +373,9 @@ export default function Payroll() {
   const [selectedPeriod, setSelectedPeriod] = useState(/** @type {PayrollEntity | null} */ (null));
   const [selectedRecord, setSelectedRecord] = useState(/** @type {PayrollEntity | null} */ (null));
   const [reviewRecord, setReviewRecord] = useState(/** @type {PayrollEntity | null} */ (null));
+  const [governmentDeductionRecord, setGovernmentDeductionRecord] = useState(/** @type {PayrollEntity | null} */ (null));
+  const [governmentDeductionForm, setGovernmentDeductionForm] = useState({ sss: '', philhealth: '', pagibig: '', hrPasscode: '', adminPasscode: '' });
+  const [governmentDeductionError, setGovernmentDeductionError] = useState('');
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [generating, setGenerating] = useState(false);
   const [previewEmployeeId, setPreviewEmployeeId] = useState('');
@@ -518,6 +523,39 @@ export default function Payroll() {
       }
     },
   });
+
+  const saveGovernmentDeductions = useMutation({
+    mutationFn: () => appApi.functions.invoke('saveGovernmentDeductions', {
+      company_profile_id: activeCompanyId,
+      payroll_record_id: governmentDeductionRecord?.id,
+      payroll_period_id: selectedPeriod?.id,
+      sss_contribution: governmentDeductionForm.sss,
+      philhealth_contribution: governmentDeductionForm.philhealth,
+      pagibig_contribution: governmentDeductionForm.pagibig,
+      hr_passcode: governmentDeductionForm.hrPasscode,
+      admin_passcode: governmentDeductionForm.adminPasscode,
+    }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['payrollRecords'] });
+      qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+      if (result?.period) setSelectedPeriod(previous => ({ ...previous, ...result.period }));
+      setGovernmentDeductionRecord(null);
+      setGovernmentDeductionError('');
+    },
+    onError: (error) => setGovernmentDeductionError(error?.message || 'Unable to save government deductions.'),
+  });
+
+  const openGovernmentDeductions = (record) => {
+    setGovernmentDeductionRecord(record);
+    setGovernmentDeductionForm({
+      sss: String(Number(record.sss_contribution) || 0),
+      philhealth: String(Number(record.philhealth_contribution) || 0),
+      pagibig: String(Number(record.pagibig_contribution) || 0),
+      hrPasscode: '',
+      adminPasscode: '',
+    });
+    setGovernmentDeductionError('');
+  };
 
   const previewEmployeePay = async () => {
     setPayPreviewError('');
@@ -716,7 +754,7 @@ export default function Payroll() {
     const approvedCA = currentCashAdvances.filter(cashAdvance =>
       (cashAdvance.status === 'approved' &&
         (cashAdvance.deduction_periods_remaining == null || cashAdvance.deduction_periods_remaining > 0) &&
-        isCashAdvanceDeductibleForPeriod(cashAdvance, endStr)) ||
+        isCashAdvanceDeductibleForPeriod(cashAdvance, startStr)) ||
       postedCashAdvanceIds.has(normalizedId(cashAdvance.id))
     );
 
@@ -773,6 +811,23 @@ export default function Payroll() {
       ];
       const existing = await entities.PayrollRecord.filter({ payroll_period_id: period.id, employee_id: emp.employee_id });
       const existingRecord = existing[0];
+      const cashAdvanceReleases = currentCashAdvances.filter(cashAdvance => {
+        const approvedDate = String(cashAdvance.approved_date || '').slice(0, 10);
+        return normalizedId(cashAdvance.employee_id) === normalizedId(emp.employee_id) &&
+          cashAdvance.advance_type !== 'beginning_balance' &&
+          approvedDate >= startStr && approvedDate <= endStr &&
+          Number(cashAdvance.amount_approved || cashAdvance.amount_requested) > 0;
+      });
+      const cashAdvanceReceived = money(cashAdvanceReleases.reduce(
+        (sum, cashAdvance) => sum + (Number(cashAdvance.amount_approved || cashAdvance.amount_requested) || 0),
+        0
+      ));
+      const cashAdvanceReleaseDetails = cashAdvanceReleases.map(cashAdvance => ({
+        cash_advance_id: cashAdvance.id,
+        approved_date: cashAdvance.approved_date,
+        description: cashAdvance.reason || cashAdvance.advance_type || 'Cash advance',
+        amount: money(cashAdvance.amount_approved || cashAdvance.amount_requested),
+      }));
       const cashAdvanceDeductionSuspended = Boolean(periodCashAdvanceDeductionSuspended || existingRecord?.cash_advance_deduction_suspended);
 
       // Find all active CAs for this employee (can have multiple)
@@ -836,6 +891,7 @@ export default function Payroll() {
           breakInGraceMinutes: gracePeriodMinutes,
           breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
           paidBreakTime: Boolean(defaultShift.paid_break_time),
+          applyStatutoryDeductions: false,
           resolveLogOptions: (log) => ({
             ...resolveShiftOptionsForLog(log, emp, shiftSettings, defaultShift),
             breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
@@ -857,8 +913,23 @@ export default function Payroll() {
         incentive_pay: incentivePay,
         incentive_details: incentiveDetails,
         gross_pay: money(computed.gross_pay + incentivePay),
-        net_pay: money(computed.net_pay + incentivePay),
+        net_pay: money(computed.net_pay + incentivePay + cashAdvanceReceived),
+        cash_advance_received: cashAdvanceReceived,
+        cash_advance_release_details: cashAdvanceReleaseDetails,
       };
+      // Government deductions are entered manually and survive draft regeneration.
+      const manualGovernmentDeductions = {
+        sss_contribution: money(existingRecord?.sss_contribution),
+        philhealth_contribution: money(existingRecord?.philhealth_contribution),
+        pagibig_contribution: money(existingRecord?.pagibig_contribution),
+      };
+      const manualGovernmentTotal = money(
+        manualGovernmentDeductions.sss_contribution +
+        manualGovernmentDeductions.philhealth_contribution +
+        manualGovernmentDeductions.pagibig_contribution
+      );
+      computedWithIncentives.total_deductions = money(computedWithIncentives.total_deductions + manualGovernmentTotal);
+      computedWithIncentives.net_pay = money(computedWithIncentives.net_pay - manualGovernmentTotal);
 
       // Upsert payroll record
       const recordStatus = period.status === 'released'
@@ -889,6 +960,7 @@ export default function Payroll() {
           cash_advance_suspended_by: null,
         }),
         ...computedWithIncentives,
+        ...manualGovernmentDeductions,
       };
 
       const payrollRecord = existing.length > 0
@@ -1561,6 +1633,11 @@ export default function Payroll() {
                                   <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" onClick={() => setReviewRecord(rec)}>
                                     <Search className="w-3 h-3" /> Review
                                   </Button>
+                                  {selectedPeriod.status !== 'released' && (
+                                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1 px-2" onClick={() => openGovernmentDeductions(rec)}>
+                                      <ShieldCheck className="w-3 h-3" /> Gov't deductions
+                                    </Button>
+                                  )}
                                   <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setSelectedRecord(rec)}>
                                     <Printer className="w-4 h-4" />
                                   </Button>
@@ -1629,6 +1706,42 @@ export default function Payroll() {
         open={!!reviewRecord}
         onClose={() => setReviewRecord(null)}
       />
+
+      <Dialog open={!!governmentDeductionRecord} onOpenChange={open => !open && setGovernmentDeductionRecord(null)}>
+        <PayrollDialogContent className="max-w-lg">
+          <PayrollDialogHeader><PayrollDialogTitle>Manual Government Deductions</PayrollDialogTitle></PayrollDialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-semibold">Responsibility notice</p>
+              <p className="mt-1">The Admin Manager and HR Officer are responsible for computing and entering the correct mandatory government deductions. The system does not calculate SSS, PhilHealth, or Pag-IBIG contributions.</p>
+            </div>
+            <p className="text-sm text-muted-foreground">Employee: <span className="font-medium text-foreground">{governmentDeductionRecord?.employee_name}</span></p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[
+                ['sss', 'SSS'],
+                ['philhealth', 'PhilHealth'],
+                ['pagibig', 'Pag-IBIG'],
+              ].map(([field, label]) => (
+                <label key={field} className="space-y-1 text-sm font-medium">
+                  <span>{label}</span>
+                  <Input type="number" min="0" step="0.01" value={governmentDeductionForm[field]} onChange={event => setGovernmentDeductionForm(previous => ({ ...previous, [field]: event.target.value }))} />
+                </label>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="space-y-1 text-sm font-medium"><span>HR Officer passcode</span><Input type="password" value={governmentDeductionForm.hrPasscode} onChange={event => setGovernmentDeductionForm(previous => ({ ...previous, hrPasscode: event.target.value }))} /></label>
+              <label className="space-y-1 text-sm font-medium"><span>Admin Manager passcode</span><Input type="password" value={governmentDeductionForm.adminPasscode} onChange={event => setGovernmentDeductionForm(previous => ({ ...previous, adminPasscode: event.target.value }))} /></label>
+            </div>
+            {governmentDeductionError && <p className="text-sm text-destructive">{governmentDeductionError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setGovernmentDeductionRecord(null)}>Cancel</Button>
+              <Button disabled={saveGovernmentDeductions.isPending || !governmentDeductionForm.hrPasscode.trim() || !governmentDeductionForm.adminPasscode.trim()} onClick={() => saveGovernmentDeductions.mutate()}>
+                {saveGovernmentDeductions.isPending ? 'Saving...' : 'Save deductions'}
+              </Button>
+            </div>
+          </div>
+        </PayrollDialogContent>
+      </Dialog>
     </div>
   );
 }
