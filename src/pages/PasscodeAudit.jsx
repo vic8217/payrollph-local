@@ -20,6 +20,8 @@ const entityLabels = {
 };
 
 const actionLabels = {
+  attendance_punch_recorded: 'Attendance Punch Recorded',
+  attendance_punch_failed: 'Attendance Punch Failed',
   attendance_correction: 'Attendance Corrected',
   attendance_manual_edit: 'Attendance Edited',
   attendance_rejected: 'Attendance Rejected',
@@ -45,6 +47,8 @@ const actionLabels = {
 };
 
 const actionStyles = {
+  attendance_punch_recorded: 'bg-emerald-100 text-emerald-700',
+  attendance_punch_failed: 'bg-red-100 text-red-700',
   attendance_rejected: 'bg-red-100 text-red-700',
   overtime_denied: 'bg-red-100 text-red-700',
   overtime_request_denied: 'bg-red-100 text-red-700',
@@ -176,7 +180,7 @@ export default function PasscodeAudit() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Passcode Audit Summary</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Passcode-authorized edits, approvals, reductions, denials, and setup changes.
+          Successful attendance punches, passcode-authorized edits, approvals, reductions, denials, and setup changes.
         </p>
       </div>
 

@@ -93,6 +93,39 @@ function locationUpdateFor(action, rawLocation) {
   return field && location ? { [field]: location, location_action: action } : {};
 }
 
+const punchLabels = {
+  time_in: "Time In (1)",
+  break_time_out: "Time Out (1)",
+  break_time_in: "Time In (2)",
+  time_out: "Time Out (2)",
+};
+
+async function recordSuccessfulPunch({ log, action, employee, occurredAt, location }) {
+  const label = punchLabels[action] || "Attendance punch";
+  return createRecord("PasscodeAuditLog", {
+    company_profile_id: employee.company_profile_id,
+    source_entity: "AttendanceLog",
+    source_record_id: log.id,
+    action: "attendance_punch_recorded",
+    punch_action: action,
+    occurred_at: occurredAt,
+    authorized_by: "Employee Portal",
+    reason: "Successful employee attendance scan",
+    summary: `${label} successfully recorded at ${occurredAt}`,
+    employee_record_id: employee.id,
+    employee_id: employee.employee_id,
+    employee_name: log.employee_name,
+    record_date: log.date,
+    recorded_time: occurredAt,
+    location: sanitizeLocation(location),
+  });
+}
+
+async function successfulPunchResponse(res, { log, action, employee, occurredAt, location }) {
+  const receipt = await recordSuccessfulPunch({ log, action, employee, occurredAt, location });
+  return res.status(200).json({ action, log, receipt });
+}
+
 function addDays(date, days) {
   const d = new Date(`${date}T00:00:00+08:00`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -195,6 +228,25 @@ function scheduledBreakIn(employee, date, isOvernightShift = false) {
   const breakInDate = breakIn.crossesMidnight ? addDays(breakDate, 1) : breakDate;
 
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
+}
+
+function classifyFirstPunchDuringBreak(employee, date, nowDate, isOvernightShift = false) {
+  const breakOutValue = scheduledBreak(employee, date, isOvernightShift)?.break_time_out;
+  const breakInValue = scheduledBreakIn(employee, date, isOvernightShift);
+  if (!breakOutValue || !breakInValue) return null;
+
+  const breakOut = new Date(breakOutValue);
+  const breakIn = new Date(breakInValue);
+  const windowEnd = new Date(breakOut.getTime() + BREAK_TIME_IN_MISSING_AFTER_MS);
+  if (![breakOut, breakIn, windowEnd].every(value => Number.isFinite(value.getTime()))) return null;
+
+  if (nowDate.getTime() >= breakOut.getTime() && nowDate.getTime() < breakIn.getTime()) {
+    return "break_time_in";
+  }
+  if (nowDate.getTime() >= breakIn.getTime() && nowDate.getTime() < windowEnd.getTime()) {
+    return "break_time_in";
+  }
+  return null;
 }
 
 function minutesSince(value, now = new Date()) {
@@ -342,6 +394,37 @@ export default async function handler(req, res) {
       );
     }
 
+    const firstBreakPunch = classifyFirstPunchDuringBreak(employee, date, nowDate, currentShiftOptions.isOvernightShift);
+    if (firstBreakPunch) {
+      const scheduledBreakOut = scheduledBreak(employee, date, currentShiftOptions.isOvernightShift);
+      const scheduledBreakReturn = scheduledBreakIn(employee, date, currentShiftOptions.isOvernightShift);
+      const isEarlyBreakReturn = scheduledBreakReturn && nowDate.getTime() < new Date(scheduledBreakReturn).getTime();
+      const log = await createRecord("AttendanceLog", {
+        company_profile_id: employee.company_profile_id,
+        employee_record_id: employee.id,
+        employee_id: employee.employee_id,
+        employee_name: employeeName,
+        date,
+        time_in: null,
+        break_time_out: scheduledBreakOut?.break_time_out,
+        break_time_in: isEarlyBreakReturn ? scheduledBreakReturn : now,
+        ...(isEarlyBreakReturn ? { break_time_in_actual_punch_at: now } : {}),
+        work_schedule: effectiveWorkSchedule,
+        shift_start_time: currentShiftOptions.shiftStartTime,
+        shift_end_time: currentShiftOptions.shiftEndTime,
+        shift_overtime_start_time: currentShiftOptions.overtimeStartTime,
+        shift_grace_period_minutes: currentShiftOptions.lateGraceMinutes,
+        shift_time_in_allowance_minutes: currentShiftOptions.timeInAllowanceMinutes,
+        shift_paid_break_time: currentShiftOptions.paidBreakTime,
+        ...locationUpdateFor("break_time_in", location),
+        status: "pending",
+        day_type: "regular",
+        first_punch_classification: firstBreakPunch,
+        time_in_missing_reason: "No successful Time In (1) was recorded before the scheduled break.",
+      });
+      return successfulPunchResponse(res, { log, action: "break_time_in", employee, occurredAt: now, location });
+    }
+
     const autoBreak = scheduledBreakAfterTimeIn(
       employee,
       date,
@@ -367,7 +450,7 @@ export default async function handler(req, res) {
       status: "pending",
       day_type: "regular",
     });
-    return res.status(200).json({ action: "time_in", log });
+    return successfulPunchResponse(res, { log, action: "time_in", employee, occurredAt: now, location });
   }
 
   let currentLog = lastLog;
@@ -397,7 +480,7 @@ export default async function handler(req, res) {
       break_time_out: now,
       ...locationUpdateFor("break_time_out", location),
     });
-    return res.status(200).json({ action: "break_time_out", log });
+    return successfulPunchResponse(res, { log, action: "break_time_out", employee, occurredAt: now, location });
   }
 
   // If the break-in window has lapsed (scheduled break-out was long ago and the
@@ -418,20 +501,19 @@ export default async function handler(req, res) {
       return rejectRapidScan(res, currentLog, "break_time_out", "Break Out was just recorded. Please wait before recording Break In.");
     }
 
-    if (
+    const scheduledBreakReturn = scheduledBreakIn(employee, currentLog.date, currentShiftOptions.isOvernightShift);
+    const isEarlyScheduledBreakReturn = Boolean(
       isScheduledBreakOut &&
-      new Date(now).getTime() <
-        new Date(scheduledBreakIn(employee, currentLog.date, currentShiftOptions.isOvernightShift)).getTime()
-    ) {
-      const durationLabel = getBreakDurationMinutes(employee) === 30 ? "30-minute" : "1-hour";
-      return rejectRapidScan(res, currentLog, "break_time_out", `Break In is not available until the scheduled ${durationLabel} break is over.`);
-    }
+      scheduledBreakReturn &&
+      new Date(now).getTime() < new Date(scheduledBreakReturn).getTime()
+    );
 
     const log = await updateRecord("AttendanceLog", currentLog.id, {
-      break_time_in: now,
+      break_time_in: isEarlyScheduledBreakReturn ? scheduledBreakReturn : now,
+      ...(isEarlyScheduledBreakReturn ? { break_time_in_actual_punch_at: now } : {}),
       ...locationUpdateFor("break_time_in", location),
     });
-    return res.status(200).json({ action: "break_time_in", log });
+    return successfulPunchResponse(res, { log, action: "break_time_in", employee, occurredAt: now, location });
   }
 
   if (!currentLog.time_out) {
@@ -481,7 +563,7 @@ export default async function handler(req, res) {
       night_diff_hours: Number(nightDiffHours.toFixed(2)),
       late_minutes: lateMinutes,
     });
-    return res.status(200).json({ action: "time_out", log });
+    return successfulPunchResponse(res, { log, action: "time_out", employee, occurredAt: now, location });
   }
 
   return res.status(409).json({ error: "Attendance for today is already complete" });

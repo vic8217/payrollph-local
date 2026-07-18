@@ -274,6 +274,12 @@ export default function EmployeeQRGate({
     }
 
     if (!emp) {
+      appApi.functions.invoke('recordAttendanceFailure', {
+        employee_id: trimmed,
+        company_profile_id: companyProfileId,
+        stage: 'employee_lookup',
+        reason: 'Employee ID not found',
+      }).catch(() => {});
       setResult({ success: false, message: 'Employee ID not found' });
       setProcessing(false);
       lockedRef.current = false;
@@ -306,6 +312,13 @@ export default function EmployeeQRGate({
         location,
       });
     } catch (error) {
+      appApi.functions.invoke('recordAttendanceFailure', {
+        employee_id: emp.employee_id,
+        employee_record_id: emp.id,
+        company_profile_id: emp.company_profile_id || companyProfileId,
+        stage: 'attendance_api',
+        reason: error?.message || 'Attendance could not be recorded',
+      }).catch(() => {});
       setResult({
         success: false,
         message: error?.message || 'Attendance could not be recorded. Please try again.',
@@ -318,6 +331,15 @@ export default function EmployeeQRGate({
     }
     const { action, log } = logRes;
     if (logRes.duplicate) {
+      appApi.functions.invoke('recordAttendanceFailure', {
+        employee_id: emp.employee_id,
+        employee_record_id: emp.id,
+        company_profile_id: emp.company_profile_id || companyProfileId,
+        attendance_log_id: log?.id,
+        punch_action: action,
+        stage: 'duplicate_or_sequence_check',
+        reason: logRes.message || 'Duplicate attendance scan',
+      }).catch(() => {});
       setResult({ success: false, message: logRes.message || 'Scan already recorded. Please wait before scanning again.' });
       setInput('');
       setProcessing(false);

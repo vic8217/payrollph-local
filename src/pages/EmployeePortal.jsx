@@ -268,6 +268,25 @@ export default function EmployeePortal() {
     setScanKey(k => k + 1);
   };
 
+  const attendanceSaved = Boolean(scanConfirm?.action && scanConfirm?.receiptId);
+
+  const recordFailedAttendance = async ({ employee, stage, reason, location, attendanceLogId, punchAction }) => {
+    try {
+      await appApi.functions.invoke('recordAttendanceFailure', {
+        employee_id: employee?.employee_id,
+        employee_record_id: employee?.id,
+        company_profile_id: employee?.company_profile_id || activeCompanyId,
+        attendance_log_id: attendanceLogId,
+        punch_action: punchAction,
+        stage,
+        reason,
+        location,
+      });
+    } catch {
+      // Failure auditing is best-effort and must not trap the employee in the logger.
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     appApi.auth.me()
@@ -559,6 +578,16 @@ export default function EmployeePortal() {
               {scanConfirm.time && <p className="text-muted-foreground text-sm">{scanConfirm.time}</p>}
             </div>
 
+            {attendanceSaved && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left">
+                <p className="text-sm font-semibold text-emerald-900">Attendance saved successfully</p>
+                <p className="mt-1 text-xs text-emerald-800">
+                  This punch is recorded in the attendance audit history and can be reviewed later by an administrator.
+                </p>
+                <p className="mt-2 break-all font-mono text-[11px] text-emerald-700">Receipt: {scanConfirm.receiptId}</p>
+              </div>
+            )}
+
             {/* Fraud Warning */}
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-left space-y-3">
               <div className="flex items-center gap-2">
@@ -592,7 +621,7 @@ export default function EmployeePortal() {
             </div>
 
             {/* Live photo capture */}
-            <div className="space-y-2">
+            {!attendanceSaved && <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Identity Photo</p>
               <div className="rounded-xl border border-border p-2">
                 <FaceCapture
@@ -649,23 +678,26 @@ export default function EmployeePortal() {
               {photoSubmitError && (
                 <p className="text-xs font-medium text-destructive text-center">{photoSubmitError}</p>
               )}
-            </div>
+            </div>}
 
-            <Button
+            {!attendanceSaved ? <Button
               className="w-full"
               disabled={photoStatus === 'uploading' || !photoDataUrl || !photoCaptureMetadata || !livenessConfirmed || Boolean(photoCaptureError)}
               onClick={async () => {
                 if (!photoDataUrl || photoStatus !== 'done') {
+                  void recordFailedAttendance({ employee: scanConfirm.employee, stage: 'photo_capture', reason: 'Live photo was not completed' });
                   setPhotoSubmitError('Live photo is required. Please complete the liveness capture.');
                   return;
                 }
 
                 if (!livenessConfirmed || !photoCaptureMetadata) {
+                  void recordFailedAttendance({ employee: scanConfirm.employee, stage: 'liveness_check', reason: 'Liveness check was not completed' });
                   setPhotoSubmitError('Please complete the live blink/head-turn check.');
                   return;
                 }
 
                 if (photoCaptureError) {
+                  void recordFailedAttendance({ employee: scanConfirm.employee, stage: 'photo_capture', reason: photoCaptureError });
                   setPhotoSubmitError(photoCaptureError);
                   return;
                 }
@@ -683,6 +715,14 @@ export default function EmployeePortal() {
                     location,
                   });
                   if (logRes.duplicate) {
+                    await recordFailedAttendance({
+                      employee,
+                      stage: 'duplicate_or_sequence_check',
+                      reason: logRes.message || 'Duplicate attendance scan',
+                      location,
+                      attendanceLogId: logRes.log?.id,
+                      punchAction: logRes.action,
+                    });
                     closeAttendanceLogger();
                     return;
                   }
@@ -716,9 +756,15 @@ export default function EmployeePortal() {
                     ...scanConfirm,
                     action: actionLabels[action] || 'Attendance',
                     time: timeField && logRes.log?.[timeField] ? formatManilaTime(logRes.log[timeField]) : '',
+                    receiptId: logRes.receipt?.id || logRes.log?.id,
                   });
                 } catch (error) {
                   const errorMessage = error?.message || 'Live photo or attendance logging failed. Please retake the photo and try again.';
+                  await recordFailedAttendance({
+                    employee: scanConfirm.employee,
+                    stage: 'attendance_submission',
+                    reason: errorMessage,
+                  });
                   if (
                     error?.status === 409 ||
                     /already complete|already recorded|please wait/i.test(errorMessage)
@@ -730,11 +776,12 @@ export default function EmployeePortal() {
                   setPhotoSubmitError(errorMessage || 'Live photo or attendance logging failed. Please retake the photo and try again.');
                   return;
                 }
-                closeAttendanceLogger();
               }}
             >
               {photoStatus === 'uploading' ? 'Saving photo...' : 'I Understand — Done'}
-            </Button>
+            </Button> : (
+              <Button className="w-full" onClick={closeAttendanceLogger}>Done</Button>
+            )}
           </div>
         </div>
       )}
