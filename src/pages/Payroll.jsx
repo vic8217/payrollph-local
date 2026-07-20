@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
@@ -376,6 +377,8 @@ export default function Payroll() {
   const [governmentDeductionRecord, setGovernmentDeductionRecord] = useState(/** @type {PayrollEntity | null} */ (null));
   const [governmentDeductionForm, setGovernmentDeductionForm] = useState({ sss: '', philhealth: '', pagibig: '', hrPasscode: '', adminPasscode: '' });
   const [governmentDeductionError, setGovernmentDeductionError] = useState('');
+  const [generationReviewOpen, setGenerationReviewOpen] = useState(false);
+  const [generationReviewConfirmed, setGenerationReviewConfirmed] = useState(false);
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [generating, setGenerating] = useState(false);
   const [previewEmployeeId, setPreviewEmployeeId] = useState('');
@@ -733,6 +736,11 @@ export default function Payroll() {
         end_date: endStr,
         status: 'processing',
         company_profile_id: activeCompanyId,
+        mandatory_deductions_reviewed: true,
+        mandatory_deductions_applied: false,
+        mandatory_deductions_review_status: 'none',
+        mandatory_deductions_reviewed_at: new Date().toISOString(),
+        mandatory_deductions_reviewed_by: user?.full_name || user?.name || user?.email || 'unknown',
       }));
     }
 
@@ -917,7 +925,7 @@ export default function Payroll() {
         cash_advance_received: cashAdvanceReceived,
         cash_advance_release_details: cashAdvanceReleaseDetails,
       };
-      // Government deductions are entered manually and survive draft regeneration.
+      // Government deductions applied to this payroll period survive regeneration.
       const manualGovernmentDeductions = {
         sss_contribution: money(existingRecord?.sss_contribution),
         philhealth_contribution: money(existingRecord?.philhealth_contribution),
@@ -946,6 +954,8 @@ export default function Payroll() {
         status: recordStatus,
         company_profile_id: activeCompanyId,
         incentive_settings: emp.incentive_settings || {},
+        mandatory_deduction_set_id: existingRecord?.mandatory_deduction_set_id || null,
+        mandatory_deduction_set_name: existingRecord?.mandatory_deduction_set_name || null,
         cash_advance_deduction_details: cashAdvanceDeductionDetails,
         cash_advance_deduction_suspended: cashAdvanceDeductionSuspended,
         ...(cashAdvanceDeductionSuspended ? {
@@ -1003,6 +1013,11 @@ export default function Payroll() {
       total_deductions: parseFloat(totalDed.toFixed(2)),
       total_net: parseFloat(totalNet.toFixed(2)),
       employee_count: activeEmployees.length,
+      mandatory_deductions_reviewed: true,
+      mandatory_deductions_applied: Boolean(period.mandatory_deductions_applied),
+      mandatory_deductions_review_status: period.mandatory_deductions_applied ? 'applied' : 'none',
+      mandatory_deductions_reviewed_at: new Date().toISOString(),
+      mandatory_deductions_reviewed_by: user?.full_name || user?.name || user?.email || 'unknown',
     });
 
     qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
@@ -1118,7 +1133,7 @@ export default function Payroll() {
         </div>
         <div className="flex items-center gap-2">
           <Button
-            onClick={generatePayroll}
+            onClick={() => { setGenerationReviewConfirmed(false); setGenerationReviewOpen(true); }}
             disabled={generateDisabled}
             className="gap-2"
             title={generateTitle}
@@ -1693,6 +1708,30 @@ export default function Payroll() {
       </div>
 
       {/* Payslip Dialog */}
+      <Dialog open={generationReviewOpen} onOpenChange={open => { setGenerationReviewOpen(open); if (!open) setGenerationReviewConfirmed(false); }}>
+        <PayrollDialogContent className="max-w-lg">
+          <PayrollDialogHeader><PayrollDialogTitle>Review mandatory deductions</PayrollDialogTitle></PayrollDialogHeader>
+          <div className="space-y-4">
+            <div className={`rounded-lg border p-4 ${targetPeriod?.mandatory_deductions_applied ? 'border-green-200 bg-green-50 text-green-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+              <p className="font-semibold">{targetPeriod?.mandatory_deductions_applied ? 'Mandatory deductions applied' : 'No mandatory deductions applied'}</p>
+              <p className="text-sm mt-1">{targetPeriod?.mandatory_deductions_applied
+                ? 'This payroll period already has reviewed mandatory deductions. Regeneration will preserve those amounts.'
+                : 'This is the default. SSS, PhilHealth, and Pag-IBIG will be ₱0.00 unless an approved deduction set is applied after payroll generation.'}</p>
+            </div>
+            <button type="button" className="w-full flex items-start gap-3 rounded-lg border p-4 text-left" onClick={() => setGenerationReviewConfirmed(value => !value)}>
+              <Checkbox checked={generationReviewConfirmed} className="mt-0.5" />
+              <span className="text-sm">I reviewed the mandatory deduction status for <strong>{targetPeriodLabel}</strong> and confirm that payroll may be generated with the status shown above.</span>
+            </button>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setGenerationReviewOpen(false)}>Cancel</Button>
+              <Button disabled={!generationReviewConfirmed} onClick={() => { setGenerationReviewOpen(false); setGenerationReviewConfirmed(false); generatePayroll(); }}>
+                <Play className="w-4 h-4 mr-2" />Confirm and generate
+              </Button>
+            </div>
+          </div>
+        </PayrollDialogContent>
+      </Dialog>
+
       <Dialog open={!!selectedRecord} onOpenChange={() => setSelectedRecord(null)}>
         <PayrollDialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <PayrollDialogHeader><PayrollDialogTitle>Payslip</PayrollDialogTitle></PayrollDialogHeader>

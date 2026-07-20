@@ -28,6 +28,7 @@ import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendance
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert, QrCode, ScanFace } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -1272,7 +1273,10 @@ function OvertimeReviewModal({ log, currentUser, activeCompanyId, onClose, onCon
             <Button variant="destructive" onClick={() => submitDecision('denied')} disabled={saving}>
               Deny OT
             </Button>
-            <Button onClick={() => submitDecision('approved')} disabled={saving}>
+            <Button
+              onClick={() => submitDecision('approved')}
+              disabled={saving}
+            >
               {saving ? 'Verifying...' : 'Approve OT'}
             </Button>
           </div>
@@ -1291,6 +1295,21 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [timeOutConfirmed, setTimeOutConfirmed] = useState(false);
+  const { data: requestAttendanceLogs = [], isLoading: loadingAttendance } = useQuery({
+    queryKey: ['ot-review-attendance', activeCompanyId, request.employee_id, request.date],
+    queryFn: () => entities.filter('AttendanceLog', {
+      company_profile_id: activeCompanyId,
+      date: request.date,
+    }),
+    enabled: !!activeCompanyId && !!request.date,
+  });
+  const requestAttendance = requestAttendanceLogs.find(log =>
+    (request.employee_record_id && String(log.employee_record_id) === String(request.employee_record_id)) ||
+    String(log.employee_id || '').toLowerCase() === String(request.employee_id || '').toLowerCase()
+  );
+  const actualOvertimeHours = Math.max(0, Number(requestAttendance?.ot_actual_hours ?? requestAttendance?.overtime_hours) || 0);
+  const hasFinalTimeOut = Boolean(requestAttendance?.time_out);
 
   const verifyCodes = async () => {
     const records = await entities.filter('DailyPasscode', {
@@ -1319,6 +1338,22 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
       setError(`Approved OT must be greater than 0 and not more than ${requestedHours} hours.`);
       return;
     }
+    if (decision === 'approved' && !hasFinalTimeOut) {
+      setError('A recorded final Time Out is required before this OT request can be approved.');
+      return;
+    }
+    if (decision === 'approved' && !(actualOvertimeHours > 0)) {
+      setError('Attendance has no actual overtime. Correct the attendance Time Out before approving this request.');
+      return;
+    }
+    if (decision === 'approved' && nextHours > actualOvertimeHours + 0.005) {
+      setError(`Approved OT cannot exceed the ${actualOvertimeHours.toFixed(2)} actual hours supported by Time Out.`);
+      return;
+    }
+    if (decision === 'approved' && !timeOutConfirmed) {
+      setError('HR Officer and Admin must confirm the recorded final Time Out.');
+      return;
+    }
     if ((decision === 'denied' || nextHours < requestedHours) && !reason.trim()) {
       setError('A reason is required when OT is denied or reduced.');
       return;
@@ -1338,6 +1373,12 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
         review_reason: reason.trim() || null,
         hr_approved: decision === 'approved',
         admin_approved: decision === 'approved',
+        time_out_confirmed: decision === 'approved',
+        time_out_confirmed_at: decision === 'approved' ? reviewedAt : null,
+        confirmed_time_out: decision === 'approved' ? requestAttendance.time_out : null,
+        confirmed_actual_ot_hours: decision === 'approved' ? actualOvertimeHours : 0,
+        hr_confirmation_passcode: decision === 'approved' ? hrPasscode.trim() : undefined,
+        admin_confirmation_passcode: decision === 'approved' ? adminPasscode.trim() : undefined,
         passcode_audit_action: decision === 'denied' ? 'overtime_request_denied' : 'overtime_request_approved',
         passcode_audit_at: reviewedAt,
         passcode_audit_by: reviewer,
@@ -1374,6 +1415,27 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
             </div>
             <p className="text-xs text-muted-foreground border-t border-border pt-2">{request.reason}</p>
           </div>
+
+          <div className={`rounded-lg border p-3 ${hasFinalTimeOut && actualOvertimeHours > 0 ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Attendance verification</p>
+            <div className="mt-2 flex justify-between text-sm">
+              <span>Final Time Out</span>
+              <span className="font-semibold">{loadingAttendance ? 'Loading…' : hasFinalTimeOut ? formatManilaTime(requestAttendance.time_out) : 'Missing'}</span>
+            </div>
+            <div className="mt-1 flex justify-between text-sm">
+              <span>Actual OT supported</span>
+              <span className="font-semibold">{actualOvertimeHours.toFixed(2)} hours</span>
+            </div>
+          </div>
+
+          <label className="flex items-start gap-2 rounded-lg border border-border p-3 text-sm">
+            <Checkbox
+              checked={timeOutConfirmed}
+              onCheckedChange={value => setTimeOutConfirmed(value === true)}
+              disabled={!hasFinalTimeOut || !(actualOvertimeHours > 0)}
+            />
+            <span>HR Officer and Admin confirm that the recorded final Time Out is correct and supports the approved OT hours.</span>
+          </label>
 
           <div>
             <label className="text-sm font-medium text-foreground">Approved OT Hours</label>
@@ -1432,7 +1494,10 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
             <Button variant="destructive" onClick={() => submitDecision('denied')} disabled={saving}>
               Deny
             </Button>
-            <Button onClick={() => submitDecision('approved')} disabled={saving}>
+            <Button
+              onClick={() => submitDecision('approved')}
+              disabled={saving || loadingAttendance || !hasFinalTimeOut || !(actualOvertimeHours > 0) || !timeOutConfirmed}
+            >
               {saving ? 'Verifying...' : 'Approve'}
             </Button>
           </div>

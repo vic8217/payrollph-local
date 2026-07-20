@@ -7,6 +7,7 @@ import {
   listRecords,
   updateRecord,
 } from "@/server/entityStore";
+import { manilaDateString } from "@/lib/dateUtils";
 
 function sendError(res, error) {
   if (error.code === "P1000") {
@@ -117,6 +118,63 @@ async function requireTimeInForOvertimeRequest(data = {}) {
   }
 }
 
+async function requireCompletedAttendanceForOvertimeApproval(requestId, updates = {}) {
+  if (updates.status !== "approved") return;
+  if (updates.time_out_confirmed !== true) {
+    const error = new Error("HR Officer and Admin must confirm the employee's final Time Out before approving OT.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const requests = await listRecords("OvertimeRequest", { filter: { id: requestId }, limit: 1 });
+  const request = requests[0];
+  if (!request) {
+    const error = new Error("OT request not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const dailyPasscodes = await listRecords("DailyPasscode", {
+    filter: { company_profile_id: request.company_profile_id, date: manilaDateString() },
+    limit: 10,
+  });
+  const passcodesMatch = dailyPasscodes.some(record =>
+    String(record.passcode || "") === String(updates.hr_confirmation_passcode || "") &&
+    String(record.manager_passcode || "") === String(updates.admin_confirmation_passcode || "")
+  );
+  if (!passcodesMatch) {
+    const error = new Error("Valid HR Officer and Admin passcodes are required to confirm the final Time Out.");
+    error.statusCode = 403;
+    throw error;
+  }
+  const logs = await listRecords("AttendanceLog", {
+    filter: { company_profile_id: request.company_profile_id, date: request.date },
+  });
+  const employeeRecordId = normalizedId(request.employee_record_id);
+  const employeeId = normalizedId(request.employee_id);
+  const attendance = logs.find(log =>
+    (employeeRecordId && normalizedId(log.employee_record_id) === employeeRecordId) ||
+    (employeeId && normalizedId(log.employee_id) === employeeId)
+  );
+  if (!attendance?.time_out) {
+    const error = new Error("A completed attendance record with final Time Out is required before OT approval.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const actualHours = Math.max(0, Number(attendance.ot_actual_hours ?? attendance.overtime_hours) || 0);
+  const approvedHours = Math.max(0, Number(updates.approved_hours) || 0);
+  if (!(actualHours > 0)) {
+    const error = new Error("The completed attendance record has no actual overtime. Correct the attendance times before approving OT.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (approvedHours > actualHours + 0.005) {
+    const error = new Error(`Approved OT cannot exceed the ${actualHours.toFixed(2)} actual hours supported by the final Time Out.`);
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 export default async function handler(req, res) {
   const entity = entityNameFromQuery(req.query);
   if (!entity) {
@@ -171,7 +229,13 @@ export default async function handler(req, res) {
           error: "Shift settings must be changed through the protected shift-change workflow.",
         });
       }
-      const record = await updateRecord(entity, req.body.id, req.body.data);
+      if (entity === "OvertimeRequest") {
+        await requireCompletedAttendanceForOvertimeApproval(req.body.id, req.body.data || {});
+      }
+      const updateData = { ...(req.body.data || {}) };
+      delete updateData.hr_confirmation_passcode;
+      delete updateData.admin_confirmation_passcode;
+      const record = await updateRecord(entity, req.body.id, updateData);
       return res.status(200).json(record);
     }
 

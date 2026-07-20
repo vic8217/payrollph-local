@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
 		  LayoutDashboard, Users, Clock, CreditCard,
 		  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText, BadgeDollarSign
+		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText, BadgeDollarSign, ListChecks
 		} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,7 @@ const navItems = [
   { label: '13th Month Pay',  icon: Gift,              path: '/thirteenth-month-pay', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Separation Pay',  icon: DoorOpen,          path: '/separation-pay',     roles: ['super_admin', 'admin', 'user'] },
   { label: 'Statutory Rates', icon: Landmark,          path: '/statutory-rates',    roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Mandatory Deductions', icon: ListChecks,   path: '/mandatory-deductions', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Cash Advance',    icon: CreditCard,        path: '/cash-advance',       roles: ['super_admin', 'admin', 'user'] },
   { label: 'Personal Leave',  icon: Palmtree,         path: '/personal-leave',     roles: ['super_admin', 'admin', 'user'] },
   { label: 'Holidays',        icon: CalendarDays,      path: '/holidays',           roles: ['super_admin', 'admin', 'user'] },

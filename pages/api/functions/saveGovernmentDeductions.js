@@ -75,6 +75,11 @@ export default async function handler(req, res) {
     total_gross: money(periodRecords.reduce((sum, item) => sum + (item.id === updated.id ? Number(updated.gross_pay) : Number(item.gross_pay) || 0), 0)),
     total_deductions: money(periodRecords.reduce((sum, item) => sum + (item.id === updated.id ? totalDeductions : Number(item.total_deductions) || 0), 0)),
     total_net: money(periodRecords.reduce((sum, item) => sum + (item.id === updated.id ? netPay : Number(item.net_pay) || 0), 0)),
+    mandatory_deductions_reviewed: true,
+    mandatory_deductions_applied: true,
+    mandatory_deductions_review_status: 'applied',
+    mandatory_deductions_reviewed_at: savedAt,
+    mandatory_deductions_reviewed_by: savedBy,
   });
   await createRecord('PasscodeAuditLog', {
     company_profile_id: companyProfileId,
