@@ -16,6 +16,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { computeWeeklyPayroll } from '@/lib/payrollUtils';
 import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
+import { capCashAdvanceDeductions } from '@/lib/cashAdvanceDeduction';
 import { manilaDateString } from '@/lib/dateUtils';
 import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
 import PayslipView from '@/components/payroll/PayslipView';
@@ -842,9 +843,30 @@ export default function Payroll() {
       const empCAs = cashAdvanceDeductionSuspended
         ? []
         : approvedCA.filter(cashAdvance => normalizedId(cashAdvance.employee_id) === normalizedId(emp.employee_id));
-      // Sum up the per-payroll deduction amounts for this period, capped by remaining balance when available.
+      // Compute earnings and mandatory deductions before deciding how much of the
+      // scheduled advance deduction the employee can actually cover.
+      const computed = computeWeeklyPayroll(emp, payrollLogs, periodHolidays, 0, periodNoWorkDays, gracePeriodMinutes, {
+        shiftStartTime: defaultShift.shift_start_time || '08:00', overtimeStartTime, timeInAllowanceMinutes,
+        lateGraceMinutes: gracePeriodMinutes, breakInGraceMinutes: gracePeriodMinutes,
+        breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
+        paidBreakTime: Boolean(defaultShift.paid_break_time), applyStatutoryDeductions: false,
+        resolveLogOptions: (log) => ({
+          ...resolveShiftOptionsForLog(log, emp, shiftSettings, defaultShift),
+          breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
+        }),
+      });
+      const incentiveDetails = automaticIncentivesForEmployee(emp, payrollLogs, startStr, endStr, periodNoWorkDays, periodHolidays, normalizePayrollStartDay(activeCompany));
+      const incentivePay = money(incentiveDetails.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
+      const manualGovernmentDeductions = {
+        sss_contribution: money(existingRecord?.sss_contribution),
+        philhealth_contribution: money(existingRecord?.philhealth_contribution),
+        pagibig_contribution: money(existingRecord?.pagibig_contribution),
+      };
+      const manualGovernmentTotal = money(Object.values(manualGovernmentDeductions).reduce((sum, amount) => sum + amount, 0));
+      const netBeforeCashAdvance = money(computed.net_pay + incentivePay + cashAdvanceReceived - manualGovernmentTotal);
+
       /** @type {CashAdvanceDeduction[]} */
-      const caDeductions = empCAs.map(cashAdvance => {
+      const caDeductions = capCashAdvanceDeductions(empCAs.map(cashAdvance => {
         const posted = existingLedger.find(row => normalizedId(row.cash_advance_id) === normalizedId(cashAdvance.id));
         const scheduledDeduction = cashAdvance.deduction_amount_per_payroll || 0;
         const remainingBalance = cashAdvance.remaining_balance != null
@@ -860,14 +882,13 @@ export default function Payroll() {
           posted,
           deductionNumber,
         };
-      });
-      const caDeductionThisPeriod = caDeductions.reduce((sum, item) => sum + item.amount, 0);
+      }), netBeforeCashAdvance);
+      const caDeductionThisPeriod = money(caDeductions.reduce((sum, item) => sum + item.amount, 0));
       const cashAdvanceDeductionDetails = caDeductions
         .filter(({ amount }) => Number(amount) > 0)
         .map(({ ca, amount, remainingBalance, posted, deductionNumber }) => {
-          const nextBalance = posted?.balance_after != null
-            ? Number(posted.balance_after)
-            : parseFloat(Math.max(remainingBalance - amount, 0).toFixed(2));
+          const balanceBefore = posted?.balance_before != null ? Number(posted.balance_before) : Number(remainingBalance) || 0;
+          const nextBalance = money(Math.max(balanceBefore - amount, 0));
           const deductionTotal = Number(posted?.deduction_total) || Number(ca.deduction_payroll_periods) || Number(ca.deduction_periods_remaining) || deductionNumber || 1;
           const deductionNo = Number(posted?.deduction_number) || deductionNumber;
           return {
@@ -875,8 +896,8 @@ export default function Payroll() {
             request_date: ca.request_date || ca.approved_date || ca.created_date?.slice(0, 10),
             deduction_date: posted?.transaction_date || endStr,
             description: posted?.description || ca.reason || ca.advance_type || 'Cash advance',
-            amount: Number(posted?.amount) || Number(amount) || 0,
-            balance_before: posted?.balance_before != null ? Number(posted.balance_before) : Number(remainingBalance) || 0,
+            amount: Number(amount) || 0,
+            balance_before: balanceBefore,
             balance_after: nextBalance,
             deduction_number: deductionNo,
             deduction_total: deductionTotal,
@@ -884,60 +905,18 @@ export default function Payroll() {
           };
         });
 
-      const computed = computeWeeklyPayroll(
-        emp,
-        payrollLogs,
-        periodHolidays,
-        caDeductionThisPeriod,
-        periodNoWorkDays,
-        gracePeriodMinutes,
-        {
-          shiftStartTime: defaultShift.shift_start_time || '08:00',
-          overtimeStartTime,
-          timeInAllowanceMinutes,
-          lateGraceMinutes: gracePeriodMinutes,
-          breakInGraceMinutes: gracePeriodMinutes,
-          breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
-          paidBreakTime: Boolean(defaultShift.paid_break_time),
-          applyStatutoryDeductions: false,
-          resolveLogOptions: (log) => ({
-            ...resolveShiftOptionsForLog(log, emp, shiftSettings, defaultShift),
-            breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
-          }),
-        }
-      );
-      const incentiveDetails = automaticIncentivesForEmployee(
-        emp,
-        payrollLogs,
-        startStr,
-        endStr,
-        periodNoWorkDays,
-        periodHolidays,
-        normalizePayrollStartDay(activeCompany)
-      );
-      const incentivePay = money(incentiveDetails.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
       const computedWithIncentives = {
         ...computed,
         incentive_pay: incentivePay,
         incentive_details: incentiveDetails,
         gross_pay: money(computed.gross_pay + incentivePay),
-        net_pay: money(computed.net_pay + incentivePay + cashAdvanceReceived),
+        cash_advance_deduction: caDeductionThisPeriod,
+        total_deductions: money(computed.total_deductions + caDeductionThisPeriod),
+        net_pay: money(netBeforeCashAdvance - caDeductionThisPeriod),
         cash_advance_received: cashAdvanceReceived,
         cash_advance_release_details: cashAdvanceReleaseDetails,
       };
-      // Government deductions applied to this payroll period survive regeneration.
-      const manualGovernmentDeductions = {
-        sss_contribution: money(existingRecord?.sss_contribution),
-        philhealth_contribution: money(existingRecord?.philhealth_contribution),
-        pagibig_contribution: money(existingRecord?.pagibig_contribution),
-      };
-      const manualGovernmentTotal = money(
-        manualGovernmentDeductions.sss_contribution +
-        manualGovernmentDeductions.philhealth_contribution +
-        manualGovernmentDeductions.pagibig_contribution
-      );
       computedWithIncentives.total_deductions = money(computedWithIncentives.total_deductions + manualGovernmentTotal);
-      computedWithIncentives.net_pay = money(computedWithIncentives.net_pay - manualGovernmentTotal);
 
       // Upsert payroll record
       const recordStatus = period.status === 'released'

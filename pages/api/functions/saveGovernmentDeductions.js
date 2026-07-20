@@ -4,6 +4,7 @@ import { authOptions } from '../auth/[...nextauth]';
 import { createRecord, listRecords, updateRecord } from '@/server/entityStore';
 import { prisma } from '@/server/prisma';
 import { manilaDateString } from '@/lib/dateUtils';
+import { reconcileCashAdvanceDeduction } from '@/server/reconcileCashAdvanceDeduction';
 
 const money = value => Number.isFinite(Number(value)) ? parseFloat(Number(value).toFixed(2)) : NaN;
 
@@ -44,10 +45,9 @@ export default async function handler(req, res) {
   if (!record || !period) return res.status(404).json({ error: 'Payroll record or period was not found.' });
   if (period.status === 'released' || record.status === 'released') return res.status(400).json({ error: 'Released payroll deductions cannot be changed.' });
 
-  const oldGovernmentTotal = money((Number(record.sss_contribution) || 0) + (Number(record.philhealth_contribution) || 0) + (Number(record.pagibig_contribution) || 0));
   const newGovernmentTotal = money(sss + philhealth + pagibig);
-  const baseDeductions = money((Number(record.total_deductions) || 0) - oldGovernmentTotal);
-  const totalDeductions = money(baseDeductions + newGovernmentTotal);
+  const reconciled = await reconcileCashAdvanceDeduction(record, newGovernmentTotal);
+  const totalDeductions = money(reconciled.deductionsBeforeCashAdvance + newGovernmentTotal + reconciled.cashAdvanceTotal);
   const netPay = money(
     (Number(record.gross_pay) || 0) +
     (Number(record.cash_advance_received) || 0) -
@@ -59,6 +59,8 @@ export default async function handler(req, res) {
     sss_contribution: sss,
     philhealth_contribution: philhealth,
     pagibig_contribution: pagibig,
+    cash_advance_deduction: reconciled.cashAdvanceTotal,
+    cash_advance_deduction_details: reconciled.details,
     total_deductions: totalDeductions,
     net_pay: netPay,
     government_deductions_manually_entered: true,

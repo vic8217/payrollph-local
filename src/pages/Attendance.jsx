@@ -483,6 +483,20 @@ const entities = {
   },
 };
 
+const ATTENDANCE_PAGE_SIZE = 500;
+async function fetchAttendanceLogs(filter, sort = '-date', maximum = 5000) {
+  const records = [];
+  for (let offset = 0; offset < maximum; offset += ATTENDANCE_PAGE_SIZE) {
+    const page = await entities.filter('AttendanceLog', filter, sort, ATTENDANCE_PAGE_SIZE, {
+      offset,
+      fields: ATTENDANCE_LOG_LIST_FIELDS,
+    });
+    records.push(...page);
+    if (page.length < ATTENDANCE_PAGE_SIZE) break;
+  }
+  return records;
+}
+
 function invokeFunction(name, data) {
   return requestJson(`/api/functions/${encodeURIComponent(name)}`, {
     method: 'POST',
@@ -1538,6 +1552,7 @@ export default function Attendance() {
   const weekEnd = activePeriodConfig.end;
   const startStr = activePeriodConfig.start_date;
   const endStr = activePeriodConfig.end_date;
+  const summaryStartStr = getPayrollPeriodForDate(baseWeek, activeCompany, -103).start_date;
 
   const { data: employeeRecords = [], isLoading: loadingEmployees } = useQuery({
     queryKey: ['employees', activeCompanyId],
@@ -1549,8 +1564,9 @@ export default function Attendance() {
   const { data: attendanceData = { logs: [], periodLogs: [] }, isLoading: loadingLogs } = useQuery({
     queryKey: ['attendance', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId, startStr, endStr],
     queryFn: async () => {
-      const all = await entities.filter('AttendanceLog', { company_profile_id: activeCompanyId }, '-date', 5000, {
-        fields: ATTENDANCE_LOG_LIST_FIELDS,
+      const all = await fetchAttendanceLogs({
+        company_profile_id: activeCompanyId,
+        date: { $gte: startStr, $lte: endStr },
       });
       const selectedRecordId = String(selectedEmployee.id || '');
       const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
@@ -1584,9 +1600,10 @@ export default function Attendance() {
   });
 
   const { data: allAttendanceLogs = [], isLoading: loadingQuickView } = useQuery({
-    queryKey: ['attendanceSummary', activeCompanyId],
-    queryFn: () => entities.filter('AttendanceLog', { company_profile_id: activeCompanyId }, '-date', 5000, {
-      fields: ATTENDANCE_LOG_LIST_FIELDS,
+    queryKey: ['attendanceSummary', activeCompanyId, summaryStartStr, endStr],
+    queryFn: () => fetchAttendanceLogs({
+      company_profile_id: activeCompanyId,
+      date: { $gte: summaryStartStr, $lte: endStr },
     }),
     enabled: !!activeCompanyId,
   });

@@ -153,7 +153,17 @@ function compareValues(a, b, direction) {
   return (a > b ? 1 : -1) * (direction === "asc" ? 1 : -1);
 }
 
-export async function listRecords(entity, { filter = {}, sort, limit, fields } = {}) {
+function matchesFilterValue(actual, expected) {
+  if (!expected || typeof expected !== "object" || Array.isArray(expected)) return actual === expected;
+  if (Object.prototype.hasOwnProperty.call(expected, "$gte") && !(actual >= expected.$gte)) return false;
+  if (Object.prototype.hasOwnProperty.call(expected, "$lte") && !(actual <= expected.$lte)) return false;
+  if (Object.prototype.hasOwnProperty.call(expected, "$gt") && !(actual > expected.$gt)) return false;
+  if (Object.prototype.hasOwnProperty.call(expected, "$lt") && !(actual < expected.$lt)) return false;
+  if (Array.isArray(expected.$in) && !expected.$in.includes(actual)) return false;
+  return true;
+}
+
+export async function listRecords(entity, { filter = {}, sort, limit, offset = 0, fields } = {}) {
   assertEntityName(entity);
   await ensureSeedData();
 
@@ -167,7 +177,7 @@ export async function listRecords(entity, { filter = {}, sort, limit, fields } =
 
   if (filter && Object.keys(filter).length > 0) {
     publicRecords = publicRecords.filter((record) =>
-      Object.entries(filter).every(([key, value]) => record[key] === value)
+      Object.entries(filter).every(([key, value]) => matchesFilterValue(record[key], value))
     );
   }
 
@@ -177,7 +187,8 @@ export async function listRecords(entity, { filter = {}, sort, limit, fields } =
     );
   }
 
-  const limitedRecords = limit ? publicRecords.slice(0, Number(limit)) : publicRecords;
+  const start = Math.max(0, Number(offset) || 0);
+  const limitedRecords = limit ? publicRecords.slice(start, start + Number(limit)) : publicRecords.slice(start);
   return fields ? limitedRecords.map((record) => pickFields(record, fields)) : limitedRecords;
 }
 

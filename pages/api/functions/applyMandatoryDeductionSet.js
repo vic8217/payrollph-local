@@ -4,6 +4,7 @@ import { authOptions } from '../auth/[...nextauth]';
 import { createRecord, listRecords, updateRecord } from '@/server/entityStore';
 import { prisma } from '@/server/prisma';
 import { manilaDateString } from '@/lib/dateUtils';
+import { reconcileCashAdvanceDeduction } from '@/server/reconcileCashAdvanceDeduction';
 
 const money = value => parseFloat((Number(value) || 0).toFixed(2));
 
@@ -63,11 +64,13 @@ export default async function handler(req, res) {
   const newGovernmentTotal = money(sss + philhealth + pagibig);
   const appliedAt = new Date().toISOString();
   const appliedBy = authenticatedUser?.name || authenticatedUser?.email || session.user.name || session.user.email || 'unknown';
-  const updatedRecords = await Promise.all(records.map(record => {
-    const oldGovernmentTotal = money((Number(record.sss_contribution) || 0) + (Number(record.philhealth_contribution) || 0) + (Number(record.pagibig_contribution) || 0));
-    const totalDeductions = money((Number(record.total_deductions) || 0) - oldGovernmentTotal + newGovernmentTotal);
+  const updatedRecords = await Promise.all(records.map(async record => {
+    const reconciled = await reconcileCashAdvanceDeduction(record, newGovernmentTotal);
+    const totalDeductions = money(reconciled.deductionsBeforeCashAdvance + newGovernmentTotal + reconciled.cashAdvanceTotal);
     return updateRecord('PayrollRecord', record.id, {
       sss_contribution: sss, philhealth_contribution: philhealth, pagibig_contribution: pagibig,
+      cash_advance_deduction: reconciled.cashAdvanceTotal,
+      cash_advance_deduction_details: reconciled.details,
       total_deductions: totalDeductions,
       net_pay: money((Number(record.gross_pay) || 0) + (Number(record.cash_advance_received) || 0) - totalDeductions),
       government_deductions_manually_entered: true,

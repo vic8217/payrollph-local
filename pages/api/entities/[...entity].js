@@ -191,6 +191,7 @@ export default async function handler(req, res) {
         filter,
         sort: req.query.sort,
         limit: req.query.limit,
+        offset: req.query.offset,
         fields: fieldsForListRequest(entity, req.query),
       });
       return res.status(200).json(records);
