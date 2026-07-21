@@ -6,7 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Camera, Upload, X } from 'lucide-react';
+import { Camera, Upload, X, SlidersHorizontal } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 
 const field = (label, key, type = 'text', required = false) => ({ label, key, type, required });
 
@@ -43,9 +45,14 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
     status: 'active', employment_type: 'regular'
   });
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [showCamera, setShowCamera] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState('');
+  const [beginningAdjustment, setBeginningAdjustment] = useState(null);
+  const [adjustmentForm, setAdjustmentForm] = useState({ type: 'decrease', amount: '', weeklyDeduction: '', reason: '', hrPasscode: '', adminPasscode: '' });
+  const [adjustmentError, setAdjustmentError] = useState('');
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -71,6 +78,67 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
   }, [employee?.id, employee?.cash_advance_beginning_balance, employee?.cash_advance_weekly_deduction]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const openBeginningAdjustment = async () => {
+    setAdjustmentError('');
+    try {
+      const advances = await appApi.entities.CashAdvance.filter({
+        employee_id: employee.employee_id,
+        company_profile_id: employee.company_profile_id || activeCompanyId,
+      });
+      const advance = advances.find(item => item.advance_type === 'beginning_balance');
+      if (!advance) {
+        setAdjustmentError('No beginning balance record was found for this employee.');
+        return;
+      }
+      setBeginningAdjustment(advance);
+      setAdjustmentForm({
+        type: 'decrease',
+        amount: '',
+        weeklyDeduction: String(advance.deduction_amount_per_payroll || employee.cash_advance_weekly_deduction || ''),
+        reason: '',
+        hrPasscode: '',
+        adminPasscode: '',
+      });
+    } catch (error) {
+      setAdjustmentError(error?.message || 'Unable to load the beginning balance.');
+    }
+  };
+
+  const saveBeginningAdjustment = async () => {
+    const amount = parseFloat(adjustmentForm.amount);
+    const weeklyDeduction = parseFloat(adjustmentForm.weeklyDeduction);
+    if (!(amount > 0)) return setAdjustmentError('Enter a valid adjustment amount.');
+    if (!(weeklyDeduction > 0)) return setAdjustmentError('Weekly deduction amount is required before saving the adjustment.');
+    if (adjustmentForm.reason.trim().length < 3) return setAdjustmentError('Enter a reason for the adjustment.');
+    if (!adjustmentForm.hrPasscode.trim() || !adjustmentForm.adminPasscode.trim()) return setAdjustmentError('Both HR Officer and Admin Manager passcodes are required.');
+
+    setAdjustmentSaving(true);
+    setAdjustmentError('');
+    try {
+      const result = await appApi.functions.invoke('adjustCashAdvanceBalance', {
+        company_profile_id: employee.company_profile_id || activeCompanyId,
+        cash_advance_id: beginningAdjustment.id,
+        adjustment_type: adjustmentForm.type,
+        amount,
+        weekly_deduction: weeklyDeduction,
+        reason: adjustmentForm.reason.trim(),
+        hr_passcode: adjustmentForm.hrPasscode.trim(),
+        admin_passcode: adjustmentForm.adminPasscode.trim(),
+      });
+      setForm(previous => ({
+        ...previous,
+        cash_advance_beginning_balance: result.advance.remaining_balance,
+        cash_advance_weekly_deduction: result.advance.deduction_amount_per_payroll,
+      }));
+      setBeginningAdjustment(null);
+      onUpdated?.();
+    } catch (error) {
+      setAdjustmentError(error?.message || 'Unable to adjust the beginning balance.');
+    } finally {
+      setAdjustmentSaving(false);
+    }
+  };
 
   const savePhotoUrl = async (fileUrl) => {
     setPhotoError('');
@@ -205,6 +273,7 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
+    setSaveError('');
     try {
       const data = { ...form };
       if (data.daily_rate) data.daily_rate = parseFloat(data.daily_rate);
@@ -213,6 +282,9 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
       if (data.cash_advance_beginning_balance) data.cash_advance_beginning_balance = parseFloat(data.cash_advance_beginning_balance);
       if (data.cash_advance_weekly_deduction) data.cash_advance_weekly_deduction = parseFloat(data.cash_advance_weekly_deduction);
       if (!data.company_profile_id) data.company_profile_id = activeCompanyId;
+      if (!isEditing && Number(data.cash_advance_beginning_balance) > 0 && !(Number(data.cash_advance_weekly_deduction) > 0)) {
+        throw new Error('Weekly deduction amount is required when setting a beginning cash advance balance.');
+      }
 
       let savedEmployee;
       if (employee?.id) {
@@ -222,8 +294,10 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
         savedEmployee = await appApi.entities.Employee.create(data);
       }
 
-      await syncBeginningCashAdvance(savedEmployee || data);
+      if (!isEditing) await syncBeginningCashAdvance(savedEmployee || data);
       onSaved();
+    } catch (error) {
+      setSaveError(error?.message || 'Unable to save the employee profile.');
     } finally {
       setSaving(false);
     }
@@ -301,8 +375,27 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
         />
       </div>
 
+      {isEditing && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Beginning Cash Advance Balance</p>
+              <p className="mt-1 text-2xl font-bold text-amber-700">₱{Number(form.cash_advance_beginning_balance || 0).toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">
+                Weekly deduction: {Number(form.cash_advance_weekly_deduction) > 0 ? `₱${Number(form.cash_advance_weekly_deduction).toLocaleString()}` : 'Not set'}
+              </p>
+            </div>
+            <Button type="button" variant="outline" className="gap-1.5" onClick={openBeginningAdjustment}>
+              <SlidersHorizontal className="h-4 w-4" /> Adjust Beginning Balance
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Only this beginning balance can be adjusted. Today&apos;s HR Officer and Admin Manager passcodes are required.</p>
+          {adjustmentError && !beginningAdjustment && <p className="mt-2 text-xs text-destructive">{adjustmentError}</p>}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {FIELDS.map(f => (
+        {FIELDS.filter(f => !isEditing || !['cash_advance_beginning_balance', 'cash_advance_weekly_deduction'].includes(f.key)).map(f => (
           <div key={f.key} className="space-y-1">
             <Label className="text-xs font-medium">{f.label}{f.required && <span className="text-destructive ml-0.5">*</span>}</Label>
             {f.key === 'employee_id' ? (
@@ -381,9 +474,41 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
       </div>
 
       <div className="flex justify-end gap-2 pt-2">
+        {saveError && <p className="mr-auto self-center text-xs text-destructive">{saveError}</p>}
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
         <Button type="submit" size="sm" disabled={saving}>{saving ? 'Saving...' : (employee ? 'Update' : 'Create')}</Button>
       </div>
+
+      <Dialog open={!!beginningAdjustment} onOpenChange={open => !open && setBeginningAdjustment(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Adjust Beginning Balance</DialogTitle></DialogHeader>
+          {beginningAdjustment && (
+            <div className="space-y-3">
+              <div className="rounded-lg bg-muted p-3 text-sm">
+                Current balance: <strong>₱{Number(beginningAdjustment.remaining_balance ?? beginningAdjustment.amount_approved ?? 0).toLocaleString()}</strong>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Adjustment Type *</Label>
+                <Select value={adjustmentForm.type} onValueChange={value => setAdjustmentForm(previous => ({ ...previous, type: value }))}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="decrease">Decrease balance</SelectItem><SelectItem value="increase">Increase balance</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1"><Label className="text-xs">Adjustment Amount (₱) *</Label><Input type="number" min="0.01" step="0.01" value={adjustmentForm.amount} onChange={event => setAdjustmentForm(previous => ({ ...previous, amount: event.target.value }))} /></div>
+                <div className="space-y-1"><Label className="text-xs">Weekly Deduction (₱) *</Label><Input type="number" min="0.01" step="0.01" value={adjustmentForm.weeklyDeduction} onChange={event => setAdjustmentForm(previous => ({ ...previous, weeklyDeduction: event.target.value }))} /></div>
+              </div>
+              <div className="space-y-1"><Label className="text-xs">Reason *</Label><Textarea value={adjustmentForm.reason} onChange={event => setAdjustmentForm(previous => ({ ...previous, reason: event.target.value }))} placeholder="Why is the beginning balance being adjusted?" /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1"><Label className="text-xs">HR Officer Passcode *</Label><Input type="password" inputMode="numeric" maxLength={6} value={adjustmentForm.hrPasscode} onChange={event => setAdjustmentForm(previous => ({ ...previous, hrPasscode: event.target.value }))} /></div>
+                <div className="space-y-1"><Label className="text-xs">Admin Manager Passcode *</Label><Input type="password" inputMode="numeric" maxLength={6} value={adjustmentForm.adminPasscode} onChange={event => setAdjustmentForm(previous => ({ ...previous, adminPasscode: event.target.value }))} /></div>
+              </div>
+              {adjustmentError && <p className="text-xs text-destructive">{adjustmentError}</p>}
+              <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setBeginningAdjustment(null)} disabled={adjustmentSaving}>Cancel</Button><Button type="button" onClick={saveBeginningAdjustment} disabled={adjustmentSaving}>{adjustmentSaving ? 'Saving...' : 'Authorize Adjustment'}</Button></div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }

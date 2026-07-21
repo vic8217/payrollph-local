@@ -387,25 +387,23 @@ export default function Employees() {
   /** Keep 201 File in sync after employee record updates (e.g. cash advance agreement) while dialog stays open. */
   const employeesWithCashAdvanceBalances = useMemo(() => {
     return employees.map(employee => {
-      if (parseFloat(employee.cash_advance_beginning_balance) > 0) return employee;
-
       const beginningAdvance = cashAdvances.find(ca =>
         ca.employee_id === employee.employee_id &&
         ca.advance_type === 'beginning_balance'
       );
       if (!beginningAdvance) return employee;
 
-      const beginningBalance = beginningAdvance.beginning_balance
+      const beginningBalance = beginningAdvance.remaining_balance
+        ?? beginningAdvance.beginning_balance
         ?? beginningAdvance.amount_approved
         ?? beginningAdvance.amount_requested
-        ?? beginningAdvance.remaining_balance;
-      if (!(parseFloat(beginningBalance) > 0)) return employee;
+        ?? 0;
 
       return {
         ...employee,
         cash_advance_beginning_balance: beginningBalance,
-        cash_advance_weekly_deduction: employee.cash_advance_weekly_deduction
-          ?? beginningAdvance.deduction_amount_per_payroll
+        cash_advance_weekly_deduction: beginningAdvance.deduction_amount_per_payroll
+          ?? employee.cash_advance_weekly_deduction
           ?? '',
       };
     });

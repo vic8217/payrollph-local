@@ -131,6 +131,7 @@ export default function CashAdvance() {
   const [selectedAdjustmentCashAdvanceId, setSelectedAdjustmentCashAdvanceId] = useState('');
   const [adjustmentType, setAdjustmentType] = useState('decrease');
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
+  const [adjustmentWeeklyDeduction, setAdjustmentWeeklyDeduction] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentHrPasscode, setAdjustmentHrPasscode] = useState('');
   const [adjustmentAdminPasscode, setAdjustmentAdminPasscode] = useState('');
@@ -256,6 +257,7 @@ export default function CashAdvance() {
       qc.invalidateQueries({ queryKey: ['passcodeAudit'] });
       setAdjustmentDialog(null);
       setAdjustmentAmount('');
+      setAdjustmentWeeklyDeduction('');
       setAdjustmentReason('');
       setAdjustmentHrPasscode('');
       setAdjustmentAdminPasscode('');
@@ -365,6 +367,7 @@ export default function CashAdvance() {
     setSelectedAdjustmentCashAdvanceId(cashAdvance?.id ? String(cashAdvance.id) : '');
     setAdjustmentType('decrease');
     setAdjustmentAmount('');
+    setAdjustmentWeeklyDeduction(String(cashAdvance?.deduction_amount_per_payroll || employee?.cash_advance_weekly_deduction || ''));
     setAdjustmentReason('');
     setAdjustmentHrPasscode('');
     setAdjustmentAdminPasscode('');
@@ -375,7 +378,7 @@ export default function CashAdvance() {
     const adjustableAdvances = adjustmentDialog
       ? cashAdvances.filter(ca =>
         ca.employee_id === adjustmentDialog.employee.employee_id &&
-        ['approved', 'deducted'].includes(ca.status)
+        ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status)
       )
       : [];
     const selectedAdvance = adjustmentDialog?.cashAdvance ||
@@ -389,6 +392,11 @@ export default function CashAdvance() {
     const amount = parseFloat(adjustmentAmount);
     if (!(amount > 0)) {
       setAdjustmentError('Enter a valid adjustment amount.');
+      return;
+    }
+    const weeklyDeduction = parseFloat(adjustmentWeeklyDeduction);
+    if (!(weeklyDeduction > 0)) {
+      setAdjustmentError('Weekly deduction amount is required before saving the adjustment.');
       return;
     }
     if (adjustmentReason.trim().length < 3) {
@@ -405,6 +413,7 @@ export default function CashAdvance() {
       cash_advance_id: selectedAdvance.id,
       adjustment_type: adjustmentType,
       amount,
+      weekly_deduction: weeklyDeduction,
       reason: adjustmentReason.trim(),
       hr_passcode: adjustmentHrPasscode.trim(),
       admin_passcode: adjustmentAdminPasscode.trim(),
@@ -606,7 +615,7 @@ export default function CashAdvance() {
                               <Badge variant="outline" className={`text-xs ${statusColors[ca.status]}`}>{ca.status?.replace(/_/g, ' ')}</Badge>
                             </td>
                             <td className="px-4 py-2 text-xs text-right">
-                              {['approved', 'deducted'].includes(ca.status) && (
+                              {ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status) && (
                                 <Button
                                   type="button"
                                   size="sm"
@@ -662,10 +671,10 @@ export default function CashAdvance() {
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
-                  disabled={!selectedLedgerEmployee || !cashAdvances.some(ca => ca.employee_id === selectedLedgerEmployeeId && ['approved', 'deducted'].includes(ca.status))}
+                  disabled={!selectedLedgerEmployee || !cashAdvances.some(ca => ca.employee_id === selectedLedgerEmployeeId && ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status))}
                   onClick={() => openAdjustmentDialog(null, selectedLedgerEmployee)}
                 >
-                  <SlidersHorizontal className="h-3.5 w-3.5" /> Adjust CA
+                  <SlidersHorizontal className="h-3.5 w-3.5" /> Adjust Beginning Balance
                 </Button>
                 <Button
                   size="sm"
@@ -857,12 +866,12 @@ export default function CashAdvance() {
         setAdjustmentError('');
       }}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-lg">
-          <DialogHeader><DialogTitle>Adjust Cash Advance Balance</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Adjust Beginning Balance</DialogTitle></DialogHeader>
           {adjustmentDialog && (
             (() => {
               const adjustableAdvances = cashAdvances.filter(ca =>
                 ca.employee_id === adjustmentDialog.employee.employee_id &&
-                ['approved', 'deducted'].includes(ca.status)
+                ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status)
               );
               const selectedAdvance = adjustmentDialog.cashAdvance ||
                 adjustableAdvances.find(ca => String(ca.id) === String(selectedAdjustmentCashAdvanceId)) ||
@@ -922,6 +931,21 @@ export default function CashAdvance() {
                   }}
                   className="h-8 text-sm"
                 />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Weekly Deduction Amount (₱) *</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={adjustmentWeeklyDeduction}
+                  onChange={event => {
+                    setAdjustmentWeeklyDeduction(event.target.value);
+                    setAdjustmentError('');
+                  }}
+                  className="h-8 text-sm"
+                />
+                <p className="text-xs text-muted-foreground">Required so the adjusted beginning balance is deducted in each payroll week.</p>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Reason *</Label>
