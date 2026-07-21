@@ -758,6 +758,13 @@ export default function Payroll() {
       payroll_period_id: period.id,
       transaction_type: 'deduction',
     }));
+    // Do not trust remaining_balance alone: older profile edits could restore a stale
+    // balance. Posted ledger deductions are the hard ceiling that prevents an
+    // advance from ever being deducted beyond its approved principal.
+    const allCashAdvanceDeductions = /** @type {CashAdvanceLedgerEntity[]} */ (await entities.CashAdvanceLedger.filter({
+      company_profile_id: activeCompanyId,
+      transaction_type: 'deduction',
+    }, undefined, 5000));
     // Approved CAs that still have remaining deduction periods
     const postedCashAdvanceIds = new Set(existingLedger.map(row => normalizedId(row.cash_advance_id)));
     const approvedCA = currentCashAdvances.filter(cashAdvance =>
@@ -869,15 +876,21 @@ export default function Payroll() {
       const caDeductions = capCashAdvanceDeductions(empCAs.map(cashAdvance => {
         const posted = existingLedger.find(row => normalizedId(row.cash_advance_id) === normalizedId(cashAdvance.id));
         const scheduledDeduction = cashAdvance.deduction_amount_per_payroll || 0;
-        const remainingBalance = cashAdvance.remaining_balance != null
+        const storedRemainingBalance = cashAdvance.remaining_balance != null
           ? cashAdvance.remaining_balance
           : scheduledDeduction * (cashAdvance.deduction_periods_remaining || cashAdvance.deduction_payroll_periods || 0);
+        const approvedPrincipal = money(cashAdvance.amount_approved || cashAdvance.amount_requested || cashAdvance.beginning_balance);
+        const ledgerDeductions = money(allCashAdvanceDeductions
+          .filter(row => normalizedId(row.cash_advance_id) === normalizedId(cashAdvance.id))
+          .reduce((sum, row) => sum + (Number(row.amount) || 0), 0));
+        const ledgerRemainingBalance = money(Math.max(approvedPrincipal - ledgerDeductions, 0));
+        const remainingBalance = money(Math.max(0, Math.min(Number(storedRemainingBalance) || 0, ledgerRemainingBalance)));
         const totalPeriods = Number(cashAdvance.deduction_payroll_periods) || Number(cashAdvance.deduction_periods_remaining) || 1;
         const currentRemaining = cashAdvance.deduction_periods_remaining != null ? cashAdvance.deduction_periods_remaining : totalPeriods;
         const deductionNumber = posted?.deduction_number || Math.min(totalPeriods, Math.max(1, totalPeriods - currentRemaining + 1));
         return {
           ca: cashAdvance,
-          amount: posted ? Number(posted.amount) || 0 : Math.min(scheduledDeduction, Math.max(remainingBalance, 0)),
+          amount: posted ? Number(posted.amount) || 0 : Math.min(scheduledDeduction, remainingBalance),
           remainingBalance,
           posted,
           deductionNumber,

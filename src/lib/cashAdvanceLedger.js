@@ -84,6 +84,10 @@ export async function createCashAdvanceDeductionLedger({
   if (existing) return existing;
 
   const total = Number(advance.deduction_payroll_periods) || Number(advance.deduction_periods_remaining) || deductionNumber || 1;
+  const advanceDate = advance.request_date || advance.approved_date || 'no date';
+  const advanceLabel = advance.advance_type === 'beginning_balance'
+    ? 'Beginning balance'
+    : (advance.reason || 'Cash advance');
   return appApi.entities.CashAdvanceLedger.create({
     cash_advance_id: advance.id,
     employee_id: advance.employee_id,
@@ -94,7 +98,7 @@ export async function createCashAdvanceDeductionLedger({
     period_name: payrollPeriod.period_name,
     transaction_date: payrollPeriod.end_date || new Date().toISOString().slice(0, 10),
     transaction_type: 'deduction',
-    description: `Cash advance deduction ${deductionNumber} of ${total}`,
+    description: `${advanceLabel} (${advanceDate}) — payment ${deductionNumber} of ${total}`,
     amount: money(amount),
     balance_before: money(balanceBefore),
     balance_after: money(balanceAfter),

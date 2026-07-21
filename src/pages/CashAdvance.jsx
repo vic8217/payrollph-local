@@ -675,16 +675,30 @@ export default function CashAdvance() {
                         <tbody>
                           {group.rows.map(row => {
                             const isDeduction = row.transaction_type === 'deduction';
+                            const appliedAdvance = isDeduction
+                              ? cashAdvances.find(ca => String(ca.id) === String(row.cash_advance_id))
+                              : null;
+                            const appliedAdvanceAmount = Number(appliedAdvance?.amount_approved || appliedAdvance?.amount_requested || appliedAdvance?.beginning_balance || 0);
+                            const appliedAdvanceType = appliedAdvance?.advance_type === 'beginning_balance'
+                              ? 'Beginning Balance'
+                              : appliedAdvance?.advance_type === 'emergency'
+                                ? 'Emergency Cash Advance'
+                                : 'Cash Advance';
                             return (
                               <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                                 <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{row.transaction_date || '—'}</td>
                                 <td className="px-3 py-2 text-foreground whitespace-nowrap">{ledgerTypeLabel(row)}</td>
                                 <td className="px-3 py-2 text-muted-foreground min-w-56">
-                                  {row.period_name ? `${row.period_name} — ` : ''}{row.description || '—'}
+                                  <p>{row.period_name ? `${row.period_name} — ` : ''}{row.description || '—'}</p>
+                                  {appliedAdvance && (
+                                    <p className="mt-0.5 font-medium text-foreground">
+                                      Applied to: {appliedAdvanceType} · {appliedAdvance.request_date || appliedAdvance.approved_date || 'No date'} · ₱{appliedAdvanceAmount.toLocaleString()}{appliedAdvance.reason ? ` · ${appliedAdvance.reason}` : ''}
+                                    </p>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2 text-center whitespace-nowrap">
                                   {isDeduction && row.deduction_number && row.deduction_total
-                                    ? `${row.deduction_number} of ${row.deduction_total}`
+                                    ? `Payment ${row.deduction_number} of ${row.deduction_total}`
                                     : '—'}
                                 </td>
                                 <td className="px-3 py-2 text-right font-medium text-green-700 whitespace-nowrap">
