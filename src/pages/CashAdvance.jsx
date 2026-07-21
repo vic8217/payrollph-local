@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search, SlidersHorizontal } from 'lucide-react';
+import { CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search, SlidersHorizontal } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
 import { ensureCashAdvanceAdditionLedger, ensureCashAdvanceBeginningLedger, ensureCashAdvanceDeductionBackfill } from '@/lib/cashAdvanceLedger';
@@ -113,8 +113,6 @@ const entities = {
 };
 
 export default function CashAdvance() {
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ amount_requested: '', reason: '', needed_date: '' });
   const [filterStatus, setFilterStatus] = useState('all');
   const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'schedule' | 'ledger'
   const [notesDialog, setNotesDialog] = useState(null); // { id, type, amount_approved }
@@ -210,13 +208,6 @@ export default function CashAdvance() {
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const todayPasscode = dailyPasscodes.find(p => p.date === todayStr);
 
-  const currentEmployee = employees.find(e => e.user_email === user?.email);
-
-  const createMutation = useMutation({
-    mutationFn: (data) => entities.create('CashAdvance', data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cashAdvances'] }); setShowForm(false); setForm({ amount_requested: '', reason: '', needed_date: '' }); },
-  });
-
   const updateMutation = useMutation({
     mutationFn: async ({ id, data, createAdditionLedger = false }) => {
       const updated = await entities.update('CashAdvance', id, data);
@@ -267,32 +258,6 @@ export default function CashAdvance() {
       setAdjustmentError(error?.message || 'Unable to adjust cash advance balance.');
     },
   });
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!currentEmployee) return alert('Your profile is not linked to an employee record. Ask HR to set your user email.');
-    const max = currentEmployee.max_cash_advance || 0;
-    const requestedAmount = parseFloat(form.amount_requested);
-    const currentRegularLimitBalance = cashAdvances
-      .filter(ca => ca.employee_id === currentEmployee.employee_id && countsAgainstRegularLimit(ca))
-      .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
-    const available = Math.max(0, max - currentRegularLimitBalance);
-
-    if (max > 0 && requestedAmount > available) {
-      return alert(`Amount exceeds your available regular cash advance limit of ₱${available.toLocaleString()}`);
-    }
-    createMutation.mutate({
-      employee_id: currentEmployee.employee_id,
-      employee_name: `${currentEmployee.first_name} ${currentEmployee.last_name}`,
-      department: currentEmployee.department,
-      amount_requested: requestedAmount,
-      reason: form.reason,
-      needed_date: form.needed_date,
-      request_date: format(new Date(), 'yyyy-MM-dd'),
-      status: 'pending',
-      company_profile_id: activeCompanyId,
-    });
-  };
 
   const verifyPasscode = (type) => {
     if (!todayPasscode) {
@@ -513,24 +478,8 @@ export default function CashAdvance() {
               <SelectItem value="deducted">Deducted</SelectItem>
             </SelectContent>
           </Select>
-          <Button size="sm" onClick={() => setShowForm(true)} className="gap-2">
-            <Plus className="w-4 h-4" /> Request Vale
-          </Button>
         </div>
       </div>
-
-      {/* Current employee limit display */}
-      {currentEmployee && (
-        <Card className="border border-primary/20 bg-primary/5 shadow-sm">
-          <CardContent className="p-4 flex items-center gap-3">
-            <CreditCard className="w-5 h-5 text-primary" />
-            <div>
-              <p className="text-sm font-medium text-foreground">Your Cash Advance Limit</p>
-              <p className="text-lg font-bold text-primary">₱{(currentEmployee.max_cash_advance || 0).toLocaleString()}</p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Employee Summary Table */}
       {employeeSummary.length > 0 && !selectedLedgerEmployeeId && (
@@ -829,36 +778,6 @@ export default function CashAdvance() {
           ))}
         </div>
       )}
-
-      {/* Request Form */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Request Cash Advance (Vale)</DialogTitle></DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-3">
-            {currentEmployee && (
-              <p className="text-xs text-muted-foreground bg-muted p-2 rounded">
-                Maximum allowable: <strong>₱{(currentEmployee.max_cash_advance || 0).toLocaleString()}</strong>
-              </p>
-            )}
-            <div className="space-y-1">
-              <Label className="text-xs">Amount Requested (₱) *</Label>
-              <Input type="number" min="1" step="0.01" value={form.amount_requested} onChange={e => setForm(p => ({ ...p, amount_requested: e.target.value }))} required className="h-8 text-sm" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Reason *</Label>
-              <Textarea value={form.reason} onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} required className="text-sm min-h-[80px]" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Date Needed</Label>
-              <Input type="date" value={form.needed_date} onChange={e => setForm(p => ({ ...p, needed_date: e.target.value }))} className="h-8 text-sm" />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
-              <Button type="submit" size="sm">Submit Request</Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {/* Cash Advance Adjustment Dialog */}
       <Dialog open={!!adjustmentDialog} onOpenChange={() => {
