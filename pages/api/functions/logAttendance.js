@@ -381,20 +381,15 @@ export default async function handler(req, res) {
 
   if (!lastLog) {
     const shiftStart = scheduledShiftStart(date, currentShiftOptions);
-    if (
-      currentShiftOptions.isOvernightShift &&
+    const isEarlyTimeIn = Boolean(
       shiftStart &&
       nowDate.getTime() < shiftStart.getTime()
-    ) {
-      return rejectRapidScan(
-        res,
-        null,
-        "time_in",
-        `Time In is not available until the night shift starts at ${currentShiftOptions.shiftStartTime}. No unfinished previous-night record was found.`,
-      );
-    }
+    );
+    const effectiveTimeIn = isEarlyTimeIn ? shiftStart.toISOString() : now;
 
-    const firstBreakPunch = classifyFirstPunchDuringBreak(employee, date, nowDate, currentShiftOptions.isOvernightShift);
+    const firstBreakPunch = isEarlyTimeIn
+      ? null
+      : classifyFirstPunchDuringBreak(employee, date, nowDate, currentShiftOptions.isOvernightShift);
     if (firstBreakPunch) {
       const scheduledBreakOut = scheduledBreak(employee, date, currentShiftOptions.isOvernightShift);
       const scheduledBreakReturn = scheduledBreakIn(employee, date, currentShiftOptions.isOvernightShift);
@@ -428,7 +423,7 @@ export default async function handler(req, res) {
     const autoBreak = scheduledBreakAfterTimeIn(
       employee,
       date,
-      now,
+      effectiveTimeIn,
       currentShiftOptions.isOvernightShift,
     );
     const log = await createRecord("AttendanceLog", {
@@ -437,7 +432,11 @@ export default async function handler(req, res) {
       employee_id: employee.employee_id,
       employee_name: employeeName,
       date,
-      time_in: now,
+      time_in: effectiveTimeIn,
+      ...(isEarlyTimeIn ? {
+        time_in_actual_punch_at: now,
+        time_in_classification: "early_scan_clamped_to_shift_start",
+      } : {}),
       work_schedule: effectiveWorkSchedule,
       shift_start_time: currentShiftOptions.shiftStartTime,
       shift_end_time: currentShiftOptions.shiftEndTime,

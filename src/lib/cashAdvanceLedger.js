@@ -98,7 +98,7 @@ export async function createCashAdvanceDeductionLedger({
     period_name: payrollPeriod.period_name,
     transaction_date: payrollPeriod.end_date || new Date().toISOString().slice(0, 10),
     transaction_type: 'deduction',
-    description: `${advanceLabel} (${advanceDate}) — payment ${deductionNumber} of ${total}`,
+    description: `${advanceLabel} (${advanceDate}) — weekly payment`,
     amount: money(amount),
     balance_before: money(balanceBefore),
     balance_after: money(balanceAfter),

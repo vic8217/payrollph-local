@@ -343,16 +343,6 @@ export default function ScanConfirm() {
       work_schedule: effectiveWorkSchedule,
     };
     const shiftOptions = resolveEmployeeShiftOptions(shiftEmployee, shiftSettings, logDate, todayLog);
-    if (action === 'time_in' && shiftOptions.isOvernightShift) {
-      const shiftStart = scheduledShiftStart(today, shiftOptions);
-      if (shiftStart && new Date(now).getTime() < shiftStart.getTime()) {
-        setPhotoError(
-          `Time In is not available until the night shift starts at ${shiftOptions.shiftStartTime}.`
-        );
-        setConfirming(false);
-        return;
-      }
-    }
     const faceResult = null;
     let photoUpdates = {};
     try {
@@ -366,7 +356,14 @@ export default function ScanConfirm() {
     if (action === 'time_in') {
       // Lunch window rule: snap time_in to 1:00pm, no overtime
       let effectiveTimeIn = now;
-      if (isLunchWindow) {
+      const shiftStart = scheduledShiftStart(today, shiftOptions);
+      const isEarlyTimeIn = Boolean(
+        shiftStart &&
+        new Date(now).getTime() < shiftStart.getTime()
+      );
+      if (isEarlyTimeIn) {
+        effectiveTimeIn = shiftStart.toISOString();
+      } else if (isLunchWindow) {
         const snapped = new Date();
         snapped.setHours(13, 0, 0, 0);
         effectiveTimeIn = snapped.toISOString();
@@ -377,6 +374,10 @@ export default function ScanConfirm() {
         employee_name: `${employee.first_name} ${employee.last_name}`,
         date: today,
         time_in: effectiveTimeIn,
+        ...(isEarlyTimeIn ? {
+          time_in_actual_punch_at: now,
+          time_in_classification: 'early_scan_clamped_to_shift_start',
+        } : {}),
         work_schedule: effectiveWorkSchedule,
         shift_start_time: shiftOptions.shiftStartTime,
         shift_end_time: shiftOptions.shiftEndTime,
@@ -391,7 +392,11 @@ export default function ScanConfirm() {
         face_verification_result: faceResult?.result || 'disabled',
         face_verification_confidence: faceResult?.confidenceScore ?? null,
         face_verification_log_id: faceResult?.log?.id || null,
-        notes: isLunchWindow ? 'Time-in snapped to 1:00 PM (lunch window rule). No overtime credited.' : (capturedPhoto ? 'Photo captured on time-in' : ''),
+        notes: isEarlyTimeIn
+          ? `Early Time In scanned at ${formatManilaTime(now)} and credited at the ${shiftOptions.shiftStartTime} shift start.`
+          : isLunchWindow
+            ? 'Time-in snapped to 1:00 PM (lunch window rule). No overtime credited.'
+            : (capturedPhoto ? 'Photo captured on time-in' : ''),
       });
       setDone({ action: 'time_in', employee, lunchSnapped: isLunchWindow });
     } else if (action === 'break_time_in' && todayLog) {

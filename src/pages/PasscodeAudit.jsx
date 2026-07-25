@@ -116,19 +116,36 @@ function legacyAttendanceEntry(record) {
   };
 }
 
+function employeeFilterValue(record = {}) {
+  const identifier = record.employee_id || record.employee_record_id;
+  if (identifier) return `id:${String(identifier).trim().toLowerCase()}`;
+
+  const name = String(record.employee_name || '').trim().toLowerCase();
+  return name ? `name:${name}` : '';
+}
+
+function employeeFilterLabel(record = {}) {
+  const name = String(record.employee_name || '').trim();
+  const employeeId = String(record.employee_id || '').trim();
+  if (name && employeeId) return `${name} (${employeeId})`;
+  return name || employeeId || '';
+}
+
 export default function PasscodeAudit() {
   const { user } = useAuth();
   const { activeCompanyId } = useCompany();
   const [search, setSearch] = useState('');
   const [entityFilter, setEntityFilter] = useState('all');
+  const [employeeFilter, setEmployeeFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('all');
   const canView = ['super_admin', 'admin'].includes(user?.role);
 
   const auditQuery = useQuery({
     queryKey: ['passcodeAudit', activeCompanyId],
     queryFn: async () => {
       const [auditLogs, attendanceLogs] = await Promise.all([
-        appApi.entities.PasscodeAuditLog.filter({ company_profile_id: activeCompanyId }, '-occurred_at', 5000),
-        appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId }, '-updated_date', 1000),
+        appApi.entities.PasscodeAuditLog.filter({ company_profile_id: activeCompanyId }, '-occurred_at'),
+        appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId }, '-updated_date'),
       ]);
       const structured = auditLogs.map(record => ({
         entity: record.source_entity,
@@ -151,10 +168,40 @@ export default function PasscodeAudit() {
     enabled: canView && !!activeCompanyId,
   });
 
+  const employeeOptions = useMemo(() => {
+    const options = new Map();
+    (auditQuery.data || []).forEach(entry => {
+      const value = employeeFilterValue(entry.record);
+      const label = employeeFilterLabel(entry.record);
+      if (value && label && !options.has(value)) options.set(value, label);
+    });
+    return [...options.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [auditQuery.data]);
+
+  const dateOptions = useMemo(() => {
+    const dates = new Set();
+    (auditQuery.data || []).forEach(entry => {
+      const auditDate = entry.at ? new Date(entry.at) : null;
+      if (auditDate && Number.isFinite(auditDate.getTime())) {
+        dates.add(format(auditDate, 'yyyy-MM-dd'));
+      }
+    });
+    return [...dates].sort((a, b) => b.localeCompare(a));
+  }, [auditQuery.data]);
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return (auditQuery.data || []).filter(entry => {
       if (entityFilter !== 'all' && entry.entity !== entityFilter) return false;
+      if (employeeFilter !== 'all' && employeeFilterValue(entry.record) !== employeeFilter) return false;
+      if (dateFilter !== 'all') {
+        const auditDate = entry.at ? new Date(entry.at) : null;
+        if (!auditDate || !Number.isFinite(auditDate.getTime()) || format(auditDate, 'yyyy-MM-dd') !== dateFilter) {
+          return false;
+        }
+      }
       if (!term) return true;
       return [
         subjectFor(entry.entity, entry.record),
@@ -164,7 +211,7 @@ export default function PasscodeAudit() {
         entry.summary,
       ].some(value => String(value || '').toLowerCase().includes(term));
     });
-  }, [auditQuery.data, entityFilter, search]);
+  }, [auditQuery.data, dateFilter, employeeFilter, entityFilter, search]);
 
   if (!canView) {
     return (
@@ -184,11 +231,31 @@ export default function PasscodeAudit() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(300px,1fr)_260px_180px_220px]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search employee, action, reviewer, or reason" className="pl-9" />
         </div>
+        <Select value={employeeFilter} onValueChange={setEmployeeFilter}>
+          <SelectTrigger aria-label="Filter by employee"><SelectValue placeholder="All Employees" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Employees</SelectItem>
+            {employeeOptions.map(option => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={dateFilter} onValueChange={setDateFilter}>
+          <SelectTrigger aria-label="Filter by audit date"><SelectValue placeholder="All Dates" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Dates</SelectItem>
+            {dateOptions.map(date => (
+              <SelectItem key={date} value={date}>
+                {format(new Date(`${date}T12:00:00`), 'MMM d, yyyy')}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={entityFilter} onValueChange={setEntityFilter}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search, SlidersHorizontal } from 'lucide-react';
+import { CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search, SlidersHorizontal, Eye } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
 import { ensureCashAdvanceAdditionLedger, ensureCashAdvanceBeginningLedger, ensureCashAdvanceDeductionBackfill } from '@/lib/cashAdvanceLedger';
@@ -48,15 +48,24 @@ const ledgerSortKey = (row) => `${row.transaction_date || ''}${row.created_date 
 
 function withEmployeeRunningBalances(rows) {
   let runningBalance = 0;
+  const paymentCountsByAdvance = new Map();
   const chronologicalRows = [...rows].sort((a, b) => ledgerSortKey(a).localeCompare(ledgerSortKey(b)));
 
   return chronologicalRows
     .map(row => {
       const amount = Number(row.amount) || 0;
       runningBalance += row.transaction_type === 'deduction' ? -amount : amount;
+      const isPayrollDeduction = row.transaction_type === 'deduction' && row.source !== 'manual_adjustment';
+      const advanceKey = String(row.cash_advance_id || 'unlinked');
+      let advancePaymentNumber = null;
+      if (isPayrollDeduction) {
+        advancePaymentNumber = (paymentCountsByAdvance.get(advanceKey) || 0) + 1;
+        paymentCountsByAdvance.set(advanceKey, advancePaymentNumber);
+      }
       return {
         ...row,
         employee_running_balance: parseFloat(Math.max(runningBalance, 0).toFixed(2)),
+        advance_payment_number: advancePaymentNumber,
       };
     })
     .reverse();
@@ -125,6 +134,7 @@ export default function CashAdvance() {
   const [employeeSearchInput, setEmployeeSearchInput] = useState('');
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [selectedLedgerEmployeeId, setSelectedLedgerEmployeeId] = useState(null);
+  const [selectedLedgerCashAdvanceId, setSelectedLedgerCashAdvanceId] = useState(null);
   const [adjustmentDialog, setAdjustmentDialog] = useState(null); // { cashAdvance?, employee }
   const [selectedAdjustmentCashAdvanceId, setSelectedAdjustmentCashAdvanceId] = useState('');
   const [adjustmentType, setAdjustmentType] = useState('decrease');
@@ -417,9 +427,13 @@ export default function CashAdvance() {
   const sortedLedger = [...cashAdvanceLedger]
     .sort((a, b) => ledgerSortKey(b).localeCompare(ledgerSortKey(a)));
   const selectedLedgerEmployee = employees.find(e => e.employee_id === selectedLedgerEmployeeId);
-  const visibleLedgerRows = selectedLedgerEmployeeId
+  const selectedLedgerCashAdvance = cashAdvances.find(ca => String(ca.id) === String(selectedLedgerCashAdvanceId));
+  const employeeLedgerRows = selectedLedgerEmployeeId
     ? sortedLedger.filter(row => row.employee_id === selectedLedgerEmployeeId)
     : sortedLedger;
+  const visibleLedgerRows = selectedLedgerCashAdvanceId
+    ? employeeLedgerRows.filter(row => String(row.cash_advance_id) === String(selectedLedgerCashAdvanceId))
+    : employeeLedgerRows;
   const ledgerByEmployee = visibleLedgerRows.reduce((groups, row) => {
     const key = row.employee_id || row.employee_name || 'unknown';
     if (!groups[key]) {
@@ -451,6 +465,7 @@ export default function CashAdvance() {
             <button
               onClick={() => {
                 setSelectedLedgerEmployeeId(null);
+                setSelectedLedgerCashAdvanceId(null);
                 setActiveTab('requests');
               }}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${activeTab === 'requests' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
@@ -458,12 +473,13 @@ export default function CashAdvance() {
             <button
               onClick={() => {
                 setSelectedLedgerEmployeeId(null);
+                setSelectedLedgerCashAdvanceId(null);
                 setActiveTab('schedule');
               }}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'schedule' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             ><CalendarDays className="w-3.5 h-3.5" />Deduction Schedule</button>
             <button
-              onClick={() => { setSelectedLedgerEmployeeId(null); setActiveTab('ledger'); }}
+              onClick={() => { setSelectedLedgerEmployeeId(null); setSelectedLedgerCashAdvanceId(null); setActiveTab('ledger'); }}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1.5 ${activeTab === 'ledger' ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
             ><CreditCard className="w-3.5 h-3.5" />Ledger</button>
           </div>
@@ -546,6 +562,7 @@ export default function CashAdvance() {
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setSelectedLedgerEmployeeId(e.employee_id);
+                                setSelectedLedgerCashAdvanceId(null);
                                 setActiveTab('ledger');
                               }}
                             >
@@ -607,15 +624,27 @@ export default function CashAdvance() {
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Cash Advance Transaction Ledger</p>
               {selectedLedgerEmployeeId && (
-                <p className="text-sm font-medium text-foreground mt-1">
-                  {selectedLedgerEmployee
-                    ? `${selectedLedgerEmployee.first_name} ${selectedLedgerEmployee.last_name}`
-                    : selectedLedgerEmployeeId}
-                </p>
+                <div className="mt-1">
+                  <p className="text-sm font-medium text-foreground">
+                    {selectedLedgerEmployee
+                      ? `${selectedLedgerEmployee.first_name} ${selectedLedgerEmployee.last_name}`
+                      : selectedLedgerEmployeeId}
+                  </p>
+                  {selectedLedgerCashAdvance && (
+                    <p className="text-xs font-medium text-primary">
+                      Specific advance: {selectedLedgerCashAdvance.advance_type === 'beginning_balance' ? 'Beginning Balance' : 'Cash Advance'} · {selectedLedgerCashAdvance.request_date || selectedLedgerCashAdvance.approved_date || 'No date'} · ₱{Number(selectedLedgerCashAdvance.amount_approved || selectedLedgerCashAdvance.amount_requested || selectedLedgerCashAdvance.beginning_balance || 0).toLocaleString()} · {selectedLedgerCashAdvance.reason || 'No particulars'}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
             {selectedLedgerEmployeeId && (
               <div className="flex items-center gap-2">
+                {selectedLedgerCashAdvanceId && (
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setSelectedLedgerCashAdvanceId(null)}>
+                    <CreditCard className="h-3.5 w-3.5" /> View All Advances
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -631,6 +660,7 @@ export default function CashAdvance() {
                   className="gap-1.5"
                   onClick={() => {
                     setSelectedLedgerEmployeeId(null);
+                    setSelectedLedgerCashAdvanceId(null);
                     setActiveTab('requests');
                   }}
                 >
@@ -675,6 +705,7 @@ export default function CashAdvance() {
                         <tbody>
                           {group.rows.map(row => {
                             const isDeduction = row.transaction_type === 'deduction';
+                            const canViewAdvance = Boolean(row.cash_advance_id) && ['beginning', 'addition'].includes(row.transaction_type);
                             const appliedAdvance = isDeduction
                               ? cashAdvances.find(ca => String(ca.id) === String(row.cash_advance_id))
                               : null;
@@ -687,9 +718,32 @@ export default function CashAdvance() {
                             return (
                               <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                                 <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{row.transaction_date || '—'}</td>
-                                <td className="px-3 py-2 text-foreground whitespace-nowrap">{ledgerTypeLabel(row)}</td>
+                                <td className="px-3 py-2 text-foreground whitespace-nowrap">
+                                  <div className="flex items-center gap-2">
+                                    <span>{ledgerTypeLabel(row)}</span>
+                                    {canViewAdvance && (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-6 gap-1 px-2 text-[11px]"
+                                        onClick={() => {
+                                          setSelectedLedgerEmployeeId(row.employee_id);
+                                          setSelectedLedgerCashAdvanceId(row.cash_advance_id);
+                                        }}
+                                      >
+                                        <Eye className="h-3 w-3" /> View
+                                      </Button>
+                                    )}
+                                  </div>
+                                </td>
                                 <td className="px-3 py-2 text-muted-foreground min-w-56">
-                                  <p>{row.period_name ? `${row.period_name} — ` : ''}{row.description || '—'}</p>
+                                  <p>
+                                    {row.period_name ? `${row.period_name} — ` : ''}
+                                    {isDeduction && row.advance_payment_number
+                                      ? `Weekly payment #${row.advance_payment_number}`
+                                      : (row.description || '—')}
+                                  </p>
                                   {appliedAdvance && (
                                     <p className="mt-0.5 font-medium text-foreground">
                                       Applied to: {appliedAdvanceType} · {appliedAdvance.request_date || appliedAdvance.approved_date || 'No date'} · ₱{appliedAdvanceAmount.toLocaleString()}{appliedAdvance.reason ? ` · ${appliedAdvance.reason}` : ''}
@@ -697,8 +751,8 @@ export default function CashAdvance() {
                                   )}
                                 </td>
                                 <td className="px-3 py-2 text-center whitespace-nowrap">
-                                  {isDeduction && row.deduction_number && row.deduction_total
-                                    ? `Payment ${row.deduction_number} of ${row.deduction_total}`
+                                  {isDeduction && row.advance_payment_number
+                                    ? `Payment #${row.advance_payment_number}`
                                     : '—'}
                                 </td>
                                 <td className="px-3 py-2 text-right font-medium text-green-700 whitespace-nowrap">
