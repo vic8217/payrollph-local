@@ -36,6 +36,7 @@ import PasscodeAudit from '@/pages/PasscodeAudit';
 import Landing from '@/pages/Landing';
 import PayslipAcknowledgements from '@/pages/PayslipAcknowledgements';
 import SpecialRates from '@/pages/SpecialRates';
+import SpecialRatePayroll from '@/pages/SpecialRatePayroll';
 import MandatoryDeductions from '@/pages/MandatoryDeductions';
 
 const AuthenticatedApp = () => {
@@ -88,6 +89,7 @@ const AuthenticatedApp = () => {
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/payroll" element={<Payroll />} />
         <Route path="/special-rates" element={<SpecialRates />} />
+        <Route path="/special-rate-payroll" element={<SpecialRatePayroll />} />
         <Route path="/payroll-dashboard" element={<PayrollDashboard />} />
         <Route path="/thirteenth-month-pay" element={<ThirteenthMonthPay />} />
         <Route path="/separation-pay" element={<SeparationPay />} />

@@ -17,6 +17,8 @@ const entityLabels = {
   Employee: 'Employee Setup',
   OvertimeRequest: 'OT Request',
   Settings: 'Shift Settings',
+  SpecialRateAttendance: 'Special Attendance',
+  SpecialRatePayrollPeriod: 'Special Payroll',
 };
 
 const actionLabels = {
@@ -45,6 +47,8 @@ const actionLabels = {
   shift_setting_update: 'Shift Edited',
   shift_setting_delete: 'Shift Removed',
   shift_setting_set_default: 'Default Shift Changed',
+  special_rate_attendance_saved: 'Special Attendance Saved',
+  special_rate_payroll_generated: 'Special Payroll Generated',
 };
 
 const actionStyles = {
@@ -67,6 +71,8 @@ const actionStyles = {
   shift_setting_update: 'bg-blue-100 text-blue-700',
   shift_setting_delete: 'bg-red-100 text-red-700',
   shift_setting_set_default: 'bg-violet-100 text-violet-700',
+  special_rate_attendance_saved: 'bg-blue-100 text-blue-700',
+  special_rate_payroll_generated: 'bg-violet-100 text-violet-700',
 };
 
 function subjectFor(entity, record) {
