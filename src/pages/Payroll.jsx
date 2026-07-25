@@ -685,9 +685,16 @@ export default function Payroll() {
     setPendingAttendanceError(null);
     const periodName = getPayrollPeriodName(activePeriodConfig);
 
+    // Employee rates and statuses can be edited from the Employees page while
+    // Payroll remains open. Always compute from a fresh server snapshot so a
+    // stale React Query cache cannot carry an old daily rate into payroll.
+    const currentEmployees = /** @type {EmployeeEntity[]} */ (await entities.Employee.filter({
+      company_profile_id: activeCompanyId,
+    }, '-created_date'));
+
     // Pre-check: block if any employee has time_in but no time_out
     const allLogsForCheck = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.list('-date', 1000));
-    const activeEmployeesForCheck = employees.filter(e => e.status === 'active');
+    const activeEmployeesForCheck = currentEmployees.filter(e => e.status === 'active');
     /** @type {Array<{ employeeName: string, date: string }>} */
     const incomplete = [];
     for (const emp of activeEmployeesForCheck) {
@@ -751,7 +758,7 @@ export default function Payroll() {
     const currentCashAdvances = /** @type {CashAdvanceEntity[]} */ (await entities.CashAdvance.filter({
       company_profile_id: activeCompanyId,
     }));
-    const activeEmployees = employees.filter(e => e.status === 'active' && !e.special_rate_enabled);
+    const activeEmployees = currentEmployees.filter(e => e.status === 'active' && !e.special_rate_enabled);
     const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.list('-date', 1000));
     const existingLedger = /** @type {CashAdvanceLedgerEntity[]} */ (await entities.CashAdvanceLedger.filter({
       company_profile_id: activeCompanyId,

@@ -46,6 +46,7 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [editAuthorization, setEditAuthorization] = useState({ hrPasscode: '', adminPasscode: '', reason: '' });
   const [showCamera, setShowCamera] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState('');
@@ -143,10 +144,6 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
   const savePhotoUrl = async (fileUrl) => {
     setPhotoError('');
     set('photo_url', fileUrl);
-    if (employee?.id) {
-      await appApi.entities.Employee.update(employee.id, { photo_url: fileUrl });
-      onUpdated?.();
-    }
   };
 
   const buildEmployeeId = (data) => {
@@ -285,10 +282,25 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
       if (!isEditing && Number(data.cash_advance_beginning_balance) > 0 && !(Number(data.cash_advance_weekly_deduction) > 0)) {
         throw new Error('Weekly deduction amount is required when setting a beginning cash advance balance.');
       }
+      if (isEditing && (
+        !editAuthorization.hrPasscode.trim() ||
+        !editAuthorization.adminPasscode.trim() ||
+        editAuthorization.reason.trim().length < 3
+      )) {
+        throw new Error('Both daily passcodes and a reason are required to edit an employee profile.');
+      }
 
       let savedEmployee;
       if (employee?.id) {
-        savedEmployee = await appApi.entities.Employee.update(employee.id, data);
+        const result = await appApi.functions.invoke('updateEmployeeProfile', {
+          employee_record_id: employee.id,
+          company_profile_id: employee.company_profile_id || activeCompanyId,
+          data,
+          hr_passcode: editAuthorization.hrPasscode.trim(),
+          admin_passcode: editAuthorization.adminPasscode.trim(),
+          reason: editAuthorization.reason.trim(),
+        });
+        savedEmployee = result.employee;
       } else {
         if (!data.qr_code) data.qr_code = data.employee_id;
         savedEmployee = await appApi.entities.Employee.create(data);
@@ -472,6 +484,48 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
           </div>
         </div>
       </div>
+
+      {isEditing && (
+        <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/60 p-4">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Authorize Profile Changes</p>
+            <p className="text-xs text-muted-foreground">Today&apos;s HR Officer and Admin passcodes are required. The reason and changed fields will appear in the Passcode Audit Summary.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label className="text-xs">HR Officer passcode</Label>
+              <Input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={editAuthorization.hrPasscode}
+                onChange={event => setEditAuthorization(previous => ({ ...previous, hrPasscode: event.target.value }))}
+                className="mt-1 text-center font-mono tracking-widest"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Admin passcode</Label>
+              <Input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={editAuthorization.adminPasscode}
+                onChange={event => setEditAuthorization(previous => ({ ...previous, adminPasscode: event.target.value }))}
+                className="mt-1 text-center font-mono tracking-widest"
+              />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Reason for profile changes</Label>
+            <Textarea
+              value={editAuthorization.reason}
+              onChange={event => setEditAuthorization(previous => ({ ...previous, reason: event.target.value }))}
+              placeholder="Why is this employee profile being updated?"
+              className="mt-1"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2 pt-2">
         {saveError && <p className="mr-auto self-center text-xs text-destructive">{saveError}</p>}

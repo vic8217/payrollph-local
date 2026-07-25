@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search, SlidersHorizontal, Eye } from 'lucide-react';
+import { CreditCard, CheckCircle2, XCircle, ChevronDown, ChevronUp, AlertTriangle, CalendarDays, Search, SlidersHorizontal, Eye, ClipboardCheck } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
 import { ensureCashAdvanceAdditionLedger, ensureCashAdvanceBeginningLedger, ensureCashAdvanceDeductionBackfill } from '@/lib/cashAdvanceLedger';
@@ -144,10 +144,31 @@ export default function CashAdvance() {
   const [adjustmentHrPasscode, setAdjustmentHrPasscode] = useState('');
   const [adjustmentAdminPasscode, setAdjustmentAdminPasscode] = useState('');
   const [adjustmentError, setAdjustmentError] = useState('');
+  const [deductionCheck, setDeductionCheck] = useState(null);
+  const [deductionCheckOpen, setDeductionCheckOpen] = useState(false);
+  const [deductionCheckLoading, setDeductionCheckLoading] = useState(false);
+  const [deductionCheckError, setDeductionCheckError] = useState('');
   const { user } = useAuth();
   const qc = useQueryClient();
 
   const { activeCompanyId } = useCompany();
+
+  const runDeductionCheck = async () => {
+    setDeductionCheckOpen(true);
+    setDeductionCheckLoading(true);
+    setDeductionCheckError('');
+    try {
+      const result = await requestJson('/api/functions/checkCashAdvanceDeductions', {
+        method: 'POST',
+        body: JSON.stringify({ company_profile_id: activeCompanyId }),
+      });
+      setDeductionCheck(result);
+    } catch (error) {
+      setDeductionCheckError(error.message || 'Unable to check cash advance deductions.');
+    } finally {
+      setDeductionCheckLoading(false);
+    }
+  };
 
   const { data: employees = [] } = useQuery({
     queryKey: ['employees', activeCompanyId],
@@ -461,6 +482,9 @@ export default function CashAdvance() {
           <p className="text-muted-foreground text-sm mt-0.5">Request and manage employee vale</p>
         </div>
         <div className="flex gap-2 items-center">
+          <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5" onClick={runDeductionCheck}>
+            <ClipboardCheck className="h-3.5 w-3.5" /> Check Deductions
+          </Button>
           <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
             <button
               onClick={() => {
@@ -496,6 +520,69 @@ export default function CashAdvance() {
           </Select>
         </div>
       </div>
+
+      <Dialog open={deductionCheckOpen} onOpenChange={setDeductionCheckOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Cash Advance Deduction Check</DialogTitle>
+          </DialogHeader>
+          {deductionCheckLoading ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">Checking generated payroll and ledger records…</div>
+          ) : deductionCheckError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{deductionCheckError}</div>
+          ) : deductionCheck ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-4">
+                <Card className="p-3"><p className="text-xs text-muted-foreground">Checked</p><p className="text-xl font-bold">{deductionCheck.summary.advances_checked}</p></Card>
+                <Card className="p-3"><p className="text-xs text-muted-foreground">Properly deducted</p><p className="text-xl font-bold text-green-600">{deductionCheck.summary.properly_deducted}</p></Card>
+                <Card className="p-3"><p className="text-xs text-muted-foreground">Missing deductions</p><p className="text-xl font-bold text-red-600">{deductionCheck.summary.missing_deductions}</p></Card>
+                <Card className="p-3"><p className="text-xs text-muted-foreground">Awaiting payroll/setup</p><p className="text-xl font-bold text-amber-600">{deductionCheck.summary.awaiting_payroll + deductionCheck.summary.missing_setup}</p></Card>
+              </div>
+              <div className="space-y-2">
+                {deductionCheck.checks.length === 0 ? (
+                  <p className="rounded-lg border border-border p-6 text-center text-sm text-muted-foreground">No approved cash advances require checking.</p>
+                ) : deductionCheck.checks.map(check => {
+                  const isMissing = check.status === 'missing_deduction' || check.status === 'missing_setup';
+                  const statusLabel = {
+                    verified: 'Properly deducted',
+                    missing_deduction: 'Missing deduction',
+                    missing_setup: 'Deduction setup missing',
+                    awaiting_payroll: 'Awaiting generated payroll',
+                  }[check.status] || check.status;
+                  return (
+                    <div key={check.cash_advance_id} className={`rounded-lg border p-4 ${isMissing ? 'border-red-200 bg-red-50/60' : 'border-border'}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-sm">{check.employee_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {check.employee_id} · Balance ₱{Number(check.balance).toLocaleString()} · Weekly ₱{Number(check.weekly_deduction).toLocaleString()}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className={isMissing ? 'bg-red-100 text-red-700' : check.status === 'verified' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}>
+                          {statusLabel}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {check.deducted_payroll_periods} of {check.eligible_payroll_periods} eligible generated payroll week(s) contain a matching deduction.
+                      </p>
+                      {check.missing_periods.length > 0 && (
+                        <div className="mt-2 rounded-md border border-red-200 bg-white p-2">
+                          <p className="text-xs font-semibold text-red-700">Payroll weeks requiring review:</p>
+                          {check.missing_periods.map(period => (
+                            <p key={period.payroll_period_id} className="mt-1 text-xs text-red-700">
+                              {period.period_name || `${period.start_date} to ${period.end_date}`}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {/* Employee Summary Table */}
       {employeeSummary.length > 0 && !selectedLedgerEmployeeId && (
