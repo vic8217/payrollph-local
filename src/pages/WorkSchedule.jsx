@@ -2,11 +2,9 @@ import { useState } from 'react';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCompany } from '@/lib/CompanyContext';
-import { useAuth } from '@/lib/AuthContext';
 import { manilaDateString } from '@/lib/dateUtils';
 import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 import {
-  buildShiftAssignmentUpdate,
   effectiveShiftSetting,
   nextEmployeeShiftAssignment,
   resolveEmployeeWorkSchedule,
@@ -98,29 +96,10 @@ function ShiftBadge({ shift }) {
   );
 }
 
-const normalizePasscode = (value) => String(value ?? '').trim();
-
 function defaultEffectiveDate() {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   return manilaDateString(tomorrow);
-}
-
-function buildShiftAssignmentCancellationUpdate(employee, assignment, options = {}) {
-  const today = options.today || manilaDateString();
-  const fallbackValue = options.fallbackValue || employee?.work_schedule || null;
-  const nextAssignments = sortedShiftAssignments(employee)
-    .filter(item => item.effective_date !== assignment.effective_date);
-  const workSchedule = resolveEmployeeWorkSchedule(
-    { ...employee, shift_assignments: nextAssignments, work_schedule: employee?.work_schedule || fallbackValue },
-    today,
-    fallbackValue,
-  );
-
-  return {
-    shift_assignments: nextAssignments,
-    work_schedule: workSchedule,
-  };
 }
 
 export default function WorkSchedule() {
@@ -135,7 +114,6 @@ export default function WorkSchedule() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { activeCompanyId, activeCompany } = useCompany();
-  const { user } = useAuth();
 
   const { data: employees = [], isLoading } = useQuery({
     queryKey: ['employees', activeCompanyId, 'work-schedule'],
@@ -150,22 +128,20 @@ export default function WorkSchedule() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data, auditLog }) => {
-      const updated = await appApi.entities.Employee.update(id, data);
-      if (auditLog) {
-        await appApi.entities.PasscodeAuditLog.create(auditLog);
-      }
-      return updated;
-    },
-    onSuccess: (_, { id }) => {
+    mutationFn: data => appApi.functions.invoke('changeEmployeeWorkSchedule', data),
+    onSuccess: (_, { employee_record_id: employeeRecordId }) => {
       qc.invalidateQueries({ queryKey: ['employees', activeCompanyId] });
       qc.invalidateQueries({ queryKey: ['employees', activeCompanyId, 'work-schedule'] });
       qc.invalidateQueries({ queryKey: ['passcodeAudit'] });
       setSavingId(null);
+      setPendingShiftChange(null);
+      setHrPasscode('');
+      setAdminPasscode('');
       toast({ title: 'Work schedule updated', description: 'Schedule settings saved successfully.' });
     },
     onError: (error) => {
       setSavingId(null);
+      setPasscodeError(error?.message || 'Unable to verify passcodes.');
       toast({
         title: 'Unable to save schedule',
         description: error?.message || 'Please try again.',
@@ -196,23 +172,6 @@ export default function WorkSchedule() {
     setPasscodeError('');
   };
 
-  const verifyShiftPasscodes = async () => {
-    const records = await appApi.entities.DailyPasscode.filter({
-      date: manilaDateString(),
-      company_profile_id: activeCompanyId,
-    });
-    const matched = records.find(record =>
-      normalizePasscode(record.passcode) === normalizePasscode(hrPasscode) &&
-      normalizePasscode(record.manager_passcode) === normalizePasscode(adminPasscode)
-    );
-    if (!matched) {
-      if (records.length === 0) {
-        throw new Error('No daily HR/Admin passcodes have been generated for today and the selected company.');
-      }
-      throw new Error('Incorrect HR Officer or Admin passcode. Use the matching pair generated today for the selected company.');
-    }
-  };
-
   const confirmShiftChange = async () => {
     if (!pendingShiftChange) return;
     if (!hrPasscode.trim() || !adminPasscode.trim()) {
@@ -220,65 +179,48 @@ export default function WorkSchedule() {
       return;
     }
 
-    const { employee, shiftValue, effectiveDate: changeEffectiveDate, assignment, type } = pendingShiftChange;
-    const previousShift = getShiftOption(getCurrentShiftValue(employee, changeEffectiveDate));
-    const nextShift = getShiftOption(type === 'cancel' ? assignment?.work_schedule : shiftValue);
-    const reviewer = user?.full_name || user?.email || 'unknown';
-    const occurredAt = new Date().toISOString();
-    const employeeName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim();
-    const isCancellation = type === 'cancel';
+    const {
+      employee,
+      shiftValue,
+      effectiveDate: changeEffectiveDate,
+      type,
+      value,
+    } = pendingShiftChange;
 
     setPasscodeError('');
     setSavingId(employee.id);
-    try {
-      await verifyShiftPasscodes();
-    } catch (error) {
-      setSavingId(null);
-      setPasscodeError(error?.message || 'Unable to verify passcodes.');
-      return;
-    }
-
     updateMutation.mutate({
-      id: employee.id,
-      data: isCancellation
-        ? buildShiftAssignmentCancellationUpdate(employee, assignment, {
-          today: manilaDateString(),
-          fallbackValue: defaultShiftValue,
-        })
-        : buildShiftAssignmentUpdate(employee, shiftValue, changeEffectiveDate, {
-          today: manilaDateString(),
-          fallbackValue: defaultShiftValue,
-        }),
-      auditLog: {
-        company_profile_id: activeCompanyId,
-        source_entity: 'Employee',
-        source_record_id: employee.id,
-        action: isCancellation ? 'employee_shift_change_cancelled' : 'employee_shift_changed',
-        occurred_at: occurredAt,
-        authorized_by: reviewer,
-        reason: 'HR Officer and Admin passcodes verified',
-        summary: isCancellation
-          ? `Scheduled shift change to ${nextShift.label} effective ${changeEffectiveDate} cancelled`
-          : `Shift changed from ${previousShift.label} to ${nextShift.label} effective ${changeEffectiveDate}`,
-        employee_id: employee.employee_id,
-        employee_name: employeeName || employee.employee_id,
-        record_date: changeEffectiveDate,
-      },
+      operation: type === 'change'
+        ? 'assign_shift'
+        : type === 'cancel'
+          ? 'cancel_shift'
+          : type === 'break_time'
+            ? 'change_break_time'
+            : 'change_break_duration',
+      company_profile_id: activeCompanyId,
+      employee_record_id: employee.id,
+      effective_date: changeEffectiveDate,
+      shift_value: shiftValue,
+      break_time: type === 'break_time' ? value : undefined,
+      break_duration_minutes: type === 'break_duration' ? Number(value) : undefined,
+      hr_passcode: hrPasscode.trim(),
+      admin_passcode: adminPasscode.trim(),
     });
-    setPendingShiftChange(null);
-    setHrPasscode('');
-    setAdminPasscode('');
   };
 
   const handleBreakTimeChange = (emp, value) => {
     if (value === 'none') return;
-    setSavingId(emp.id);
-    updateMutation.mutate({ id: emp.id, data: { break_time: value } });
+    setPendingShiftChange({ type: 'break_time', employee: emp, value, effectiveDate: manilaDateString() });
+    setHrPasscode('');
+    setAdminPasscode('');
+    setPasscodeError('');
   };
 
   const handleBreakDurationChange = (emp, value) => {
-    setSavingId(emp.id);
-    updateMutation.mutate({ id: emp.id, data: { break_duration_minutes: Number(value) } });
+    setPendingShiftChange({ type: 'break_duration', employee: emp, value, effectiveDate: manilaDateString() });
+    setHrPasscode('');
+    setAdminPasscode('');
+    setPasscodeError('');
   };
 
   const effectiveShiftSettings = shiftSettings
@@ -561,12 +503,16 @@ export default function WorkSchedule() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {pendingShiftChange?.type === 'cancel' ? 'Cancel Scheduled Shift Change' : 'Authorize Shift Change'}
+              {pendingShiftChange?.type === 'cancel'
+                ? 'Cancel Scheduled Shift Change'
+                : pendingShiftChange?.type === 'break_time'
+                  ? 'Authorize Break Time Change'
+                  : pendingShiftChange?.type === 'break_duration'
+                    ? 'Authorize Break Duration Change'
+                    : 'Authorize Shift Change'}
             </DialogTitle>
             <DialogDescription>
-              {pendingShiftChange?.type === 'cancel'
-                ? "Canceling a scheduled shift change requires today's HR Officer and Admin passcodes."
-                : "Shift changes require today's HR Officer and Admin passcodes for the selected company."}
+              All work-schedule changes require today&apos;s HR Officer and Admin Manager passcodes.
             </DialogDescription>
           </DialogHeader>
 
@@ -579,7 +525,11 @@ export default function WorkSchedule() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   {pendingShiftChange.type === 'cancel'
                     ? `Cancel ${getShiftOption(pendingShiftChange.assignment?.work_schedule).label}`
-                    : `${getShiftOption(getCurrentShiftValue(pendingShiftChange.employee, pendingShiftChange.effectiveDate)).label} to ${getShiftOption(pendingShiftChange.shiftValue).label}`}
+                    : pendingShiftChange.type === 'break_time'
+                      ? `Break time: ${formatTime(pendingShiftChange.employee.break_time)} to ${formatTime(pendingShiftChange.value)}`
+                      : pendingShiftChange.type === 'break_duration'
+                        ? `Break duration: ${getBreakDurationMinutes(pendingShiftChange.employee)} to ${pendingShiftChange.value} minutes`
+                        : `${getShiftOption(getCurrentShiftValue(pendingShiftChange.employee, pendingShiftChange.effectiveDate)).label} to ${getShiftOption(pendingShiftChange.shiftValue).label}`}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Effective {pendingShiftChange.effectiveDate}

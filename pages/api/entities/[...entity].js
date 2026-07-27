@@ -230,6 +230,15 @@ export default async function handler(req, res) {
           error: "Shift settings must be changed through the protected shift-change workflow.",
         });
       }
+      if (
+        entity === "Employee" &&
+        ["work_schedule", "shift_assignments", "break_time", "break_duration_minutes"]
+          .some(field => Object.prototype.hasOwnProperty.call(req.body.data || {}, field))
+      ) {
+        return res.status(403).json({
+          error: "Employee work schedules must be changed through the protected work-schedule workflow.",
+        });
+      }
       if (entity === "OvertimeRequest") {
         await requireCompletedAttendanceForOvertimeApproval(req.body.id, req.body.data || {});
       }
