@@ -1896,6 +1896,44 @@ export default function Attendance() {
   }, [selectedEmployee?.id, selectedEmployee?.break_time, selectedEmployee?.break_duration_minutes, selectedEmployee?.work_schedule, selectedEmployee?.shift_assignments, logs, shiftSettings, overtimeRequests, qc]);
 
   useEffect(() => {
+    if (!selectedEmployee || logs.length === 0) return;
+
+    const misclassifiedFinalPunches = logs.filter(log => {
+      if (!log.time_in || log.time_out || log.break_time_in || !log.break_time_out) return false;
+
+      const shiftEnd = scheduledShiftEnd(log, getLogShift(log));
+      const recordedBreakOut = new Date(log.break_time_out);
+      return Boolean(
+        shiftEnd &&
+        Number.isFinite(recordedBreakOut.getTime()) &&
+        recordedBreakOut.getTime() >= shiftEnd.getTime()
+      );
+    });
+
+    if (misclassifiedFinalPunches.length === 0) return;
+
+    let cancelled = false;
+    Promise.all(misclassifiedFinalPunches.map(log =>
+      entities.update('AttendanceLog', log.id, {
+        time_out: log.break_time_out,
+        time_out_photo_url: log.break_time_out_photo_url || null,
+        time_out_location: log.break_time_out_location || null,
+        time_out_verification_method: log.break_time_out_verification_method || null,
+        break_time_out: null,
+        break_time_out_photo_url: null,
+        break_time_out_location: null,
+        break_time_out_verification_method: null,
+      })
+    ))
+      .then(() => {
+        if (!cancelled) qc.invalidateQueries({ queryKey: ['attendance'] });
+      })
+      .catch(console.error);
+
+    return () => { cancelled = true; };
+  }, [selectedEmployee?.id, logs, shiftSettings, qc]);
+
+  useEffect(() => {
     if (!selectedEmployee || logs.length === 0 || shiftOptions.length === 0) return;
 
     const logsNeedingRecompute = logs
@@ -2075,6 +2113,31 @@ export default function Attendance() {
         return sameRecord || sameEmployeeId;
       });
       const primaryLog = employeeLogs[0] || null;
+      const expectsBreakPunches = Boolean(employee.break_time) && primaryLog?.day_type !== 'half_day';
+      const punchIssues = [];
+      if (employeeLogs.length === 0) {
+        punchIssues.push('No attendance log');
+      } else {
+        if (employeeLogs.length > 1) punchIssues.push(`${employeeLogs.length} attendance logs`);
+        if (!primaryLog?.time_in) punchIssues.push('Missing Time In(1)');
+        if (expectsBreakPunches && !primaryLog?.break_time_out) punchIssues.push('Missing Time Out(1)');
+        if (expectsBreakPunches && !primaryLog?.break_time_in) punchIssues.push('Missing Time In(2)');
+        if (!primaryLog?.time_out) punchIssues.push('Missing Time Out(2)');
+
+        const orderedPunches = [
+          ['Time In(1)', primaryLog?.time_in],
+          ['Time Out(1)', primaryLog?.break_time_out],
+          ['Time In(2)', primaryLog?.break_time_in],
+          ['Time Out(2)', primaryLog?.time_out],
+        ]
+          .filter(([, value]) => value)
+          .map(([label, value]) => ({ label, time: new Date(value).getTime() }))
+          .filter(item => Number.isFinite(item.time));
+        const invalidOrder = orderedPunches.some((item, index) =>
+          index > 0 && item.time <= orderedPunches[index - 1].time
+        );
+        if (invalidOrder) punchIssues.push('Punches out of order');
+      }
       const metrics = employeeLogs.reduce((totals, log) => {
         const item = computeLogSummaryMetrics(log, employee);
         return {
@@ -2099,9 +2162,13 @@ export default function Attendance() {
         log: primaryLog,
         ...metrics,
         status: primaryLog?.status || (employeeLogs.length ? 'pending' : 'no_log'),
+        punchIssues,
+        needsPunchReview: punchIssues.length > 0,
+        expectsBreakPunches,
       };
     })
     .sort((a, b) => {
+      if (a.needsPunchReview !== b.needsPunchReview) return a.needsPunchReview ? -1 : 1;
       const aHasLog = a.logs > 0 ? 0 : 1;
       const bHasLog = b.logs > 0 ? 0 : 1;
       if (aHasLog !== bHasLog) return aHasLog - bHasLog;
@@ -2114,6 +2181,7 @@ export default function Attendance() {
     complete: totals.complete + (row.completed ? 1 : 0),
     incomplete: totals.incomplete + (row.logs > 0 && !row.completed ? 1 : 0),
     noLog: totals.noLog + (row.logs === 0 ? 1 : 0),
+    needsReview: totals.needsReview + (row.needsPunchReview ? 1 : 0),
     hours: totals.hours + row.hours,
     undertimeMinutes: totals.undertimeMinutes + row.undertimeMinutes,
     overtimeHours: totals.overtimeHours + row.overtimeHours,
@@ -2124,6 +2192,7 @@ export default function Attendance() {
     complete: 0,
     incomplete: 0,
     noLog: 0,
+    needsReview: 0,
     hours: 0,
     undertimeMinutes: 0,
     overtimeHours: 0,
@@ -2290,9 +2359,19 @@ export default function Attendance() {
             <Card className="border border-border shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
                 <div>
-                  <p className="font-semibold text-sm text-foreground">Daily Attendance Summary</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-sm text-foreground">Daily Punch Audit</p>
+                    <Badge
+                      variant="outline"
+                      className={dailySummaryTotals.needsReview > 0
+                        ? 'bg-amber-100 text-amber-800 border-amber-200'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'}
+                    >
+                      {dailySummaryTotals.needsReview} need review
+                    </Badge>
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    {filterDept === 'all' ? 'All departments' : filterDept} · {summaryDate}
+                    Review all four daily punches for {filterDept === 'all' ? 'all departments' : filterDept} · {summaryDate}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2360,13 +2439,14 @@ export default function Attendance() {
                       <tr>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Employee</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Department</th>
-                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time In</th>
-                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time Out</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time In(1)</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time Out(1)</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time In(2)</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time Out(2)</th>
                         <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Hours</th>
-                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Undertime</th>
                         <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">OT</th>
-                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Night Diff</th>
-                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Status</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Review</th>
+                        <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2383,13 +2463,40 @@ export default function Attendance() {
                             <p className="text-xs text-muted-foreground">{row.employee.employee_id}</p>
                           </td>
                           <td className="px-4 py-2 text-muted-foreground">{row.employee.department || '—'}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{row.log?.time_in ? formatManilaTime(row.log.time_in) : '—'}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{row.log?.time_out ? formatManilaTime(row.log.time_out) : '—'}</td>
+                          <td className={`px-4 py-2 ${row.log?.time_in ? 'text-green-700' : 'text-amber-700 font-medium'}`}>
+                            {row.log?.time_in ? formatManilaTime(row.log.time_in) : 'Missing'}
+                          </td>
+                          <td className={`px-4 py-2 ${row.log?.break_time_out ? 'text-orange-600' : row.expectsBreakPunches ? 'text-amber-700 font-medium' : 'text-muted-foreground'}`}>
+                            {row.log?.break_time_out ? formatManilaTime(row.log.break_time_out) : row.expectsBreakPunches ? 'Missing' : '—'}
+                          </td>
+                          <td className={`px-4 py-2 ${row.log?.break_time_in ? 'text-teal-700' : row.expectsBreakPunches ? 'text-amber-700 font-medium' : 'text-muted-foreground'}`}>
+                            {row.log?.break_time_in ? formatManilaTime(row.log.break_time_in) : row.expectsBreakPunches ? 'Missing' : '—'}
+                          </td>
+                          <td className={`px-4 py-2 ${row.log?.time_out ? 'text-blue-700' : 'text-amber-700 font-medium'}`}>
+                            {row.log?.time_out ? formatManilaTime(row.log.time_out) : 'Missing'}
+                          </td>
                           <td className="px-4 py-2 text-right">{formatHours(row.hours)}</td>
-                          <td className="px-4 py-2 text-right text-red-700">{formatMinutes(row.undertimeMinutes)}</td>
                           <td className="px-4 py-2 text-right text-blue-700">{formatHours(row.overtimeHours)}</td>
-                          <td className="px-4 py-2 text-right text-violet-700">{formatHours(row.nightDiffHours)}</td>
-                          <td className="px-4 py-2 text-right">
+                          <td className="px-4 py-2">
+                            {row.needsPunchReview ? (
+                              <div className="flex flex-wrap gap-1">
+                                {row.punchIssues.map(issue => (
+                                  <Badge
+                                    key={issue}
+                                    variant="outline"
+                                    className="bg-amber-100 text-amber-800 border-amber-200 whitespace-nowrap"
+                                  >
+                                    {issue}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                                Complete
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="px-4 py-2">
                             {row.status === 'no_log' ? (
                               <Badge variant="outline" className="bg-muted text-muted-foreground border-border">No log</Badge>
                             ) : (
@@ -2402,7 +2509,7 @@ export default function Attendance() {
                       ))}
                       {dailySummaryRows.length === 0 && (
                         <tr>
-                          <td colSpan={9} className="text-center py-8 text-muted-foreground">
+                          <td colSpan={10} className="text-center py-8 text-muted-foreground">
                             No employees found for this filter.
                           </td>
                         </tr>

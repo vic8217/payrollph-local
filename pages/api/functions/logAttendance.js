@@ -469,7 +469,15 @@ export default async function handler(req, res) {
     });
   }
 
-  if (!currentLog.break_time_out) {
+  const currentShiftEnd = scheduledShiftEnd(currentLog.date, currentShiftOptions);
+  const isEndOfShiftScanWithoutBreakPunches = Boolean(
+    !currentLog.break_time_out &&
+    !currentLog.break_time_in &&
+    currentShiftEnd &&
+    nowDate.getTime() >= currentShiftEnd.getTime()
+  );
+
+  if (!currentLog.break_time_out && !isEndOfShiftScanWithoutBreakPunches) {
     if (minutesSince(currentLog.time_in, nowDate) < MIN_STEP_INTERVAL_MS) {
       return rejectRapidScan(res, currentLog, "time_in", "Time In was just recorded. Please wait before recording Break Out.");
     }
@@ -486,8 +494,11 @@ export default async function handler(req, res) {
   // scan as the final Time Out and leave Time In(2) missing — this prevents an
   // end-of-day scan (e.g. 7:19 PM) from being mislabeled as the break return.
   const breakInWindowLapsed = Boolean(
-    autoBreak?.break_time_out &&
-    minutesSince(autoBreak.break_time_out, nowDate) >= BREAK_TIME_IN_MISSING_AFTER_MS
+    isEndOfShiftScanWithoutBreakPunches ||
+    (
+      autoBreak?.break_time_out &&
+      minutesSince(autoBreak.break_time_out, nowDate) >= BREAK_TIME_IN_MISSING_AFTER_MS
+    )
   );
 
   if (!currentLog.break_time_in && !breakInWindowLapsed) {
