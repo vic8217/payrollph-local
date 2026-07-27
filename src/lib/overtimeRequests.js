@@ -25,11 +25,10 @@ export function approvedOvertimeRequestForLog(log, requests = [], employee = nul
     .sort((a, b) => String(b.reviewed_at || b.updated_date || b.created_date || '').localeCompare(String(a.reviewed_at || a.updated_date || a.created_date || '')))[0] || null;
 }
 
-export function capOvertimeByApprovedRequest(actualHours, request, requestExemptHours = 0) {
+export function capOvertimeByApprovedRequest(actualHours, request) {
   const actual = Math.max(0, Number(actualHours) || 0);
-  const exempt = Math.max(0, Number(requestExemptHours) || 0);
   const approved = Math.max(0, Number(request?.approved_hours ?? request?.requested_hours) || 0);
-  return Number(Math.min(actual, exempt + approved).toFixed(2));
+  return Number(Math.min(actual, approved).toFixed(2));
 }
 
 export function overtimeStatusForComputedHours(actualHours, cappedHours, request) {

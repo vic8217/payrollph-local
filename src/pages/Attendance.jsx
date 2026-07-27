@@ -10,7 +10,6 @@ import {
   computeLateMinutes,
   computeNightDifferentialHours,
   computeOvertimeHours,
-  computeRequestExemptOvertimeHours,
   normalizeOvernightBreakPunches,
 } from '@/lib/payrollUtils';
 import {
@@ -709,15 +708,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         time_out: effTimeOut,
       };
       const approvedOtRequest = approvedOvertimeRequestForLog(attendanceMetrics, overtimeRequests, employee);
-      const requestExemptOvertime = computeRequestExemptOvertimeHours(attendanceMetrics, {
-        shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
-        shiftEndTime: selectedShift.shift_end_time || fallbackShift.shift_end_time,
-        overtimeStartTime: selectedShift.overtime_start_time || fallbackShift.overtime_start_time,
-        breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
-        breakDurationMinutes: getBreakDurationMinutes(employee),
-        paidBreakTime: Boolean(selectedShift.paid_break_time),
-      });
-      const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest, requestExemptOvertime);
+      const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest);
       updates.ot_actual_hours = Number(recomputedOvertime.toFixed(2));
       updates.overtime_hours = cappedOvertime;
       updates.ot_requested_hours = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
@@ -1696,8 +1687,7 @@ export default function Attendance() {
       const requestForCredit = reviewedRequest.status === 'approved' || reviewedRequest.status === 'denied'
         ? reviewedRequest
         : null;
-      const requestExemptOvertime = computeRequestExemptOvertimeHours(log, computationOptions);
-      const creditedOvertime = capOvertimeByApprovedRequest(actualOvertime, requestForCredit, requestExemptOvertime);
+      const creditedOvertime = capOvertimeByApprovedRequest(actualOvertime, requestForCredit);
       const nightDiffHours = computeNightDifferentialHours(log, computationOptions);
       const lateMinutes = computeLateMinutes(log, computationOptions);
 
@@ -1885,8 +1875,7 @@ export default function Attendance() {
             break_time_in: effectiveBreakIn,
           };
           const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, selectedEmployee);
-          const requestExemptOvertime = computeRequestExemptOvertimeHours(completedLog, computationOptions);
-          const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest, requestExemptOvertime);
+          const cappedOvertime = capOvertimeByApprovedRequest(recomputedOvertime, approvedOtRequest);
           updates.ot_actual_hours = Number(recomputedOvertime.toFixed(2));
           updates.overtime_hours = cappedOvertime;
           updates.ot_requested_hours = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
@@ -1921,8 +1910,7 @@ export default function Attendance() {
         const hoursWorked = computeCreditedHoursWorked(normalizedLog, computationOptions);
         const overtimeHours = computeOvertimeHours(normalizedLog, hoursWorked, computationOptions);
         const approvedOtRequest = approvedOvertimeRequestForLog(normalizedLog, overtimeRequests, selectedEmployee);
-        const requestExemptOvertime = computeRequestExemptOvertimeHours(normalizedLog, computationOptions);
-        const cappedOvertime = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest, requestExemptOvertime);
+        const cappedOvertime = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
         const nightDiffHours = computeNightDifferentialHours(normalizedLog, computationOptions);
         const lateMinutes = computeLateMinutes(normalizedLog, computationOptions);
         const nextHours = Number(hoursWorked.toFixed(2));
@@ -2237,10 +2225,8 @@ export default function Attendance() {
           actualOvertime = computeOvertimeHours(log, hoursWorked, computationOptions);
         }
         const approvedRequest = approvedOvertimeRequestForLog(log, overtimeRequests, selectedEmployee);
-        const requestExemptOvertime = computeRequestExemptOvertimeHours(log, computationOptions);
-        const requestRequiredOvertime = Math.max(0, actualOvertime - requestExemptOvertime);
-        return requestRequiredOvertime > 0.005 && !approvedRequest
-          ? { ...log, actualOvertime: Number(requestRequiredOvertime.toFixed(2)) }
+        return actualOvertime > 0.005 && !approvedRequest
+          ? { ...log, actualOvertime: Number(actualOvertime.toFixed(2)) }
           : null;
       })
       .filter(Boolean)
@@ -2842,9 +2828,7 @@ export default function Attendance() {
 	                    const timeOutLocation = attendanceLocationItem(displayLog, 'time_out');
 	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || 0);
 	                    const creditedOvertimeHours = Number(log.overtime_hours || 0);
-	                    const requestExemptOvertimeHours = computeRequestExemptOvertimeHours(log, computationOptions);
-	                    const requestRequiredOvertimeHours = Math.max(0, actualOvertimeHours - requestExemptOvertimeHours);
-	                    const hasUnapprovedOvertime = requestRequiredOvertimeHours > 0.005 && creditedOvertimeHours <= requestExemptOvertimeHours + 0.005 && !log.overtime_request_id;
+	                    const hasUnapprovedOvertime = actualOvertimeHours > 0.005 && creditedOvertimeHours <= 0.005 && !log.overtime_request_id;
 	                    const displayedNightDiffHours = displayLog.time_in && displayLog.time_out
 	                      ? Number(computeNightDifferentialHours(displayLog, computationOptions).toFixed(2))
 	                      : Number(log.night_diff_hours) || 0;
