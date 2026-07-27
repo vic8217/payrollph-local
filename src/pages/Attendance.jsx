@@ -1922,13 +1922,24 @@ export default function Attendance() {
         const isPending = log.status === 'pending';
 
         if (!isPending) {
-          return Object.keys(normalizedBreaks.updates).length > 0 ||
-            Math.abs((Number(log.night_diff_hours) || 0) - nextNightDiff) > 0.005
+          const approvedRecordNeedsRecompute =
+            Object.keys(normalizedBreaks.updates).length > 0 ||
+            Math.abs((Number(log.overtime_hours) || 0) - nextOvertime) > 0.005 ||
+            Math.abs((Number(log.ot_requested_hours) || 0) - nextRequestedOvertime) > 0.005 ||
+            Math.abs((Number(log.night_diff_hours) || 0) - nextNightDiff) > 0.005 ||
+            (log.ot_status || null) !== nextOtStatus ||
+            String(log.overtime_request_id || '') !== String(approvedOtRequest?.id || '');
+
+          return approvedRecordNeedsRecompute
             ? {
                 id: log.id,
                 updates: {
                   ...normalizedBreaks.updates,
+                  overtime_hours: nextOvertime,
+                  ot_requested_hours: nextRequestedOvertime,
                   night_diff_hours: nextNightDiff,
+                  ot_status: nextOtStatus,
+                  overtime_request_id: approvedOtRequest?.id || null,
                 },
               }
             : null;
