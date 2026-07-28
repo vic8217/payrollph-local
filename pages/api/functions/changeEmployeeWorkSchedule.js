@@ -100,6 +100,8 @@ export default async function handler(req, res) {
   let updates;
   let summary;
   let recordDate = manilaDateString();
+  let previousShiftValue = null;
+  let newShiftValue = null;
 
   if (operation === "assign_shift") {
     if (!shiftValue || !/^\d{4}-\d{2}-\d{2}$/.test(String(effectiveDate || ""))) {
@@ -108,6 +110,8 @@ export default async function handler(req, res) {
     const validShift = ["day_shift", "night_shift"].includes(shiftValue) ||
       shifts.some(shift => String(shift.id) === String(shiftValue));
     if (!validShift) return res.status(400).json({ error: "Selected shift is invalid." });
+    previousShiftValue = resolveEmployeeWorkSchedule(employee, effectiveDate, fallbackValue);
+    newShiftValue = shiftValue;
     updates = buildShiftAssignmentUpdate(employee, shiftValue, effectiveDate, {
       today: manilaDateString(),
       fallbackValue,
@@ -121,7 +125,13 @@ export default async function handler(req, res) {
     const assignment = sortedShiftAssignments(employee)
       .find(item => item.effective_date === effectiveDate);
     if (!assignment) return res.status(404).json({ error: "Scheduled shift change not found." });
+    previousShiftValue = assignment.work_schedule;
     updates = cancellationUpdate(employee, effectiveDate, fallbackValue);
+    newShiftValue = resolveEmployeeWorkSchedule(
+      { ...employee, ...updates },
+      effectiveDate,
+      fallbackValue,
+    );
     summary = `Scheduled employee shift change effective ${effectiveDate} cancelled`;
     recordDate = effectiveDate;
   } else if (operation === "change_break_time") {
@@ -142,6 +152,11 @@ export default async function handler(req, res) {
   const updated = await updateRecord("Employee", employee.id, updates);
   const changedAt = new Date().toISOString();
   const changedBy = session.user.name || session.user.email || "unknown";
+  const shiftLabel = value => {
+    if (value === "day_shift") return "Day Shift";
+    if (value === "night_shift") return "Night Shift";
+    return shifts.find(shift => String(shift.id) === String(value))?.setting_name || value || null;
+  };
   await createRecord("PasscodeAuditLog", {
     company_profile_id: companyProfileId,
     source_entity: "Employee",
@@ -154,6 +169,10 @@ export default async function handler(req, res) {
     employee_id: employee.employee_id,
     employee_name: [employee.first_name, employee.last_name].filter(Boolean).join(" "),
     record_date: recordDate,
+    previous_shift_value: previousShiftValue,
+    previous_shift_label: shiftLabel(previousShiftValue),
+    new_shift_value: newShiftValue,
+    new_shift_label: shiftLabel(newShiftValue),
   });
 
   return res.status(200).json({ employee: updated });

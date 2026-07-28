@@ -10,7 +10,7 @@ import {
   resolveEmployeeWorkSchedule,
   sortedShiftAssignments,
 } from '@/lib/shiftSettings';
-import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle, CalendarDays, XCircle } from 'lucide-react';
+import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle, CalendarDays, XCircle, History } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -102,6 +102,20 @@ function defaultEffectiveDate() {
   return manilaDateString(tomorrow);
 }
 
+function formatScheduleChangeDate(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || !Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Manila',
+  }).format(date);
+}
+
 export default function WorkSchedule() {
   const [search, setSearch] = useState('');
   const [filterShift, setFilterShift] = useState('all');
@@ -127,9 +141,18 @@ export default function WorkSchedule() {
     enabled: !!activeCompanyId,
   });
 
+  const { data: scheduleAuditLogs = [] } = useQuery({
+    queryKey: ['passcodeAudit', activeCompanyId, 'work-schedule-latest'],
+    queryFn: () => appApi.entities.PasscodeAuditLog.filter(
+      { company_profile_id: activeCompanyId },
+      '-occurred_at',
+    ),
+    enabled: !!activeCompanyId,
+  });
+
   const updateMutation = useMutation({
     mutationFn: data => appApi.functions.invoke('changeEmployeeWorkSchedule', data),
-    onSuccess: (_, { employee_record_id: employeeRecordId }) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['employees', activeCompanyId] });
       qc.invalidateQueries({ queryKey: ['employees', activeCompanyId, 'work-schedule'] });
       qc.invalidateQueries({ queryKey: ['passcodeAudit'] });
@@ -273,12 +296,25 @@ export default function WorkSchedule() {
   const unassignedCount = employees.filter(e => e.work_schedule && !shiftOptions.some(option => option.value === e.work_schedule)).length;
   const missingBreakTimeCount = employeesMissingBreakTime(employees).length;
   const loading = isLoading || isLoadingShifts;
+  const latestScheduleChange = scheduleAuditLogs.find(log =>
+    ['employee_work_schedule_assign_shift', 'employee_work_schedule_cancel_shift'].includes(log.action)
+  );
+  const latestScheduleChangeDate = formatScheduleChangeDate(latestScheduleChange?.occurred_at);
+  const latestShiftTransition = latestScheduleChange?.previous_shift_label && latestScheduleChange?.new_shift_label
+    ? `Previous shift: ${latestScheduleChange.previous_shift_label} • New shift: ${latestScheduleChange.new_shift_label}`
+    : null;
 
   return (
     <div className="p-6 space-y-5 max-w-5xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Work Schedule</h1>
         <p className="text-muted-foreground text-sm mt-0.5">Assign a configured shift and required lunch break to each employee</p>
+        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <History className="h-3.5 w-3.5" />
+          {latestScheduleChangeDate
+            ? `Most recent work schedule change: ${latestScheduleChangeDate}${latestShiftTransition ? ` • ${latestShiftTransition}` : ''}`
+            : 'No work schedule changes recorded yet.'}
+        </p>
       </div>
 
       {missingBreakTimeCount > 0 && (
