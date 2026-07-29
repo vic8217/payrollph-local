@@ -9,6 +9,19 @@ import {
   shiftVersionSnapshot,
 } from '@/lib/shiftSettings';
 
+const AUDITED_SHIFT_FIELDS = {
+  setting_name: 'Shift name',
+  shift_start_time: 'Shift start',
+  shift_end_time: 'Shift end',
+  overtime_start_time: 'Overtime start',
+  grace_period_minutes: 'Grace period',
+  time_in_allowance_minutes: 'Time In (1) allowance',
+  paid_break_time: 'Paid breaktime',
+  paid_breaktime_approval_document_name: 'Approval document',
+  is_default: 'Default shift',
+  is_active: 'Active',
+};
+
 function versionsWithBaseline(shift) {
   if (Array.isArray(shift.effective_versions) && shift.effective_versions.length > 0) {
     return [...shift.effective_versions];
@@ -17,6 +30,25 @@ function versionsWithBaseline(shift) {
     effective_date: SHIFT_VERSION_BASE_DATE,
     ...shiftVersionSnapshot(shift),
   }];
+}
+
+function shiftSnapshotAt(shift, effectiveDate) {
+  const version = versionsWithBaseline(shift)
+    .filter(item => String(item.effective_date || '') <= effectiveDate)
+    .sort((a, b) => String(a.effective_date).localeCompare(String(b.effective_date)))
+    .at(-1);
+  return shiftVersionSnapshot(shift, version || {});
+}
+
+function shiftChanges(before, after) {
+  return Object.entries(AUDITED_SHIFT_FIELDS)
+    .filter(([field]) => (before?.[field] ?? null) !== (after?.[field] ?? null))
+    .map(([field, label]) => ({
+      field,
+      label,
+      before: before?.[field] ?? null,
+      after: after?.[field] ?? null,
+    }));
 }
 
 function appendVersion(shift, effectiveDate, values, audit) {
@@ -150,6 +182,8 @@ export default async function handler(req, res) {
   };
 
   let changedShift;
+  let beforeSnapshot = null;
+  let afterSnapshot;
   if (operation === 'create') {
     let shiftData;
     try {
@@ -173,7 +207,9 @@ export default async function handler(req, res) {
       ],
     });
     changedShift = created;
+    afterSnapshot = shiftVersionSnapshot(shiftData, { is_active: true });
   } else {
+    beforeSnapshot = shiftSnapshotAt(shift, effectiveDate);
     let nextValues = operation === 'delete'
       ? { is_active: false, is_default: false }
       : operation === 'set_default'
@@ -190,6 +226,7 @@ export default async function handler(req, res) {
       ...nextValues,
       effective_versions: appendVersion(shift, effectiveDate, nextValues, audit),
     });
+    afterSnapshot = shiftVersionSnapshot(beforeSnapshot, nextValues);
   }
 
   if ((operation === 'create' && data.is_default) || operation === 'set_default' || data.is_default) {
@@ -200,6 +237,8 @@ export default async function handler(req, res) {
       })));
   }
 
+  const shiftName = afterSnapshot?.setting_name || beforeSnapshot?.setting_name || 'Unnamed shift';
+  const changes = shiftChanges(beforeSnapshot, afterSnapshot);
   await createRecord('PasscodeAuditLog', {
     company_profile_id: companyProfileId,
     source_entity: 'Settings',
@@ -208,7 +247,11 @@ export default async function handler(req, res) {
     occurred_at: changedAt,
     authorized_by: changedBy,
     reason: reason.trim(),
-    summary: `Shift setting ${operation} scheduled for ${effectiveDate}`,
+    subject_name: shiftName,
+    effective_date: effectiveDate,
+    operation,
+    changes,
+    summary: `${shiftName}: shift setting ${operation} scheduled for ${effectiveDate}`,
     record_date: effectiveDate,
   });
 

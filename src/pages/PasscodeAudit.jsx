@@ -94,7 +94,9 @@ function subjectFor(entity, record) {
     return `${record.employee_name || record.employee_id || 'Employee'} · ₱${Number(record.amount_requested || record.amount_approved || 0).toLocaleString('en-PH')}`;
   }
   if (entity === 'Settings') {
-    return record.summary || `Shift setting · ${record.record_date || 'No date'}`;
+    const shiftName = record.subject_name || 'Shift setting';
+    const effectiveDate = record.effective_date || record.record_date;
+    return effectiveDate ? `${shiftName} · effective ${effectiveDate}` : shiftName;
   }
   return record.first_name || record.last_name
     ? [record.first_name, record.middle_name, record.last_name].filter(Boolean).join(' ')
@@ -139,6 +141,15 @@ function employeeFilterLabel(record = {}) {
   return name || employeeId || '';
 }
 
+function auditValue(value, field) {
+  if (value == null || value === '') return 'Not set';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (field === 'grace_period_minutes' || field === 'time_in_allowance_minutes') {
+    return `${value} min`;
+  }
+  return String(value);
+}
+
 export default function PasscodeAudit() {
   const { user } = useAuth();
   const { activeCompanyId } = useCompany();
@@ -151,11 +162,17 @@ export default function PasscodeAudit() {
   const auditQuery = useQuery({
     queryKey: ['passcodeAudit', activeCompanyId],
     queryFn: async () => {
-      const [auditLogs, attendanceLogs] = await Promise.all([
+      const [auditLogs, attendanceLogs, shiftSettings] = await Promise.all([
         appApi.entities.PasscodeAuditLog.filter({ company_profile_id: activeCompanyId }, '-occurred_at'),
         appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId }, '-updated_date'),
+        appApi.entities.Settings.filter({ company_profile_id: activeCompanyId }),
       ]);
-      const structured = auditLogs.map(record => ({
+      const shiftNames = new Map(shiftSettings.map(shift => [String(shift.id), shift.setting_name]));
+      const structured = auditLogs.map(rawRecord => {
+        const record = rawRecord.source_entity === 'Settings' && !rawRecord.subject_name
+          ? { ...rawRecord, subject_name: shiftNames.get(String(rawRecord.source_record_id)) }
+          : rawRecord;
+        return {
         entity: record.source_entity,
         record,
         action: record.action,
@@ -163,7 +180,8 @@ export default function PasscodeAudit() {
         by: record.authorized_by || 'Unknown',
         reason: record.reason || '',
         summary: record.summary || '',
-      }));
+        };
+      });
       const legacy = attendanceLogs
         .filter(record => !record.passcode_audit_action)
         .map(record => {
@@ -217,6 +235,7 @@ export default function PasscodeAudit() {
         entry.by,
         entry.reason,
         entry.summary,
+        JSON.stringify(entry.record.changes || []),
       ].some(value => String(value || '').toLowerCase().includes(term));
     });
   }, [auditQuery.data, dateFilter, employeeFilter, entityFilter, search]);
@@ -311,6 +330,16 @@ export default function PasscodeAudit() {
                     <td className="px-4 py-3 max-w-md">
                       <p className="text-xs text-foreground">{entry.reason || entry.summary || 'No reason supplied'}</p>
                       {entry.reason && entry.summary && <p className="mt-1 text-[11px] text-muted-foreground">{entry.summary}</p>}
+                      {Array.isArray(entry.record.changes) && entry.record.changes.length > 0 && (
+                        <ul className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                          {entry.record.changes.map(change => (
+                            <li key={change.field}>
+                              <span className="font-medium text-foreground">{change.label || change.field}:</span>{' '}
+                              {auditValue(change.before, change.field)} → {auditValue(change.after, change.field)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </td>
                   </tr>
                 );
