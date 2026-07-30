@@ -12,6 +12,7 @@ const EDITABLE_FIELDS = [
   "phone",
   "department",
   "position",
+  "date_of_birth",
   "date_hired",
   "daily_rate",
   "monthly_rate",

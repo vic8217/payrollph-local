@@ -190,10 +190,40 @@ export default function Employees() {
   const [incentivePasscodes, setIncentivePasscodes] = useState({ hr: '', manager: '' });
   const [incentiveError, setIncentiveError] = useState('');
   const [statusFilter, setStatusFilter] = useState('current');
+  const [exportingActiveEmployees, setExportingActiveEmployees] = useState(false);
   const qc = useQueryClient();
   const { activeCompanyId, activeCompany } = useCompany();
   const { user } = useAuth();
   const canRenumberEmployees = ['super_admin', 'admin'].includes(user?.role);
+
+  const exportActiveEmployees = async () => {
+    if (!activeCompanyId) return;
+    setExportingActiveEmployees(true);
+    try {
+      const response = await fetch(
+        `/api/functions/exportActiveEmployeesXLSX?company_profile_id=${encodeURIComponent(activeCompanyId)}`
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || 'Unable to export active employees.');
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition') || '';
+      const filename = disposition.match(/filename="([^"]+)"/i)?.[1] || 'active-employees.xlsx';
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error.message || 'Unable to export active employees.');
+    } finally {
+      setExportingActiveEmployees(false);
+    }
+  };
 
   const downloadTemplate = () => {
     const headers = [
@@ -541,6 +571,15 @@ export default function Employees() {
           <p className="text-muted-foreground text-sm mt-0.5">{employees.length} total employees</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            onClick={exportActiveEmployees}
+            variant="outline"
+            className="gap-2"
+            disabled={!activeCompanyId || exportingActiveEmployees || (statusCounts.active || 0) === 0}
+          >
+            <Download className="w-4 h-4" />
+            {exportingActiveEmployees ? 'Exporting...' : 'Active Employees XLSX'}
+          </Button>
           <Button onClick={downloadTemplate} variant="outline" className="gap-2">
             <Download className="w-4 h-4" /> Template
           </Button>
@@ -956,7 +995,16 @@ export default function Employees() {
           <DialogHeader>
             <DialogTitle>201 File — {file201EmployeeLive?.first_name} {file201EmployeeLive?.last_name}</DialogTitle>
           </DialogHeader>
-          {file201EmployeeLive && <Employee201File employee={file201EmployeeLive} />}
+          {file201EmployeeLive && (
+            <Employee201File
+              employee={file201EmployeeLive}
+              onEditProfile={() => {
+                setEditEmployee(file201EmployeeLive);
+                setFile201Employee(null);
+                setShowForm(true);
+              }}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>

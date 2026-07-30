@@ -3,7 +3,7 @@ import { appApi } from '@/lib/appApi';
 import { useCompany } from '@/lib/CompanyContext';
 import { buildCashAdvanceAgreementTagalogText, buildCashAdvanceAgreementText, CASH_ADVANCE_PAYMENT_DAYS, MASTER_CASH_ADVANCE_AGREEMENT_VERSION } from '@/lib/cashAdvanceAgreement';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, Download, FilePenLine, Languages, Paperclip, Printer, Send, ShieldCheck, Upload } from 'lucide-react';
+import { AlertCircle, Download, FilePenLine, Languages, Paperclip, Printer, Send, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -109,7 +109,7 @@ const parseCsvLine = (line) => {
   return values;
 };
 
-export default function Employee201File({ employee }) {
+export default function Employee201File({ employee, onEditProfile }) {
   const [activeTab, setActiveTab] = useState('profile');
   const [templateTab, setTemplateTab] = useState(null);
   const [templateForm, setTemplateForm] = useState({});
@@ -310,6 +310,7 @@ export default function Employee201File({ employee }) {
       'Employment Type': (employee.employment_type || '—').replace('_', ' '),
       'Status': employee.status,
       'Daily Rate': employee.daily_rate || 0,
+      'Date of Birth': employee.date_of_birth || '—',
       'Date Hired': employee.date_hired || '—',
       'Email': employee.email || '—',
       'Phone': employee.phone || '—',
@@ -723,7 +724,13 @@ export default function Employee201File({ employee }) {
   return (
     <div className="space-y-4">
       {/* Download Button */}
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {onEditProfile && (
+          <Button onClick={onEditProfile} variant="outline" size="sm" className="gap-2">
+            <FilePenLine className="w-4 h-4" />
+            Edit Profile
+          </Button>
+        )}
         <Button onClick={handleDownload} variant="outline" size="sm" className="gap-2">
           <Download className="w-4 h-4" />
           Download CSV
@@ -783,6 +790,10 @@ export default function Employee201File({ employee }) {
               <div>
                 <p className="text-xs text-muted-foreground font-medium">Daily Rate</p>
                 <p className="text-sm font-medium text-foreground">₱{(employee.daily_rate || 0).toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground font-medium">Date of Birth</p>
+                <p className="text-sm font-medium text-foreground">{employee.date_of_birth || '—'}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground font-medium">Date Hired</p>

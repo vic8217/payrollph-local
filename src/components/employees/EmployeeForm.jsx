@@ -20,6 +20,7 @@ const FIELDS = [
   field('Phone', 'phone'),
   field('Department', 'department'),
   field('Position', 'position'),
+  field('Date of Birth', 'date_of_birth', 'date'),
   field('Date Hired', 'date_hired', 'date'),
   field('Daily Rate (₱)', 'daily_rate', 'number', true),
   field('Monthly Rate (₱)', 'monthly_rate', 'number'),

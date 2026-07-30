@@ -259,6 +259,7 @@ export default function EmployeeProfile({ employee }) {
     { label: 'Department', value: employee.department },
     { label: 'Position', value: employee.position },
     { label: 'Employment Type', value: employee.employment_type?.replace('_', ' ') },
+    { label: 'Date of Birth', value: employee.date_of_birth },
     { label: 'Date Hired', value: employee.date_hired },
     { label: 'Daily Rate', value: employee.daily_rate ? `₱${Number(employee.daily_rate).toLocaleString()}` : null },
   ].filter(f => f.value);
