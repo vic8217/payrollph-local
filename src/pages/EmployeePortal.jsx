@@ -392,6 +392,7 @@ export default function EmployeePortal() {
     const { file_url } = await appApi.integrations.Core.UploadFile({ file });
     await appApi.entities.AttendanceLog.update(log.id, {
       ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
+      ...(action ? { [`${action}_photo_captured_at`]: new Date().toISOString() } : {}),
       ...(action ? { [`${action}_verification_method`]: verificationMethod } : {}),
       photo_url: file_url,
       face_verification_result: faceResult?.result || 'disabled',
@@ -734,6 +735,7 @@ export default function EmployeePortal() {
                   const { file_url } = await appApi.integrations.Core.UploadFile({ file });
                   await appApi.entities.AttendanceLog.update(logRes.log.id, {
                     ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
+                    ...(action ? { [`${action}_photo_captured_at`]: new Date().toISOString() } : {}),
                     ...(action ? { [`${action}_verification_method`]: 'qr_photo_liveness' } : {}),
                     photo_url: file_url,
                     face_verification_result: 'disabled',

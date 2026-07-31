@@ -78,9 +78,13 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   'employee_name',
   'date',
   'time_in',
+  'time_in_actual_punch_at',
   'break_time_out',
+  'break_time_out_actual_punch_at',
   'break_time_in',
+  'break_time_in_actual_punch_at',
   'time_out',
+  'time_out_actual_punch_at',
   'work_schedule',
   'shift_start_time',
   'shift_end_time',
@@ -108,9 +112,13 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   'photo_url',
   'photo_action',
   'time_in_photo_url',
+  'time_in_photo_captured_at',
   'break_time_out_photo_url',
+  'break_time_out_photo_captured_at',
   'break_time_in_photo_url',
+  'break_time_in_photo_captured_at',
   'time_out_photo_url',
+  'time_out_photo_captured_at',
   'time_in_location',
   'break_time_out_location',
   'break_time_in_location',
@@ -369,6 +377,7 @@ function attendancePhotoItem(log, action) {
       ...punch,
       photoUrl: log[punch.photoField],
       timeValue: log[punch.timeField],
+      actualPunchValue: log[`${action}_photo_captured_at`] || log[`${action}_actual_punch_at`] || log[punch.locationField]?.captured_at || null,
       verificationMethod: log[punch.methodField],
     };
   }
@@ -378,6 +387,7 @@ function attendancePhotoItem(log, action) {
       ...punch,
       photoUrl: log.photo_url,
       timeValue: log[punch.timeField],
+      actualPunchValue: log[`${action}_photo_captured_at`] || log[`${action}_actual_punch_at`] || log[punch.locationField]?.captured_at || null,
       verificationMethod: log[punch.methodField],
       legacy: true,
     };
@@ -389,6 +399,7 @@ function attendancePhotoItem(log, action) {
       ...punch,
       photoUrl: log.photo_url,
       timeValue: log[punch.timeField],
+      actualPunchValue: log[`${action}_photo_captured_at`] || log[`${action}_actual_punch_at`] || log[punch.locationField]?.captured_at || null,
       verificationMethod: log[punch.methodField],
       legacy: true,
     };
@@ -408,6 +419,13 @@ function isAttendancePhotoArchived(photoItem) {
   return attendancePhotoAgeDays(photoItem) >= ATTENDANCE_PHOTO_RETENTION_DAYS;
 }
 
+function hasMaterialPunchTimeMismatch(item) {
+  const credited = item?.timeValue ? new Date(item.timeValue).getTime() : NaN;
+  const actual = item?.actualPunchValue ? new Date(item.actualPunchValue).getTime() : NaN;
+  return Number.isFinite(credited) && Number.isFinite(actual)
+    && Math.abs(credited - actual) > 5 * 60 * 1000;
+}
+
 function attendanceLocationItem(log, action) {
   const punch = punchPhotoFields.find(item => item.action === action);
   const location = punch?.locationField ? log[punch.locationField] : null;
@@ -417,6 +435,7 @@ function attendanceLocationItem(log, action) {
     ...punch,
     location,
     timeValue: log[punch.timeField],
+    actualPunchValue: log[`${action}_actual_punch_at`] || location.captured_at || null,
   };
 }
 
@@ -3137,8 +3156,11 @@ export default function Attendance() {
           </DialogHeader>
           {photoLog && (
             <div className="space-y-3">
-              <div className="rounded-xl overflow-hidden border border-border bg-muted">
+              <div className="relative rounded-xl overflow-hidden border border-border bg-muted">
                 <img src={photoLog.photoUrl} alt="Employee attendance capture" className="w-full max-h-[70vh] object-contain" />
+                <div className="absolute bottom-2 left-2 rounded-md bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white shadow">
+                  Actual photo taken: {photoLog.actualPunchValue ? formatManilaDateTime(photoLog.actualPunchValue) : 'Unavailable'}
+                </div>
               </div>
               <div className={`rounded-lg border px-3 py-2 text-xs ${
                 isAttendancePhotoArchived(photoLog)
@@ -3149,6 +3171,11 @@ export default function Attendance() {
                   ? `Archived attendance photo. Payroll-period photos are deleted together after ${ATTENDANCE_PHOTO_RETENTION_DAYS} days.`
                   : `Attendance photos are retained per payroll period for ${ATTENDANCE_PHOTO_RETENTION_DAYS} days.`}
               </div>
+              {hasMaterialPunchTimeMismatch(photoLog) && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  Audit warning: the actual capture time differs from the credited attendance time.
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                 <div>
                   <p className="font-medium text-foreground">Employee</p>
@@ -3163,8 +3190,12 @@ export default function Attendance() {
                   <p>{photoLog.label || 'Attendance'}</p>
                 </div>
                 <div>
-                  <p className="font-medium text-foreground">Time</p>
+                  <p className="font-medium text-foreground">Credited Time</p>
                   <p>{photoLog.timeValue ? formatManilaTime(photoLog.timeValue) : '—'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Actual Photo Taken</p>
+                  <p>{photoLog.actualPunchValue ? formatManilaDateTime(photoLog.actualPunchValue) : '—'}</p>
                 </div>
                 <div>
                   <p className="font-medium text-foreground">Verification</p>
@@ -3205,6 +3236,11 @@ export default function Attendance() {
                   </p>
                 )}
               </div>
+              {hasMaterialPunchTimeMismatch(locationLog) && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  Audit warning: the GPS capture time differs from the credited attendance time.
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                 <div>
@@ -3220,7 +3256,7 @@ export default function Attendance() {
                   <p>{locationLog.label || 'Attendance'}</p>
                 </div>
                 <div>
-                  <p className="font-medium text-foreground">Time</p>
+                  <p className="font-medium text-foreground">Credited Time</p>
                   <p>{locationLog.timeValue ? formatManilaTime(locationLog.timeValue) : '—'}</p>
                 </div>
                 {hasCoordinates(locationLog.location) && (
