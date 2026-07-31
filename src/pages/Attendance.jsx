@@ -423,7 +423,17 @@ function hasMaterialPunchTimeMismatch(item) {
   const credited = item?.timeValue ? new Date(item.timeValue).getTime() : NaN;
   const actual = item?.actualPunchValue ? new Date(item.actualPunchValue).getTime() : NaN;
   return Number.isFinite(credited) && Number.isFinite(actual)
-    && Math.abs(credited - actual) > 5 * 60 * 1000;
+    && Math.abs(credited - actual) > 30 * 60 * 1000;
+}
+
+function actualTimeForPunch(log, action) {
+  const punch = punchPhotoFields.find(item => item.action === action);
+  if (!punch || !log) return null;
+  return log[`${action}_photo_captured_at`]
+    || log[`${action}_actual_punch_at`]
+    || log[punch.locationField]?.captured_at
+    || log[punch.timeField]
+    || null;
 }
 
 function attendanceLocationItem(log, action) {
@@ -2919,9 +2929,11 @@ export default function Attendance() {
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Date</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Shift</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Time In(1)</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Actual In</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time Out(1)</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time In(2)</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Time Out(2)</th>
+                  <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Actual Out</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs">Hours</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">OT</th>
                   <th className="text-left px-2.5 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">ND</th>
@@ -2933,7 +2945,7 @@ export default function Attendance() {
               </thead>
               <tbody>
                 {sortedLogs.length === 0 ? (
-                  <tr><td colSpan={13} className="text-center py-10 text-muted-foreground">
+                  <tr><td colSpan={15} className="text-center py-10 text-muted-foreground">
                     <div className="space-y-4">
                       <p>No attendance records for this week.</p>
                       <div className="mx-auto max-w-4xl rounded-lg border border-blue-200 bg-blue-50 p-3 text-left">
@@ -2963,6 +2975,8 @@ export default function Attendance() {
 	                    const breakOutLocation = attendanceLocationItem(displayLog, 'break_time_out');
 	                    const breakInLocation = attendanceLocationItem(displayLog, 'break_time_in');
 	                    const timeOutLocation = attendanceLocationItem(displayLog, 'time_out');
+                      const actualTimeIn = actualTimeForPunch(displayLog, 'time_in');
+                      const actualTimeOut = actualTimeForPunch(displayLog, 'time_out');
 	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || 0);
 	                    const creditedOvertimeHours = Number(log.overtime_hours || 0);
 	                    const hasUnapprovedOvertime = actualOvertimeHours > 0.005 && creditedOvertimeHours <= 0.005 && !log.overtime_request_id;
@@ -2986,6 +3000,9 @@ export default function Attendance() {
                             <InlineVerificationMethodIcon photoItem={timeInPhoto} />
                             <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
                           </div>
+                        </td>
+                        <td className="px-2.5 py-3 text-xs text-muted-foreground">
+                          {actualTimeIn ? formatManilaTime(actualTimeIn) : '—'}
                         </td>
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
@@ -3019,8 +3036,11 @@ export default function Attendance() {
                               <InlinePhotoButton photoItem={timeOutPhoto} log={log} onView={setPhotoLog} />
                               <InlineVerificationMethodIcon photoItem={timeOutPhoto} />
                               <InlineLocationButton locationItem={timeOutLocation} log={log} onView={setLocationLog} />
-                            </div>
+	                          </div>
 	                        </td>
+                        <td className="px-2.5 py-3 text-xs text-muted-foreground">
+                          {actualTimeOut ? formatManilaTime(actualTimeOut) : '—'}
+                        </td>
                         <td className="px-2.5 py-3 text-xs">{log.hours_worked || '—'}</td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">
                           {actualOvertimeHours > 0 || creditedOvertimeHours > 0 ? (
