@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { getUploadDir, getUploadFilePath } from "@/server/uploadPath";
 
 export const config = {
   api: {
@@ -20,12 +21,6 @@ const ALLOWED_MIME_TYPES = new Set([
   "text/plain",
 ]);
 const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".pdf", ".doc", ".docx", ".txt"]);
-
-function uploadDir() {
-  return process.env.UPLOAD_DIR
-    ? path.resolve(process.env.UPLOAD_DIR)
-    : path.join(process.cwd(), "public", "uploads");
-}
 
 function extensionFor(name) {
   const ext = path.extname(name || "").toLowerCase();
@@ -51,8 +46,8 @@ export default async function handler(req, res) {
   }
 
   const fileName = `${Date.now()}-${crypto.randomUUID()}${extensionFor(name)}`;
-  const dir = uploadDir();
-  const filePath = path.join(dir, fileName);
+  const dir = getUploadDir();
+  const filePath = getUploadFilePath(fileName);
 
   try {
     await fs.mkdir(dir, { recursive: true });

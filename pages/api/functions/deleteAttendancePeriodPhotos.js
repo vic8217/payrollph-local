@@ -4,6 +4,7 @@ import path from "node:path";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import { listRecords, updateRecord } from "@/server/entityStore";
+import { getUploadFilePath } from "@/server/uploadPath";
 
 const ADMIN_ROLES = new Set(["super_admin", "admin", "user"]);
 const RETENTION_DAYS = 21;
@@ -14,12 +15,6 @@ const PHOTO_FIELDS = [
   "break_time_in_photo_url",
   "time_out_photo_url",
 ];
-
-function uploadDir() {
-  return process.env.UPLOAD_DIR
-    ? path.resolve(process.env.UPLOAD_DIR)
-    : path.join(process.cwd(), "public", "uploads");
-}
 
 function sessionCompanyProfileIds(session) {
   const explicitIds = Array.isArray(session?.user?.company_profile_ids)
@@ -165,7 +160,7 @@ async function deleteUploadFile(photoUrl, remainingLogs) {
   if (!fileName || isPhotoUrlStillReferenced(remainingLogs, photoUrl)) return false;
 
   try {
-    await fs.unlink(path.join(uploadDir(), fileName));
+    await fs.unlink(getUploadFilePath(fileName));
     return true;
   } catch (error) {
     if (error?.code === "ENOENT") return false;

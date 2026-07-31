@@ -1,6 +1,7 @@
 // @ts-nocheck
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getUploadFilePath } from "@/server/uploadPath";
 
 const MIME_TYPES = {
   ".gif": "image/gif",
@@ -15,12 +16,6 @@ const MIME_TYPES = {
   ".webp": "image/webp",
 };
 
-function uploadDir() {
-  return process.env.UPLOAD_DIR
-    ? path.resolve(process.env.UPLOAD_DIR)
-    : path.join(process.cwd(), "public", "uploads");
-}
-
 export default async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.setHeader("Allow", "GET,HEAD");
@@ -34,7 +29,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Invalid upload path" });
   }
 
-  const filePath = path.join(uploadDir(), fileName);
+  const filePath = getUploadFilePath(fileName);
 
   try {
     const content = await fs.readFile(filePath);

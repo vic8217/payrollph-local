@@ -20,9 +20,8 @@ NEXTAUTH_SECRET="replace-with-long-random-secret"
 # Optional: if your runtime needs explicit port
 PORT="3000"
 
-# Optional: persistent upload directory for logos/photos/files.
-# Point this to a mounted persistent disk/volume in production.
-# If omitted, uploads are stored in public/uploads inside the app directory.
+# Required: absolute persistent upload directory for logos/photos/files.
+# Point this outside the source tree to a mounted persistent disk/volume.
 UPLOAD_DIR="/var/lib/payrollph/uploads"
 
 # Optional isolated module flag. Existing payroll, attendance, payslip, and auth flows
