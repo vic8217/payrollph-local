@@ -47,16 +47,20 @@ function ledgerTypeLabel(row) {
 const ledgerSortKey = (row) => `${row.transaction_date || ''}${row.created_date || ''}${row.id || ''}`;
 
 function withEmployeeRunningBalances(rows) {
-  let runningBalance = 0;
+  const balancesByAdvance = new Map();
   const paymentCountsByAdvance = new Map();
   const chronologicalRows = [...rows].sort((a, b) => ledgerSortKey(a).localeCompare(ledgerSortKey(b)));
 
   return chronologicalRows
     .map(row => {
       const amount = Number(row.amount) || 0;
-      runningBalance += row.transaction_type === 'deduction' ? -amount : amount;
-      const isPayrollDeduction = row.transaction_type === 'deduction' && row.source !== 'manual_adjustment';
       const advanceKey = String(row.cash_advance_id || 'unlinked');
+      const previousBalance = balancesByAdvance.get(advanceKey) || 0;
+      const nextBalance = row.transaction_type === 'deduction'
+        ? Math.max(previousBalance - amount, 0)
+        : previousBalance + amount;
+      balancesByAdvance.set(advanceKey, nextBalance);
+      const isPayrollDeduction = row.transaction_type === 'deduction' && row.source !== 'manual_adjustment';
       let advancePaymentNumber = null;
       if (isPayrollDeduction) {
         advancePaymentNumber = (paymentCountsByAdvance.get(advanceKey) || 0) + 1;
@@ -64,11 +68,28 @@ function withEmployeeRunningBalances(rows) {
       }
       return {
         ...row,
-        employee_running_balance: parseFloat(Math.max(runningBalance, 0).toFixed(2)),
+        employee_running_balance: parseFloat(
+          [...balancesByAdvance.values()].reduce((sum, balance) => sum + balance, 0).toFixed(2)
+        ),
         advance_payment_number: advancePaymentNumber,
       };
     })
     .reverse();
+}
+
+function ledgerBalanceForAdvance(advance, ledgerRows) {
+  const rows = ledgerRows
+    .filter(row => String(row.cash_advance_id || '') === String(advance.id || ''))
+    .sort((a, b) => ledgerSortKey(a).localeCompare(ledgerSortKey(b)));
+  if (rows.length === 0) return getCashAdvanceBalance(advance);
+
+  const balance = rows.reduce((runningBalance, row) => {
+    const amount = Number(row.amount) || 0;
+    return row.transaction_type === 'deduction'
+      ? Math.max(runningBalance - amount, 0)
+      : runningBalance + amount;
+  }, 0);
+  return parseFloat(balance.toFixed(2));
 }
 
 async function requestJson(path, options = {}) {
@@ -426,10 +447,10 @@ export default function CashAdvance() {
 	      const empAdvances = cashAdvances.filter(ca => ca.employee_id === e.employee_id);
 	      const activeBalance = empAdvances
 	        .filter(isOutstandingCashAdvance)
-	        .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+	        .reduce((sum, ca) => sum + ledgerBalanceForAdvance(ca, cashAdvanceLedger), 0);
       const regularLimitBalance = empAdvances
         .filter(countsAgainstRegularLimit)
-        .reduce((sum, ca) => sum + getCashAdvanceBalance(ca), 0);
+        .reduce((sum, ca) => sum + ledgerBalanceForAdvance(ca, cashAdvanceLedger), 0);
       return { ...e, empAdvances, activeBalance, regularLimitBalance };
     })
     .filter(e => e.empAdvances.length > 0 || e.max_cash_advance > 0);

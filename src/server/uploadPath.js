@@ -13,6 +13,9 @@ export function getUploadDir() {
   return path.resolve(configuredDir);
 }
 
+/**
+ * @param {string} fileName
+ */
 export function getUploadFilePath(fileName) {
   const requestedName = String(fileName || "");
   const safeFileName = path.basename(requestedName);

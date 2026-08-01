@@ -67,7 +67,6 @@ const matchesDailyPasscode = (record, input) => {
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const BREAK_TIME_IN_MISSING_AFTER_MINUTES = 120;
 const FINAL_TIME_OUT_MISSING_AFTER_MINUTES = 10;
-const ATTENDANCE_PHOTO_RETENTION_DAYS = 21;
 const ATTENDANCE_LOG_LIST_FIELDS = [
   'id',
   'created_date',
@@ -406,17 +405,6 @@ function attendancePhotoItem(log, action) {
   }
 
   return null;
-}
-
-function attendancePhotoAgeDays(photoItem) {
-  const rawDate = photoItem?.timeValue || photoItem?.log?.date || photoItem?.log?.created_date;
-  const capturedAt = rawDate ? new Date(rawDate) : null;
-  if (!capturedAt || !Number.isFinite(capturedAt.getTime())) return 0;
-  return Math.max(0, Math.floor((Date.now() - capturedAt.getTime()) / (24 * 60 * 60 * 1000)));
-}
-
-function isAttendancePhotoArchived(photoItem) {
-  return attendancePhotoAgeDays(photoItem) >= ATTENDANCE_PHOTO_RETENTION_DAYS;
 }
 
 function hasMaterialPunchTimeMismatch(item) {
@@ -1549,6 +1537,12 @@ export default function Attendance() {
   const [editingLog, setEditingLog] = useState(null);
   const [reviewingOvertimeLog, setReviewingOvertimeLog] = useState(null);
   const [reviewingOvertimeRequest, setReviewingOvertimeRequest] = useState(null);
+  const [otBatchReviews, setOtBatchReviews] = useState({});
+  const [showOtBatchFinalize, setShowOtBatchFinalize] = useState(false);
+  const [otBatchHrPasscode, setOtBatchHrPasscode] = useState('');
+  const [otBatchAdminPasscode, setOtBatchAdminPasscode] = useState('');
+  const [otBatchError, setOtBatchError] = useState('');
+  const [processingOtBatch, setProcessingOtBatch] = useState(false);
   const [rejectingLog, setRejectingLog] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [locationLog, setLocationLog] = useState(null);
@@ -1642,6 +1636,19 @@ export default function Attendance() {
   const pendingOvertimeRequests = overtimeRequests
     .filter(request => request.status === 'pending')
     .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.employee_name || '').localeCompare(String(b.employee_name || '')));
+  const pendingOvertimeRows = pendingOvertimeRequests.map(request => {
+    const attendance = allAttendanceLogs.find(log =>
+      log.date === request.date && (
+        (request.employee_record_id && String(log.employee_record_id || '') === String(request.employee_record_id)) ||
+        normalizeAttendanceKey(log.employee_id) === normalizeAttendanceKey(request.employee_id)
+      )
+    );
+    return {
+      request,
+      attendance,
+      actualOvertimeHours: Math.max(0, Number(attendance?.ot_actual_hours ?? attendance?.overtime_hours) || 0),
+    };
+  });
   const selectedEmployeeOvertimeRequests = selectedEmployee
     ? overtimeRequests.filter(request =>
       String(request.employee_record_id || '') === String(selectedEmployee.id || '') ||
@@ -1651,12 +1658,18 @@ export default function Attendance() {
 
   const approveMutation = useMutation({
     mutationFn: ({ id, status, updates = {} }) => entities.update('AttendanceLog', id, { status, ...updates }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['attendance'] }),
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ['attendance'] }),
+      qc.invalidateQueries({ queryKey: ['attendanceSummary'] }),
+    ]),
   });
 
   const updateDayType = useMutation({
     mutationFn: ({ id, day_type }) => entities.update('AttendanceLog', id, { day_type }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['attendance'] }),
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ['attendance'] }),
+      qc.invalidateQueries({ queryKey: ['attendanceSummary'] }),
+    ]),
   });
 
   const updateLog = async (id, updates) => {
@@ -1676,7 +1689,10 @@ export default function Attendance() {
         record_date: updates.date || logs.find(log => log.id === id)?.date,
       });
     }
-    qc.invalidateQueries({ queryKey: ['attendance'] });
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['attendance'] }),
+      qc.invalidateQueries({ queryKey: ['attendanceSummary'] }),
+    ]);
   };
 
   const updateOvertimeRequest = async (id, updates) => {
@@ -1742,6 +1758,89 @@ export default function Attendance() {
     qc.invalidateQueries({ queryKey: ['overtimeRequests'] });
     qc.invalidateQueries({ queryKey: ['attendance'] });
     qc.invalidateQueries({ queryKey: ['attendanceSummary'] });
+  };
+
+  const updateOtBatchReview = (requestId, updates) => {
+    setOtBatchReviews(previous => ({
+      ...previous,
+      [requestId]: { ...(previous[requestId] || {}), ...updates },
+    }));
+    setOtBatchError('');
+  };
+
+  const otBatchIsComplete = pendingOvertimeRows.length > 0 && pendingOvertimeRows.every(({ request, attendance, actualOvertimeHours }) => {
+    const review = otBatchReviews[request.id];
+    if (!['approved', 'denied'].includes(review?.decision)) return false;
+    if (review.decision === 'denied') return Boolean(review.reason?.trim());
+    const approvedHours = Number(review.approvedHours);
+    const requestedHours = Number(request.requested_hours) || 0;
+    return Boolean(
+      attendance?.time_out &&
+      actualOvertimeHours > 0 &&
+      review.timeOutConfirmed &&
+      Number.isFinite(approvedHours) &&
+      approvedHours > 0 &&
+      approvedHours <= requestedHours &&
+      approvedHours <= actualOvertimeHours + 0.005 &&
+      (approvedHours >= requestedHours || review.reason?.trim())
+    );
+  });
+
+  const processOtBatch = async () => {
+    if (!otBatchIsComplete) return;
+    if (!otBatchHrPasscode.trim() || !otBatchAdminPasscode.trim()) {
+      setOtBatchError('Both the HR Officer and Admin passcodes are required.');
+      return;
+    }
+    setProcessingOtBatch(true);
+    setOtBatchError('');
+    try {
+      const todayCodes = await entities.filter('DailyPasscode', {
+        date: manilaDateString(),
+        company_profile_id: activeCompanyId,
+      });
+      const codesMatch = todayCodes.some(record =>
+        normalizeDailyPasscode(record.passcode) === normalizeDailyPasscode(otBatchHrPasscode) &&
+        normalizeDailyPasscode(record.manager_passcode) === normalizeDailyPasscode(otBatchAdminPasscode)
+      );
+      if (!codesMatch) throw new Error('Incorrect HR Officer or Admin passcode. Use today’s matching HR/Admin pair.');
+
+      const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
+      const reviewedAt = new Date().toISOString();
+      for (const { request, attendance, actualOvertimeHours } of pendingOvertimeRows) {
+        const review = otBatchReviews[request.id];
+        const approved = review.decision === 'approved';
+        const approvedHours = approved ? Number(review.approvedHours) : 0;
+        await updateOvertimeRequest(request.id, {
+          status: review.decision,
+          approved_hours: Number(approvedHours.toFixed(2)),
+          reviewed_at: reviewedAt,
+          reviewed_by: reviewer,
+          review_reason: review.reason?.trim() || null,
+          hr_approved: approved,
+          admin_approved: approved,
+          time_out_confirmed: approved,
+          time_out_confirmed_at: approved ? reviewedAt : null,
+          confirmed_time_out: approved ? attendance.time_out : null,
+          confirmed_actual_ot_hours: approved ? actualOvertimeHours : 0,
+          hr_confirmation_passcode: otBatchHrPasscode.trim(),
+          admin_confirmation_passcode: otBatchAdminPasscode.trim(),
+          passcode_audit_action: approved ? 'overtime_request_approved' : 'overtime_request_denied',
+          passcode_audit_at: reviewedAt,
+          passcode_audit_by: reviewer,
+          passcode_audit_reason: review.reason?.trim() || null,
+          passcode_audit_summary: `OT request ${review.decision} for ${request.employee_name || request.employee_id} on ${request.date}`,
+        });
+      }
+      setOtBatchReviews({});
+      setOtBatchHrPasscode('');
+      setOtBatchAdminPasscode('');
+      setShowOtBatchFinalize(false);
+    } catch (batchError) {
+      setOtBatchError(batchError?.message || 'Unable to process the OT reviews.');
+    } finally {
+      setProcessingOtBatch(false);
+    }
   };
 
   const shiftOptions = buildShiftOptions(shiftSettings, employees, logs);
@@ -2344,7 +2443,7 @@ export default function Attendance() {
   // ── EMPLOYEE LIST VIEW ──
   if (!selectedEmployee) {
     return (
-      <div className="p-6 space-y-5 max-w-5xl mx-auto">
+      <div className="w-full space-y-5 p-4 sm:p-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Attendance</h1>
@@ -2560,21 +2659,103 @@ export default function Attendance() {
                     {pendingOvertimeRequests.length}
                   </Badge>
                 </div>
-                <div className="divide-y divide-amber-200">
-                  {pendingOvertimeRequests.slice(0, 8).map(request => (
-                    <div key={request.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">
-                          {request.employee_name || request.employee_id}
-                          <span className="font-normal text-muted-foreground"> · {request.date} · {Number(request.requested_hours || 0).toFixed(2)}h</span>
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">{request.reason}</p>
-                      </div>
-                      <Button size="sm" className="h-8" onClick={() => setReviewingOvertimeRequest(request)}>
-                        Review
-                      </Button>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1100px] text-sm">
+                    <thead>
+                      <tr className="border-b border-amber-200 bg-amber-100/50">
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Employee</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Date</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Requested</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Time Out</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Actual OT</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Approved OT</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Confirm</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Reason</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pendingOvertimeRows.map(({ request, attendance, actualOvertimeHours }) => {
+                        const review = otBatchReviews[request.id] || {};
+                        const requestedHours = Number(request.requested_hours) || 0;
+                        const canApprove = Boolean(attendance?.time_out && actualOvertimeHours > 0);
+                        return (
+                          <tr key={request.id} className="border-b border-amber-200 last:border-0 align-top">
+                            <td className="px-3 py-2">
+                              <p className="font-medium text-foreground">{request.employee_name || request.employee_id}</p>
+                              <p className="max-w-52 truncate text-xs text-muted-foreground" title={request.reason}>{request.reason || 'No request note'}</p>
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2">{request.date}</td>
+                            <td className="px-3 py-2 text-right font-mono">{requestedHours.toFixed(2)}h</td>
+                            <td className={`whitespace-nowrap px-3 py-2 font-medium ${attendance?.time_out ? 'text-blue-700' : 'text-red-600'}`}>
+                              {attendance?.time_out ? formatManilaTime(attendance.time_out) : 'Missing'}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">{actualOvertimeHours.toFixed(2)}h</td>
+                            <td className="px-3 py-2">
+                              <Input
+                                type="number"
+                                min="0.25"
+                                max={Math.min(requestedHours, actualOvertimeHours)}
+                                step="0.25"
+                                disabled={review.decision === 'denied'}
+                                value={review.approvedHours ?? requestedHours}
+                                onChange={event => updateOtBatchReview(request.id, { approvedHours: event.target.value })}
+                                className="h-8 w-24"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <label className="flex max-w-36 items-start gap-2 text-xs text-muted-foreground">
+                                <Checkbox
+                                  checked={review.timeOutConfirmed === true}
+                                  disabled={!canApprove || review.decision === 'denied'}
+                                  onCheckedChange={value => updateOtBatchReview(request.id, { timeOutConfirmed: value === true })}
+                                />
+                                Time Out verified
+                              </label>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                value={review.reason || ''}
+                                onChange={event => updateOtBatchReview(request.id, { reason: event.target.value })}
+                                placeholder="Required for denial/reduction"
+                                className="h-8 min-w-48"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex gap-1.5">
+                                <Button
+                                  size="sm"
+                                  className="h-8"
+                                  disabled={!canApprove}
+                                  variant={review.decision === 'approved' ? 'default' : 'outline'}
+                                  onClick={() => updateOtBatchReview(request.id, {
+                                    decision: 'approved',
+                                    approvedHours: review.approvedHours ?? requestedHours,
+                                  })}
+                                >Approve</Button>
+                                <Button
+                                  size="sm"
+                                  className="h-8"
+                                  variant={review.decision === 'denied' ? 'destructive' : 'outline'}
+                                  onClick={() => updateOtBatchReview(request.id, { decision: 'denied', timeOutConfirmed: false })}
+                                >Deny</Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t border-amber-200 px-4 py-3">
+                  <p className="text-xs text-amber-800">
+                    Decide every request. Denials and reduced approvals require a reason.
+                  </p>
+                  {otBatchIsComplete && (
+                    <Button onClick={() => { setOtBatchError(''); setShowOtBatchFinalize(true); }}>
+                      Process OT Reviews
+                    </Button>
+                  )}
                 </div>
               </Card>
             )}
@@ -2800,6 +2981,49 @@ export default function Attendance() {
                   </table>
                 </div>
               )}
+            </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={showOtBatchFinalize} onOpenChange={open => !processingOtBatch && setShowOtBatchFinalize(open)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Finalize OT Reviews</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                You are processing {pendingOvertimeRows.length} OT request{pendingOvertimeRows.length === 1 ? '' : 's'}. Enter today’s matching passcodes to finalize every approval and denial.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium">HR Officer Passcode</label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={otBatchHrPasscode}
+                    onChange={event => setOtBatchHrPasscode(event.target.value)}
+                    className="mt-1 text-center font-mono tracking-widest"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Admin Passcode</label>
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={otBatchAdminPasscode}
+                    onChange={event => setOtBatchAdminPasscode(event.target.value)}
+                    className="mt-1 text-center font-mono tracking-widest"
+                  />
+                </div>
+              </div>
+              {otBatchError && <p className="text-xs text-destructive">{otBatchError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" disabled={processingOtBatch} onClick={() => setShowOtBatchFinalize(false)}>Cancel</Button>
+                <Button disabled={processingOtBatch} onClick={processOtBatch}>
+                  {processingOtBatch ? 'Processing…' : 'Finalize Process'}
+                </Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
@@ -3181,15 +3405,6 @@ export default function Attendance() {
                 <div className="absolute bottom-2 left-2 rounded-md bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white shadow">
                   Actual photo taken: {photoLog.actualPunchValue ? formatManilaDateTime(photoLog.actualPunchValue) : 'Unavailable'}
                 </div>
-              </div>
-              <div className={`rounded-lg border px-3 py-2 text-xs ${
-                isAttendancePhotoArchived(photoLog)
-                  ? 'border-amber-200 bg-amber-50 text-amber-800'
-                  : 'border-sky-200 bg-sky-50 text-sky-800'
-              }`}>
-                {isAttendancePhotoArchived(photoLog)
-                  ? `Archived attendance photo. Payroll-period photos are deleted together after ${ATTENDANCE_PHOTO_RETENTION_DAYS} days.`
-                  : `Attendance photos are retained per payroll period for ${ATTENDANCE_PHOTO_RETENTION_DAYS} days.`}
               </div>
               {hasMaterialPunchTimeMismatch(photoLog) && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
