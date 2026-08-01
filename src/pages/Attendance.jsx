@@ -2943,13 +2943,15 @@ export default function Attendance() {
                   </Badge>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1100px] text-sm">
+                  <table className="w-full min-w-[1350px] text-sm">
                     <thead>
                       <tr className="border-b border-amber-200 bg-amber-100/50">
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Employee</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Date</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Requested</th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Time Out</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Actual Time In(1)</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Actual Time Out(2)</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Credited Time Out(2)</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Actual OT</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Approved OT</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Confirm</th>
@@ -2970,6 +2972,16 @@ export default function Attendance() {
                             </td>
                             <td className="whitespace-nowrap px-3 py-2">{request.date}</td>
                             <td className="px-3 py-2 text-right font-mono">{requestedHours.toFixed(2)}h</td>
+                            <td className="whitespace-nowrap px-3 py-2 font-medium text-emerald-700">
+                              {actualTimeForPunch(attendance, 'time_in')
+                                ? formatManilaTime(actualTimeForPunch(attendance, 'time_in'))
+                                : <span className="text-red-600">Missing</span>}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 font-medium text-blue-700">
+                              {actualTimeForPunch(attendance, 'time_out')
+                                ? formatManilaTime(actualTimeForPunch(attendance, 'time_out'))
+                                : <span className="text-red-600">Missing</span>}
+                            </td>
                             <td className="px-3 py-2">
                               <Input
                                 type="time"
