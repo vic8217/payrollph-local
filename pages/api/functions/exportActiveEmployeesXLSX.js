@@ -11,8 +11,18 @@ const BORDER = {
   right: { style: "thin", color: { argb: "FF000000" } },
 };
 
+function cleanExportText(value) {
+  return String(value || "")
+    // These records were imported with the Unicode replacement character where
+    // the Filipino letter Ñ was expected (for example, IRA�O and BRI�AS).
+    .replace(/\uFFFD/g, "Ñ")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .normalize("NFC")
+    .trim();
+}
+
 function upper(value) {
-  return String(value || "").trim().toUpperCase();
+  return cleanExportText(value).toUpperCase();
 }
 
 function formatBirthDate(value) {
@@ -65,7 +75,7 @@ export default async function handler(req, res) {
     return res.status(404).json({ error: "Company not found" });
   }
 
-  const companyName = String(company.company_name || company.trade_name || "the company").trim();
+  const companyName = cleanExportText(company.company_name || company.trade_name || "the company");
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "PayrollPH";
   workbook.created = new Date();

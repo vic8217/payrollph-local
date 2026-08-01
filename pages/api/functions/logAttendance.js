@@ -370,16 +370,42 @@ export default async function handler(req, res) {
     isActiveOvernightLog(log, employee, shiftSettings, date, nowDate)
   );
   const lastLog = todayLog || overnightLog;
-  const effectiveWorkSchedule = resolveEmployeeWorkSchedule(employee, lastLog?.date || date);
+  let attendanceDate = lastLog?.date || date;
+
+  // A first scan after midnight can still belong to the prior day's overnight
+  // shift. Resolve that shift before creating a new log so a 1:00 AM scan on
+  // Aug 1 for a Jul 31 6:00 PM–6:00 AM shift is classified against Jul 31 and
+  // its midnight break instead of becoming Aug 1 Time In(1).
+  if (!lastLog) {
+    const previousDate = addDays(date, -1);
+    const previousWorkSchedule = resolveEmployeeWorkSchedule(employee, previousDate);
+    const previousShiftOptions = resolveEmployeeShiftOptions(
+      { ...employee, work_schedule: previousWorkSchedule },
+      shiftSettings,
+      previousDate,
+    );
+    const previousShiftStart = scheduledShiftStart(previousDate, previousShiftOptions);
+    const previousShiftEnd = scheduledShiftEnd(previousDate, previousShiftOptions);
+    const belongsToPreviousOvernightShift = Boolean(
+      previousShiftOptions.isOvernightShift &&
+      previousShiftStart &&
+      previousShiftEnd &&
+      nowDate.getTime() >= previousShiftStart.getTime() &&
+      nowDate.getTime() <= previousShiftEnd.getTime() + OVERNIGHT_LOG_GRACE_MS
+    );
+    if (belongsToPreviousOvernightShift) attendanceDate = previousDate;
+  }
+
+  const effectiveWorkSchedule = resolveEmployeeWorkSchedule(employee, attendanceDate);
   const currentShiftOptions = resolveEmployeeShiftOptions(
     { ...employee, work_schedule: lastLog?.work_schedule || effectiveWorkSchedule },
     shiftSettings,
-    lastLog?.date || date,
+    attendanceDate,
     lastLog,
   );
 
   if (!lastLog) {
-    const shiftStart = scheduledShiftStart(date, currentShiftOptions);
+    const shiftStart = scheduledShiftStart(attendanceDate, currentShiftOptions);
     const isEarlyTimeIn = Boolean(
       shiftStart &&
       nowDate.getTime() < shiftStart.getTime()
@@ -388,17 +414,17 @@ export default async function handler(req, res) {
 
     const firstBreakPunch = isEarlyTimeIn
       ? null
-      : classifyFirstPunchDuringBreak(employee, date, nowDate, currentShiftOptions.isOvernightShift);
+      : classifyFirstPunchDuringBreak(employee, attendanceDate, nowDate, currentShiftOptions.isOvernightShift);
     if (firstBreakPunch) {
-      const scheduledBreakOut = scheduledBreak(employee, date, currentShiftOptions.isOvernightShift);
-      const scheduledBreakReturn = scheduledBreakIn(employee, date, currentShiftOptions.isOvernightShift);
+      const scheduledBreakOut = scheduledBreak(employee, attendanceDate, currentShiftOptions.isOvernightShift);
+      const scheduledBreakReturn = scheduledBreakIn(employee, attendanceDate, currentShiftOptions.isOvernightShift);
       const isEarlyBreakReturn = scheduledBreakReturn && nowDate.getTime() < new Date(scheduledBreakReturn).getTime();
       const log = await createRecord("AttendanceLog", {
         company_profile_id: employee.company_profile_id,
         employee_record_id: employee.id,
         employee_id: employee.employee_id,
         employee_name: employeeName,
-        date,
+        date: attendanceDate,
         time_in: null,
         break_time_out: scheduledBreakOut?.break_time_out,
         break_time_in: isEarlyBreakReturn ? scheduledBreakReturn : now,
@@ -421,7 +447,7 @@ export default async function handler(req, res) {
 
     const autoBreak = scheduledBreakAfterTimeIn(
       employee,
-      date,
+      attendanceDate,
       effectiveTimeIn,
       currentShiftOptions.isOvernightShift,
     );
@@ -430,7 +456,7 @@ export default async function handler(req, res) {
       employee_record_id: employee.id,
       employee_id: employee.employee_id,
       employee_name: employeeName,
-      date,
+      date: attendanceDate,
       time_in: effectiveTimeIn,
       ...(isEarlyTimeIn ? {
         time_in_actual_punch_at: now,

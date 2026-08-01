@@ -1606,6 +1606,8 @@ export default function Attendance() {
   const [showQuickView, setShowQuickView] = useState(false);
   const [showApprovedOtPage, setShowApprovedOtPage] = useState(false);
   const [approvedOtDetail, setApprovedOtDetail] = useState(null);
+  const [approvedOtDate, setApprovedOtDate] = useState('');
+  const [approvedOtEmployee, setApprovedOtEmployee] = useState('all');
   const { user: currentUser } = useAuth();
   const { activeCompanyId, activeCompany } = useCompany();
   const qc = useQueryClient();
@@ -2492,7 +2494,15 @@ export default function Attendance() {
       String(b.request.date || '').localeCompare(String(a.request.date || '')) ||
       String(a.employeeName || '').localeCompare(String(b.employeeName || ''))
     );
-  const approvedOvertimeSummaryTotals = approvedOvertimeSummaryRows.reduce((totals, row) => ({
+  const approvedOtEmployeeOptions = [...new Map(approvedOvertimeSummaryRows.map(row => [
+    normalizeAttendanceKey(row.employee?.employee_id || row.request.employee_id),
+    { id: normalizeAttendanceKey(row.employee?.employee_id || row.request.employee_id), name: row.employeeName },
+  ])).values()].sort((a, b) => a.name.localeCompare(b.name));
+  const approvedOvertimeFilteredRows = approvedOvertimeSummaryRows.filter(row =>
+    (!approvedOtDate || row.request.date === approvedOtDate) &&
+    (approvedOtEmployee === 'all' || normalizeAttendanceKey(row.employee?.employee_id || row.request.employee_id) === approvedOtEmployee)
+  );
+  const approvedOvertimeSummaryTotals = approvedOvertimeFilteredRows.reduce((totals, row) => ({
     count: totals.count + 1,
     approvedHours: totals.approvedHours + row.approvedHours,
     creditedHours: totals.creditedHours + row.creditedOvertimeHours,
@@ -2571,6 +2581,22 @@ export default function Attendance() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Input
+              type="date"
+              value={approvedOtDate}
+              onChange={event => setApprovedOtDate(event.target.value)}
+              aria-label="Filter approved OT by date"
+              className="h-8 w-40 text-sm"
+            />
+            <Select value={approvedOtEmployee} onValueChange={setApprovedOtEmployee}>
+              <SelectTrigger className="h-8 w-52 text-sm"><SelectValue placeholder="All Employees" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Employees</SelectItem>
+                {approvedOtEmployeeOptions.map(employee => (
+                  <SelectItem key={employee.id} value={employee.id}>{employee.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
               <SelectTrigger className="h-8 w-48 text-sm"><SelectValue placeholder="All Periods" /></SelectTrigger>
               <SelectContent>
@@ -2595,7 +2621,7 @@ export default function Attendance() {
             <div>
               <p className="text-sm font-semibold">Approved OT Summary</p>
               <p className="text-xs text-muted-foreground">
-                {activePeriod ? activePeriod.period_name : 'All payroll periods'} · {filterDept === 'all' ? 'All departments' : filterDept}
+                {approvedOtDate || (activePeriod ? activePeriod.period_name : 'All payroll periods')} · {approvedOtEmployee === 'all' ? 'All employees' : approvedOtEmployeeOptions.find(employee => employee.id === approvedOtEmployee)?.name} · {filterDept === 'all' ? 'All departments' : filterDept}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -2621,7 +2647,7 @@ export default function Attendance() {
                 </tr>
               </thead>
               <tbody>
-                {approvedOvertimeSummaryRows.map(row => (
+                {approvedOvertimeFilteredRows.map(row => (
                   <tr key={row.request.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                     <td className="whitespace-nowrap px-4 py-2.5 text-xs">{row.request.date}</td>
                     <td className="px-4 py-2.5">
@@ -2645,7 +2671,7 @@ export default function Attendance() {
                     </td>
                   </tr>
                 ))}
-                {approvedOvertimeSummaryRows.length === 0 && (
+                {approvedOvertimeFilteredRows.length === 0 && (
                   <tr><td colSpan={9} className="py-12 text-center text-sm text-muted-foreground">No approved OT found for this filter.</td></tr>
                 )}
               </tbody>
@@ -3031,7 +3057,7 @@ export default function Attendance() {
               </Card>
             )}
 
-            <Card className="border border-border shadow-sm overflow-hidden">
+            {showApprovedOtPage && <Card className="border border-border shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-700" />
@@ -3133,7 +3159,7 @@ export default function Attendance() {
                   Showing 12 of {approvedOvertimeSummaryRows.length} approved OT records.
                 </p>
               )}
-            </Card>
+            </Card>}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {filteredEmployees.map(emp => (
                 <button
