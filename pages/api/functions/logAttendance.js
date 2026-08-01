@@ -136,21 +136,22 @@ function addDays(date, days) {
   }).format(d);
 }
 
-function scheduledBreak(employee, date, isOvernightShift = false) {
-  if (!employee.break_time) return null;
+function scheduledBreak(employee, date, shiftOptions = {}) {
+  const breakTime = shiftOptions.breakStartTime || employee.break_time;
+  if (!breakTime) return null;
 
-  const [breakHour] = employee.break_time.split(":").map(Number);
-  const breakDate = isOvernightShift && breakHour < 12
+  const [breakHour] = breakTime.split(":").map(Number);
+  const breakDate = shiftOptions.isOvernightShift && breakHour < 12
     ? addDays(date, 1)
     : date;
 
   return {
-    break_time_out: new Date(`${breakDate}T${employee.break_time}:00+08:00`).toISOString(),
+    break_time_out: new Date(`${breakDate}T${breakTime}:00+08:00`).toISOString(),
   };
 }
 
-function scheduledBreakAfterTimeIn(employee, date, timeInValue, isOvernightShift = false) {
-  const autoBreak = scheduledBreak(employee, date, isOvernightShift);
+function scheduledBreakAfterTimeIn(employee, date, timeInValue, shiftOptions = {}) {
+  const autoBreak = scheduledBreak(employee, date, shiftOptions);
   const timeIn = timeInValue ? new Date(timeInValue) : null;
   const breakOut = autoBreak?.break_time_out ? new Date(autoBreak.break_time_out) : null;
 
@@ -197,13 +198,16 @@ function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) 
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
     lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
     paidBreakTime: Boolean(shift.paid_break_time),
+    breakStartTime: shift.break_start_time || employee.break_time,
+    breakEndTime: shift.break_end_time || null,
+    breakDurationMinutes: Number(shift.break_duration_minutes || employee.break_duration_minutes) || DEFAULT_BREAK_DURATION_MINUTES,
     isOvernightShift: shiftEndTime <= shiftStartTime,
   };
 }
 
-function getBreakDurationMinutes(employee) {
-  const minutes = Number(employee?.break_duration_minutes);
-  return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
+function getBreakDurationMinutes(employee, shiftOptions = {}) {
+  const minutes = Number(shiftOptions.breakDurationMinutes || employee?.break_duration_minutes);
+  return minutes > 0 ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
 }
 
 function addBreakDuration(time, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES) {
@@ -216,22 +220,25 @@ function addBreakDuration(time, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES
   };
 }
 
-function scheduledBreakIn(employee, date, isOvernightShift = false) {
-  if (!employee.break_time) return null;
+function scheduledBreakIn(employee, date, shiftOptions = {}) {
+  const breakTime = shiftOptions.breakStartTime || employee.break_time;
+  if (!breakTime) return null;
 
-  const [breakHour] = employee.break_time.split(":").map(Number);
-  const breakDate = isOvernightShift && breakHour < 12
+  const [breakHour] = breakTime.split(":").map(Number);
+  const breakDate = shiftOptions.isOvernightShift && breakHour < 12
     ? addDays(date, 1)
     : date;
-  const breakIn = addBreakDuration(employee.break_time, getBreakDurationMinutes(employee));
+  const breakIn = shiftOptions.breakEndTime
+    ? { time: shiftOptions.breakEndTime, crossesMidnight: shiftOptions.breakEndTime <= breakTime }
+    : addBreakDuration(breakTime, getBreakDurationMinutes(employee, shiftOptions));
   const breakInDate = breakIn.crossesMidnight ? addDays(breakDate, 1) : breakDate;
 
   return new Date(`${breakInDate}T${breakIn.time}:00+08:00`).toISOString();
 }
 
-function classifyFirstPunchDuringBreak(employee, date, nowDate, isOvernightShift = false) {
-  const breakOutValue = scheduledBreak(employee, date, isOvernightShift)?.break_time_out;
-  const breakInValue = scheduledBreakIn(employee, date, isOvernightShift);
+function classifyFirstPunchDuringBreak(employee, date, nowDate, shiftOptions = {}) {
+  const breakOutValue = scheduledBreak(employee, date, shiftOptions)?.break_time_out;
+  const breakInValue = scheduledBreakIn(employee, date, shiftOptions);
   if (!breakOutValue || !breakInValue) return null;
 
   const breakOut = new Date(breakOutValue);
@@ -414,10 +421,10 @@ export default async function handler(req, res) {
 
     const firstBreakPunch = isEarlyTimeIn
       ? null
-      : classifyFirstPunchDuringBreak(employee, attendanceDate, nowDate, currentShiftOptions.isOvernightShift);
+      : classifyFirstPunchDuringBreak(employee, attendanceDate, nowDate, currentShiftOptions);
     if (firstBreakPunch) {
-      const scheduledBreakOut = scheduledBreak(employee, attendanceDate, currentShiftOptions.isOvernightShift);
-      const scheduledBreakReturn = scheduledBreakIn(employee, attendanceDate, currentShiftOptions.isOvernightShift);
+      const scheduledBreakOut = scheduledBreak(employee, attendanceDate, currentShiftOptions);
+      const scheduledBreakReturn = scheduledBreakIn(employee, attendanceDate, currentShiftOptions);
       const isEarlyBreakReturn = scheduledBreakReturn && nowDate.getTime() < new Date(scheduledBreakReturn).getTime();
       const log = await createRecord("AttendanceLog", {
         company_profile_id: employee.company_profile_id,
@@ -436,6 +443,9 @@ export default async function handler(req, res) {
         shift_grace_period_minutes: currentShiftOptions.lateGraceMinutes,
         shift_time_in_allowance_minutes: currentShiftOptions.timeInAllowanceMinutes,
         shift_paid_break_time: currentShiftOptions.paidBreakTime,
+        shift_break_start_time: currentShiftOptions.breakStartTime,
+        shift_break_end_time: currentShiftOptions.breakEndTime,
+        shift_break_duration_minutes: currentShiftOptions.breakDurationMinutes,
         ...locationUpdateFor("break_time_in", location),
         status: "pending",
         day_type: "regular",
@@ -449,7 +459,7 @@ export default async function handler(req, res) {
       employee,
       attendanceDate,
       effectiveTimeIn,
-      currentShiftOptions.isOvernightShift,
+      currentShiftOptions,
     );
     const log = await createRecord("AttendanceLog", {
       company_profile_id: employee.company_profile_id,
@@ -469,6 +479,9 @@ export default async function handler(req, res) {
       shift_grace_period_minutes: currentShiftOptions.lateGraceMinutes,
       shift_time_in_allowance_minutes: currentShiftOptions.timeInAllowanceMinutes,
       shift_paid_break_time: currentShiftOptions.paidBreakTime,
+      shift_break_start_time: currentShiftOptions.breakStartTime,
+      shift_break_end_time: currentShiftOptions.breakEndTime,
+      shift_break_duration_minutes: currentShiftOptions.breakDurationMinutes,
       ...(autoBreak || {}),
       ...locationUpdateFor("time_in", location),
       status: "pending",
@@ -482,7 +495,7 @@ export default async function handler(req, res) {
     employee,
     currentLog.date,
     currentLog.time_in,
-    currentShiftOptions.isOvernightShift,
+    currentShiftOptions,
   );
   const lastPunch = lastManualPunch(currentLog);
   if (lastPunch && minutesSince(lastPunch, nowDate) < DUPLICATE_SCAN_WINDOW_MS) {
@@ -536,7 +549,7 @@ export default async function handler(req, res) {
       return rejectRapidScan(res, currentLog, "break_time_out", "Break Out was just recorded. Please wait before recording Break In.");
     }
 
-    const scheduledBreakReturn = scheduledBreakIn(employee, currentLog.date, currentShiftOptions.isOvernightShift);
+    const scheduledBreakReturn = scheduledBreakIn(employee, currentLog.date, currentShiftOptions);
     const isEarlyScheduledBreakReturn = Boolean(
       isScheduledBreakOut &&
       scheduledBreakReturn &&
@@ -565,19 +578,19 @@ export default async function handler(req, res) {
     const completedLog = { ...currentLog, time_out: now };
     const hoursWorked = computeCreditedHoursWorked(completedLog, {
       ...shiftOptions,
-      breakDurationMinutes: getBreakDurationMinutes(employee),
+      breakDurationMinutes: getBreakDurationMinutes(employee, shiftOptions),
       paidBreakTime: shiftOptions.paidBreakTime,
     });
     const overtimeHours = computeOvertimeHours(completedLog, hoursWorked, {
       ...shiftOptions,
-      breakDurationMinutes: getBreakDurationMinutes(employee),
+      breakDurationMinutes: getBreakDurationMinutes(employee, shiftOptions),
       paidBreakTime: shiftOptions.paidBreakTime,
     });
     const approvedOtRequest = approvedOvertimeRequestForLog(completedLog, overtimeRequests, employee);
     const cappedOvertimeHours = capOvertimeByApprovedRequest(overtimeHours, approvedOtRequest);
     const nightDiffHours = computeNightDifferentialHours(completedLog, {
       shiftStartTime: shiftOptions.shiftStartTime,
-      breakDurationMinutes: getBreakDurationMinutes(employee),
+      breakDurationMinutes: getBreakDurationMinutes(employee, shiftOptions),
       paidBreakTime: shiftOptions.paidBreakTime,
     });
     const lateMinutes = computeLateMinutes(completedLog, shiftOptions);

@@ -200,6 +200,9 @@ function resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift) {
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
     breakInGraceMinutes: Number(shift.grace_period_minutes) || 0,
+    breakStartTime: shift.break_start_time || employee.break_time || null,
+    breakEndTime: shift.break_end_time || null,
+    breakDurationMinutes: Number(shift.break_duration_minutes || employee.break_duration_minutes) || 60,
     paidBreakTime: Boolean(shift.paid_break_time),
   };
 }
@@ -390,6 +393,7 @@ export default function Payroll() {
   const [payPreviewError, setPayPreviewError] = useState('');
   const [incompleteLogsError, setIncompleteLogsError] = useState(/** @type {Array<{ employeeName: string, date: string }> | null} */ (null));
   const [pendingAttendanceError, setPendingAttendanceError] = useState(/** @type {Array<{ employeeName: string, count: number }> | null} */ (null));
+  const [pendingOvertimeError, setPendingOvertimeError] = useState(/** @type {Array<{ employeeName: string, date: string, hours: number }> | null} */ (null));
   const qc = useQueryClient();
   const { activeCompanyId, activeCompany } = useCompany();
   const { user } = useAuth();
@@ -640,9 +644,6 @@ export default function Payroll() {
           applyStatutoryDeductions: false,
           resolveLogOptions: (log) => ({
             ...resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift),
-            breakDurationMinutes: [30, 60].includes(Number(employee.break_duration_minutes))
-              ? Number(employee.break_duration_minutes)
-              : 60,
           }),
         },
       );
@@ -683,6 +684,7 @@ export default function Payroll() {
     setGenerating(true);
     setIncompleteLogsError(null);
     setPendingAttendanceError(null);
+    setPendingOvertimeError(null);
     const periodName = getPayrollPeriodName(activePeriodConfig);
 
     // Employee rates and statuses can be edited from the Employees page while
@@ -692,7 +694,8 @@ export default function Payroll() {
       company_profile_id: activeCompanyId,
     }, '-created_date'));
 
-    // Pre-check: block if any employee has time_in but no time_out
+    // Pre-check: every worked regular shift must have all required punches.
+    // Half-day and absent records do not require the configured break pair.
     const allLogsForCheck = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.list('-date', 1000));
     const activeEmployeesForCheck = currentEmployees.filter(e => e.status === 'active');
     /** @type {Array<{ employeeName: string, date: string }>} */
@@ -705,8 +708,19 @@ export default function Payroll() {
         !log.is_absent
       );
       for (const log of empLogs) {
-        if (log.time_in && !log.time_out) {
-          incomplete.push({ employeeName: `${emp.first_name} ${emp.last_name}`, date: log.date });
+        const shiftOptions = resolveShiftOptionsForLog(log, emp, shiftSettings, {});
+        const expectsBreakPunches = (log.day_type || 'regular') !== 'half_day' && Boolean(shiftOptions.breakStartTime);
+        const missingPunches = [
+          !log.time_in ? 'Time In(1)' : null,
+          expectsBreakPunches && !log.break_time_out ? 'Time Out(1)' : null,
+          expectsBreakPunches && !log.break_time_in ? 'Time In(2)' : null,
+          !log.time_out ? 'Time Out(2)' : null,
+        ].filter(Boolean);
+        if (missingPunches.length > 0) {
+          incomplete.push({
+            employeeName: `${emp.first_name} ${emp.last_name}`,
+            date: `${log.date} — Missing ${missingPunches.join(', ')}`,
+          });
         }
       }
     }
@@ -731,6 +745,24 @@ export default function Payroll() {
     }
     if (pendingIssues.length > 0) {
       setPendingAttendanceError(pendingIssues);
+      setGenerating(false);
+      return;
+    }
+
+    // OT decisions affect credited overtime and net pay, so every request in the
+    // period must be resolved before payroll is generated or regenerated.
+    const overtimeRequestsForCheck = await entities.OvertimeRequest.filter({
+      company_profile_id: activeCompanyId,
+    }, '-date', 5000);
+    const pendingOvertime = overtimeRequestsForCheck
+      .filter(request => request.status === 'pending' && request.date >= startStr && request.date <= endStr)
+      .map(request => ({
+        employeeName: request.employee_name || request.employee_id || 'Unknown employee',
+        date: request.date,
+        hours: Number(request.requested_hours) || 0,
+      }));
+    if (pendingOvertime.length > 0) {
+      setPendingOvertimeError(pendingOvertime);
       setGenerating(false);
       return;
     }
@@ -866,7 +898,6 @@ export default function Payroll() {
         paidBreakTime: Boolean(defaultShift.paid_break_time), applyStatutoryDeductions: false,
         resolveLogOptions: (log) => ({
           ...resolveShiftOptionsForLog(log, emp, shiftSettings, defaultShift),
-          breakDurationMinutes: [30, 60].includes(Number(emp.break_duration_minutes)) ? Number(emp.break_duration_minutes) : 60,
         }),
       });
       const incentiveDetails = automaticIncentivesForEmployee(emp, payrollLogs, startStr, endStr, periodNoWorkDays, periodHolidays, normalizePayrollStartDay(activeCompany));
@@ -1268,6 +1299,22 @@ export default function Payroll() {
         </div>
       </PayrollCard>
 
+      {pendingOvertimeError && (
+        <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-700">⚠️ Cannot Generate Payroll — OT Requests Pending Approval</p>
+          <p className="text-xs text-amber-700/80">
+            Resolve every OT request in this payroll period, then regenerate payroll so approved OT is included correctly.
+          </p>
+          <ul className="ml-3 space-y-1 text-xs text-amber-800">
+            {pendingOvertimeError.map((item, index) => (
+              <li key={`${item.employeeName}-${item.date}-${index}`} className="list-disc">
+                {item.employeeName} — {item.date} — {item.hours.toFixed(2)}h requested
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Pending attendance error */}
       {pendingAttendanceError && (
         <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-2">
@@ -1287,9 +1334,9 @@ export default function Payroll() {
       {incompleteLogsError && (
         <div className="bg-destructive/10 border border-destructive/30 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-2">
-            <span className="text-destructive font-semibold text-sm">⚠️ Cannot Generate Payroll — Missing Time-Out</span>
+            <span className="text-destructive font-semibold text-sm">⚠️ Cannot Generate Payroll — Missing Attendance Punches</span>
           </div>
-          <p className="text-xs text-destructive/80">The following employees have a time-in but no time-out. Please complete their attendance logs before generating payroll:</p>
+          <p className="text-xs text-destructive/80">Complete every required Time In and Time Out punch before generating payroll:</p>
           <ul className="text-xs text-destructive space-y-1 ml-3">
             {incompleteLogsError.map((item, i) => (
               <li key={i} className="list-disc">{item.employeeName} — {item.date}</li>

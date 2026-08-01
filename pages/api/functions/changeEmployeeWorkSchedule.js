@@ -12,8 +12,6 @@ import {
 const ALLOWED_OPERATIONS = new Set([
   "assign_shift",
   "cancel_shift",
-  "change_break_time",
-  "change_break_duration",
 ]);
 
 function cancellationUpdate(employee, effectiveDate, fallbackValue) {
@@ -41,8 +39,6 @@ export default async function handler(req, res) {
     employee_record_id: employeeRecordId,
     effective_date: effectiveDate,
     shift_value: shiftValue,
-    break_time: breakTime,
-    break_duration_minutes: breakDurationMinutes,
     hr_passcode: hrPasscode,
     admin_passcode: adminPasscode,
   } = req.body || {};
@@ -134,19 +130,8 @@ export default async function handler(req, res) {
     );
     summary = `Scheduled employee shift change effective ${effectiveDate} cancelled`;
     recordDate = effectiveDate;
-  } else if (operation === "change_break_time") {
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(breakTime || ""))) {
-      return res.status(400).json({ error: "A valid break time is required." });
-    }
-    updates = { break_time: breakTime };
-    summary = `Employee break time changed to ${breakTime}`;
   } else {
-    const duration = Number(breakDurationMinutes);
-    if (![30, 60].includes(duration)) {
-      return res.status(400).json({ error: "Break duration must be 30 or 60 minutes." });
-    }
-    updates = { break_duration_minutes: duration };
-    summary = `Employee break duration changed to ${duration} minutes`;
+    return res.status(400).json({ error: "Unsupported work-schedule operation." });
   }
 
   const updated = await updateRecord("Employee", employee.id, updates);

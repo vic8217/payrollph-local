@@ -14,6 +14,9 @@ const AUDITED_SHIFT_FIELDS = {
   shift_start_time: 'Shift start',
   shift_end_time: 'Shift end',
   overtime_start_time: 'Overtime start',
+  break_start_time: 'Break start',
+  break_end_time: 'Break end',
+  break_duration_minutes: 'Break duration',
   grace_period_minutes: 'Grace period',
   time_in_allowance_minutes: 'Time In (1) allowance',
   paid_break_time: 'Paid breaktime',
@@ -107,6 +110,13 @@ function normalizeShiftData(data = {}) {
   if (shiftTimeError) {
     throw new Error(shiftTimeError);
   }
+  const breakStart = timeToMinutes(normalized.break_start_time);
+  const breakEnd = timeToMinutes(normalized.break_end_time);
+  const breakDuration = Number(normalized.break_duration_minutes);
+  if (breakStart == null || breakEnd == null || breakStart === breakEnd || !(breakDuration > 0 && breakDuration <= 480)) {
+    throw new Error('Enter a valid break start, break end, and break duration.');
+  }
+  normalized.break_duration_minutes = breakDuration;
 
   if (normalized.paid_break_time) {
     if (!normalized.paid_breaktime_approval_document_url) {

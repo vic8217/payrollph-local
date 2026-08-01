@@ -54,6 +54,9 @@ function ShiftForm({ shift, onSave, onClose }) {
     shift_start_time: shift?.shift_start_time || '08:00',
     shift_end_time: shift?.shift_end_time || '17:00',
     overtime_start_time: shift?.overtime_start_time || '17:30',
+    break_start_time: shift?.break_start_time || '12:00',
+    break_end_time: shift?.break_end_time || '13:00',
+    break_duration_minutes: shift?.break_duration_minutes || 60,
     grace_period_minutes: shift?.grace_period_minutes || 0,
     time_in_allowance_minutes: shift?.time_in_allowance_minutes || 0,
     paid_break_time: Boolean(shift?.paid_break_time),
@@ -86,6 +89,13 @@ function ShiftForm({ shift, onSave, onClose }) {
     );
     if (shiftTimeError) {
       setValidationError(shiftTimeError);
+      return;
+    }
+    const breakStart = timeToMinutes(form.break_start_time);
+    const breakEnd = timeToMinutes(form.break_end_time);
+    const breakDuration = Number(form.break_duration_minutes);
+    if (breakStart == null || breakEnd == null || breakStart === breakEnd || !(breakDuration > 0)) {
+      setValidationError('Enter a valid break start, break end, and break duration.');
       return;
     }
 
@@ -130,7 +140,7 @@ function ShiftForm({ shift, onSave, onClose }) {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{shift ? 'Edit Shift' : 'Add Shift'}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -180,6 +190,28 @@ function ShiftForm({ shift, onSave, onClose }) {
               required
             />
             <p className="text-xs text-muted-foreground mt-1">Time after which completed work is counted as overtime</p>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Break Time</label>
+            <div className="mt-1 grid grid-cols-2 gap-3">
+              <div>
+                <span className="text-xs text-muted-foreground">Start</span>
+                <Input type="time" value={form.break_start_time} onChange={e => setForm(f => ({ ...f, break_start_time: e.target.value }))} required />
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">End</span>
+                <Input type="time" value={form.break_end_time} onChange={e => setForm(f => ({ ...f, break_end_time: e.target.value }))} required />
+              </div>
+            </div>
+            <label className="mt-2 block text-xs text-muted-foreground">Break duration (minutes)</label>
+            <Input
+              type="number"
+              min="1"
+              max="480"
+              value={form.break_duration_minutes}
+              onChange={e => setForm(f => ({ ...f, break_duration_minutes: parseInt(e.target.value) || 0 }))}
+              required
+            />
           </div>
           {validationError && <p className="text-xs text-destructive">{validationError}</p>}
           <div>
@@ -459,6 +491,7 @@ export default function Settings() {
                     <p className="text-sm text-muted-foreground mt-0.5">
                       {formatTime(shift.shift_start_time)} — {formatTime(shift.shift_end_time)}
                       <span className="text-xs ml-2">• OT starts: {formatTime(shift.overtime_start_time || '17:30')}</span>
+                      <span className="text-xs ml-2">• Break: {formatTime(shift.break_start_time || '12:00')}–{formatTime(shift.break_end_time || '13:00')} ({Number(shift.break_duration_minutes) || 60}min)</span>
                       {shift.grace_period_minutes > 0 && (
                         <span className="text-xs ml-2">• Grace: {shift.grace_period_minutes}min</span>
                       )}

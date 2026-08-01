@@ -88,6 +88,9 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   'shift_start_time',
   'shift_end_time',
   'shift_overtime_start_time',
+  'shift_break_start_time',
+  'shift_break_end_time',
+  'shift_break_duration_minutes',
   'shift_grace_period_minutes',
   'shift_time_in_allowance_minutes',
   'shift_paid_break_time',
@@ -176,9 +179,9 @@ function getShiftOption(shiftOptions, value, fallbackValue = 'day_shift') {
     || { value: resolvedValue, label: 'Unknown Shift', shortLabel: 'Unknown' };
 }
 
-function getBreakDurationMinutes(employee) {
-  const minutes = Number(employee?.break_duration_minutes);
-  return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
+function getBreakDurationMinutes(employee, shift = {}) {
+  const minutes = Number(shift?.break_duration_minutes || employee?.break_duration_minutes);
+  return minutes > 0 ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
 }
 
 function addBreakDuration(time, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES) {
@@ -199,14 +202,15 @@ function isOvernightShift(shift) {
 }
 
 function scheduledBreak(employee, date, shift) {
-  if (!employee?.break_time) return null;
+  const breakTime = shift?.break_start_time || employee?.break_time;
+  if (!breakTime) return null;
 
-  const [breakHour] = employee.break_time.split(':').map(Number);
+  const [breakHour] = breakTime.split(':').map(Number);
   const breakDate = isOvernightShift(shift) && breakHour < 12
     ? format(addDays(new Date(`${date}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
     : date;
   return {
-    break_time_out: new Date(`${breakDate}T${employee.break_time}:00+08:00`).toISOString(),
+    break_time_out: new Date(`${breakDate}T${breakTime}:00+08:00`).toISOString(),
   };
 }
 
@@ -238,13 +242,16 @@ function isPastAutoScheduledBreak(log, employee, shift) {
 }
 
 function scheduledBreakIn(employee, date, shift) {
-  if (!employee?.break_time) return null;
+  const breakTime = shift?.break_start_time || employee?.break_time;
+  if (!breakTime) return null;
 
-  const [breakHour] = employee.break_time.split(':').map(Number);
+  const [breakHour] = breakTime.split(':').map(Number);
   const breakDate = isOvernightShift(shift) && breakHour < 12
     ? format(addDays(new Date(`${date}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
     : date;
-  const breakIn = addBreakDuration(employee.break_time, getBreakDurationMinutes(employee));
+  const breakIn = shift?.break_end_time
+    ? { time: shift.break_end_time, crossesMidnight: shift.break_end_time <= breakTime }
+    : addBreakDuration(breakTime, getBreakDurationMinutes(employee, shift));
   const breakInDate = breakIn.crossesMidnight
     ? format(addDays(new Date(`${breakDate}T00:00:00+08:00`), 1), 'yyyy-MM-dd')
     : breakDate;
@@ -697,7 +704,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         timeInAllowanceMinutes: selectedShift.time_in_allowance_minutes || 0,
         lateGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
-        breakDurationMinutes: getBreakDurationMinutes(employee),
+        breakDurationMinutes: getBreakDurationMinutes(employee, selectedShift),
         paidBreakTime: Boolean(selectedShift.paid_break_time),
       });
       updates.hours_worked = parseFloat(hrs.toFixed(2));
@@ -713,7 +720,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         shiftEndTime: selectedShift.shift_end_time || fallbackShift.shift_end_time,
         overtimeStartTime: selectedShift.overtime_start_time || fallbackShift.overtime_start_time,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
-        breakDurationMinutes: getBreakDurationMinutes(employee),
+        breakDurationMinutes: getBreakDurationMinutes(employee, selectedShift),
         paidBreakTime: Boolean(selectedShift.paid_break_time),
       });
       const attendanceMetrics = {
@@ -731,7 +738,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       updates.ot_requested_hours = approvedOtRequest ? Number((approvedOtRequest.approved_hours ?? approvedOtRequest.requested_hours) || 0) : 0;
       updates.night_diff_hours = computeNightDifferentialHours(attendanceMetrics, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
-        breakDurationMinutes: getBreakDurationMinutes(employee),
+        breakDurationMinutes: getBreakDurationMinutes(employee, selectedShift),
         paidBreakTime: Boolean(selectedShift.paid_break_time),
       });
       updates.late_minutes = computeLateMinutes(attendanceMetrics, {
@@ -1597,6 +1604,7 @@ export default function Attendance() {
   const [otBatchAdminPasscode, setOtBatchAdminPasscode] = useState('');
   const [otBatchError, setOtBatchError] = useState('');
   const [processingOtBatch, setProcessingOtBatch] = useState(false);
+  const [openOtDate, setOpenOtDate] = useState('');
   const [rejectingLog, setRejectingLog] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [locationLog, setLocationLog] = useState(null);
@@ -1732,6 +1740,9 @@ export default function Attendance() {
         : 0,
     };
   });
+  const visiblePendingOvertimeRows = openOtDate
+    ? pendingOvertimeRows.filter(row => row.request.date === openOtDate)
+    : pendingOvertimeRows;
   const selectedEmployeeOvertimeRequests = selectedEmployee
     ? overtimeRequests.filter(request =>
       String(request.employee_record_id || '') === String(selectedEmployee.id || '') ||
@@ -1879,7 +1890,7 @@ export default function Attendance() {
     setOtBatchError('');
   };
 
-  const otBatchIsComplete = pendingOvertimeRows.length > 0 && pendingOvertimeRows.every(({ request, attendance, actualOvertimeHours }) => {
+  const otBatchIsComplete = visiblePendingOvertimeRows.length > 0 && visiblePendingOvertimeRows.every(({ request, attendance, actualOvertimeHours }) => {
     const review = otBatchReviews[request.id];
     if (!['approved', 'denied'].includes(review?.decision)) return false;
     if (review.decision === 'denied') return Boolean(review.reason?.trim());
@@ -1918,7 +1929,7 @@ export default function Attendance() {
 
       const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
       const reviewedAt = new Date().toISOString();
-      for (const { request, attendance, correctedTimeOutIso, timeOutChanged, hoursWorked, actualOvertimeHours } of pendingOvertimeRows) {
+      for (const { request, attendance, correctedTimeOutIso, timeOutChanged, hoursWorked, actualOvertimeHours } of visiblePendingOvertimeRows) {
         const review = otBatchReviews[request.id];
         const approved = review.decision === 'approved';
         const approvedHours = approved ? Number(review.approvedHours) : 0;
@@ -1991,7 +2002,7 @@ export default function Attendance() {
       timeInAllowanceMinutes: shift.time_in_allowance_minutes || 0,
       lateGraceMinutes: shift.grace_period_minutes || 0,
       breakInGraceMinutes: shift.grace_period_minutes || 0,
-      breakDurationMinutes: getBreakDurationMinutes(employee),
+      breakDurationMinutes: getBreakDurationMinutes(employee, shift),
       paidBreakTime: Boolean(shift.paid_break_time),
     };
   };
@@ -2302,6 +2313,14 @@ export default function Attendance() {
   }
 
   const activePeriod = selectedPeriod === 'all' ? null : displayedPayrollPeriods.find(p => p.id === selectedPeriod);
+  const openOtCountPeriod = activePeriod || {
+    period_name: `Payroll Period: ${activePeriodConfig.label}`,
+    start_date: startStr,
+    end_date: endStr,
+  };
+  const openOtCountForPeriod = pendingOvertimeRequests.filter(request =>
+    request.date >= openOtCountPeriod.start_date && request.date <= openOtCountPeriod.end_date
+  ).length;
   const quickViewPeriods = activePeriod
     ? [activePeriod]
     : displayedPayrollPeriods;
@@ -2360,7 +2379,8 @@ export default function Attendance() {
         return sameRecord || sameEmployeeId;
       });
       const primaryLog = employeeLogs[0] || null;
-      const expectsBreakPunches = Boolean(employee.break_time) && primaryLog?.day_type !== 'half_day';
+      const primaryShift = primaryLog ? getEmployeeLogShift(primaryLog, employee) : null;
+      const expectsBreakPunches = Boolean(primaryShift?.break_start_time || employee.break_time) && primaryLog?.day_type !== 'half_day';
       const punchIssues = [];
       if (employeeLogs.length === 0) {
         punchIssues.push('No attendance log');
@@ -2931,16 +2951,39 @@ export default function Attendance() {
               )}
             </Card>
 
+            <Card className="border border-amber-200 bg-amber-50/40 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-amber-700">Open OT for payroll period</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{openOtCountPeriod.start_date} to {openOtCountPeriod.end_date}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-bold text-amber-800">{openOtCountForPeriod}</p>
+                  <p className="text-xs text-amber-700">request{openOtCountForPeriod === 1 ? '' : 's'} for approval</p>
+                </div>
+              </div>
+            </Card>
+
             {pendingOvertimeRequests.length > 0 && (
               <Card className="border border-amber-200 bg-amber-50/50 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-amber-200 flex items-center justify-between gap-3">
+                <div className="px-4 py-3 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-amber-700" />
                     <p className="font-semibold text-sm text-amber-900">Open OT Requests</p>
                   </div>
-                  <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
-                    {pendingOvertimeRequests.length}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={openOtDate}
+                      onChange={event => setOpenOtDate(event.target.value)}
+                      aria-label="Filter open OT requests by date"
+                      className="h-8 w-40 bg-background text-sm"
+                    />
+                    {openOtDate && <Button size="sm" variant="outline" className="h-8" onClick={() => setOpenOtDate('')}>All Dates</Button>}
+                    <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
+                      {visiblePendingOvertimeRows.length}
+                    </Badge>
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[1350px] text-sm">
@@ -2960,7 +3003,7 @@ export default function Attendance() {
                       </tr>
                     </thead>
                     <tbody>
-                      {pendingOvertimeRows.map(({ request, attendance, correctedTimeOutInput, actualOvertimeHours }) => {
+                      {visiblePendingOvertimeRows.map(({ request, attendance, correctedTimeOutInput, actualOvertimeHours }) => {
                         const review = otBatchReviews[request.id] || {};
                         const requestedHours = Number(request.requested_hours) || 0;
                         const canApprove = Boolean(attendance?.time_out && actualOvertimeHours > 0);
@@ -3049,6 +3092,9 @@ export default function Attendance() {
                           </tr>
                         );
                       })}
+                      {visiblePendingOvertimeRows.length === 0 && (
+                        <tr><td colSpan={11} className="py-10 text-center text-sm text-muted-foreground">No open OT requests for this date.</td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -3300,7 +3346,7 @@ export default function Attendance() {
             </DialogHeader>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                You are about to process {pendingOvertimeRows.length} OT request{pendingOvertimeRows.length === 1 ? '' : 's'}. Enter today’s matching HR Officer and Admin passcodes, then confirm the OT approval process.
+                You are about to process {visiblePendingOvertimeRows.length} OT request{visiblePendingOvertimeRows.length === 1 ? '' : 's'}{openOtDate ? ` dated ${openOtDate}` : ''}. Enter today’s matching HR Officer and Admin passcodes, then confirm the OT approval process.
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div>

@@ -10,7 +10,7 @@ import {
   resolveEmployeeWorkSchedule,
   sortedShiftAssignments,
 } from '@/lib/shiftSettings';
-import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, AlertTriangle, CalendarDays, XCircle, History } from 'lucide-react';
+import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, CalendarDays, XCircle, History } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -18,43 +18,12 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
-import { employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
 
 const shiftConfig = {
   day_shift:   { label: 'Day Shift',   icon: Sun,  className: 'bg-amber-100 text-amber-700 border-amber-200' },
   night_shift: { label: 'Night Shift', icon: Moon, className: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
 };
 
-const breakTimeOptions = Array.from({ length: 48 }, (_, index) => {
-  const hours = Math.floor(index / 2);
-  const minutes = index % 2 === 0 ? '00' : '30';
-  return `${String(hours).padStart(2, '0')}:${minutes}`;
-});
-const breakDurationOptions = [
-  { value: '60', label: '1 hour' },
-  { value: '30', label: '30 minutes' },
-];
-const DEFAULT_BREAK_DURATION_MINUTES = 60;
-
-function getBreakDurationMinutes(employee) {
-  const minutes = Number(employee?.break_duration_minutes);
-  return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
-}
-
-function formatTime(value) {
-  if (!value) return 'No break';
-  const [hours, minutes] = value.split(':');
-  const date = new Date();
-  date.setHours(Number(hours), Number(minutes), 0, 0);
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-}
-
-function addBreakDuration(value, durationMinutes = DEFAULT_BREAK_DURATION_MINUTES) {
-  if (!value) return '';
-  const [hours, minutes] = value.split(':').map(Number);
-  const totalMinutes = (hours * 60 + minutes + durationMinutes) % (24 * 60);
-  return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
-}
 
 function formatShiftTime(value) {
   if (!value) return '';
@@ -207,44 +176,21 @@ export default function WorkSchedule() {
       shiftValue,
       effectiveDate: changeEffectiveDate,
       type,
-      value,
     } = pendingShiftChange;
 
     setPasscodeError('');
     setSavingId(employee.id);
     updateMutation.mutate({
-      operation: type === 'change'
-        ? 'assign_shift'
-        : type === 'cancel'
-          ? 'cancel_shift'
-          : type === 'break_time'
-            ? 'change_break_time'
-            : 'change_break_duration',
+      operation: type === 'change' ? 'assign_shift' : 'cancel_shift',
       company_profile_id: activeCompanyId,
       employee_record_id: employee.id,
       effective_date: changeEffectiveDate,
       shift_value: shiftValue,
-      break_time: type === 'break_time' ? value : undefined,
-      break_duration_minutes: type === 'break_duration' ? Number(value) : undefined,
       hr_passcode: hrPasscode.trim(),
       admin_passcode: adminPasscode.trim(),
     });
   };
 
-  const handleBreakTimeChange = (emp, value) => {
-    if (value === 'none') return;
-    setPendingShiftChange({ type: 'break_time', employee: emp, value, effectiveDate: manilaDateString() });
-    setHrPasscode('');
-    setAdminPasscode('');
-    setPasscodeError('');
-  };
-
-  const handleBreakDurationChange = (emp, value) => {
-    setPendingShiftChange({ type: 'break_duration', employee: emp, value, effectiveDate: manilaDateString() });
-    setHrPasscode('');
-    setAdminPasscode('');
-    setPasscodeError('');
-  };
 
   const effectiveShiftSettings = shiftSettings
     .map(shift => effectiveShiftSetting(shift, manilaDateString()))
@@ -294,7 +240,6 @@ export default function WorkSchedule() {
     count: employees.filter(e => getCurrentShiftValue(e) === shift.value).length,
   }));
   const unassignedCount = employees.filter(e => e.work_schedule && !shiftOptions.some(option => option.value === e.work_schedule)).length;
-  const missingBreakTimeCount = employeesMissingBreakTime(employees).length;
   const loading = isLoading || isLoadingShifts;
   const latestScheduleChange = scheduleAuditLogs.find(log =>
     ['employee_work_schedule_assign_shift', 'employee_work_schedule_cancel_shift'].includes(log.action)
@@ -308,7 +253,7 @@ export default function WorkSchedule() {
     <div className="p-6 space-y-5 max-w-5xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Work Schedule</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">Assign a configured shift and required lunch break to each employee</p>
+        <p className="text-muted-foreground text-sm mt-0.5">Assign configured shifts to employees</p>
         <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
           <History className="h-3.5 w-3.5" />
           {latestScheduleChangeDate
@@ -316,18 +261,6 @@ export default function WorkSchedule() {
             : 'No work schedule changes recorded yet.'}
         </p>
       </div>
-
-      {missingBreakTimeCount > 0 && (
-        <div className="border border-destructive/30 bg-destructive/5 rounded-lg px-4 py-3 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-destructive">Break time setup required</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {missingBreakTimeCount} active employee{missingBreakTimeCount === 1 ? ' has' : 's have'} no lunch break schedule. Set a break time before payroll and attendance review.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -400,13 +333,12 @@ export default function WorkSchedule() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Employee</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs hidden sm:table-cell">Department</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Current Shift</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Break Time</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Assign Shift</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
+                <tr><td colSpan={4} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
               ) : (
                 filtered.map(emp => {
                   const currentShiftValue = getCurrentShiftValue(emp);
@@ -414,7 +346,7 @@ export default function WorkSchedule() {
                   const pendingAssignment = nextEmployeeShiftAssignment(emp);
                   const pendingShift = pendingAssignment ? getShiftOption(pendingAssignment.work_schedule) : null;
                   return (
-	                  <tr key={emp.id} className={`border-b border-border last:border-0 hover:bg-muted/20 transition-colors ${!emp.break_time ? 'bg-destructive/5' : ''}`}>
+	                  <tr key={emp.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -451,15 +383,6 @@ export default function WorkSchedule() {
                         )}
                       </div>
                     </td>
-	                    <td className="px-4 py-3 text-xs text-muted-foreground">
-	                      {emp.break_time ? (
-                          `${formatTime(emp.break_time)} - ${formatTime(addBreakDuration(emp.break_time, getBreakDurationMinutes(emp)))}`
-                        ) : (
-                          <Badge variant="destructive" className="gap-1 text-[10px]">
-                            <AlertTriangle className="w-3 h-3" /> Required
-                          </Badge>
-                        )}
-                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Select
@@ -488,37 +411,6 @@ export default function WorkSchedule() {
                             })}
                           </SelectContent>
                         </Select>
-                        <Select
-                          value={emp.break_time || 'none'}
-                          onValueChange={v => handleBreakTimeChange(emp, v)}
-                        >
-                          <SelectTrigger className="h-8 text-xs w-40">
-	                            <SelectValue placeholder="Set break time..." />
-	                          </SelectTrigger>
-	                          <SelectContent>
-	                            <SelectItem value="none" disabled>Break time required</SelectItem>
-	                            {breakTimeOptions.map(time => (
-                              <SelectItem key={time} value={time}>
-                                {formatTime(time)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={String(getBreakDurationMinutes(emp))}
-                          onValueChange={v => handleBreakDurationChange(emp, v)}
-                        >
-                          <SelectTrigger className="h-8 text-xs w-32">
-                            <SelectValue placeholder="Duration" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {breakDurationOptions.map(option => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
                         {savingId === emp.id && (
                           <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         )}
@@ -541,11 +433,7 @@ export default function WorkSchedule() {
             <DialogTitle>
               {pendingShiftChange?.type === 'cancel'
                 ? 'Cancel Scheduled Shift Change'
-                : pendingShiftChange?.type === 'break_time'
-                  ? 'Authorize Break Time Change'
-                  : pendingShiftChange?.type === 'break_duration'
-                    ? 'Authorize Break Duration Change'
-                    : 'Authorize Shift Change'}
+                : 'Authorize Shift Change'}
             </DialogTitle>
             <DialogDescription>
               All work-schedule changes require today&apos;s HR Officer and Admin Manager passcodes.
@@ -561,11 +449,7 @@ export default function WorkSchedule() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   {pendingShiftChange.type === 'cancel'
                     ? `Cancel ${getShiftOption(pendingShiftChange.assignment?.work_schedule).label}`
-                    : pendingShiftChange.type === 'break_time'
-                      ? `Break time: ${formatTime(pendingShiftChange.employee.break_time)} to ${formatTime(pendingShiftChange.value)}`
-                      : pendingShiftChange.type === 'break_duration'
-                        ? `Break duration: ${getBreakDurationMinutes(pendingShiftChange.employee)} to ${pendingShiftChange.value} minutes`
-                        : `${getShiftOption(getCurrentShiftValue(pendingShiftChange.employee, pendingShiftChange.effectiveDate)).label} to ${getShiftOption(pendingShiftChange.shiftValue).label}`}
+                    : `${getShiftOption(getCurrentShiftValue(pendingShiftChange.employee, pendingShiftChange.effectiveDate)).label} to ${getShiftOption(pendingShiftChange.shiftValue).label}`}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Effective {pendingShiftChange.effectiveDate}
