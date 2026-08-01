@@ -1308,7 +1308,7 @@ function OvertimeReviewModal({ log, currentUser, activeCompanyId, onClose, onCon
   );
 }
 
-function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onClose, onConfirm }) {
+function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onClose, onConfirm, onCorrectAttendance }) {
   const TODAY_STR = manilaDateString();
   const requestedHours = Number(request.requested_hours) || 0;
   const [approvedHours, setApprovedHours] = useState(String(request.approved_hours || requestedHours));
@@ -1318,6 +1318,7 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [timeOutConfirmed, setTimeOutConfirmed] = useState(false);
+  const [correctedTimeOut, setCorrectedTimeOut] = useState('');
   const { data: requestAttendanceLogs = [], isLoading: loadingAttendance } = useQuery({
     queryKey: ['ot-review-attendance', activeCompanyId, request.employee_id, request.date],
     queryFn: () => entities.filter('AttendanceLog', {
@@ -1330,8 +1331,35 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
     (request.employee_record_id && String(log.employee_record_id) === String(request.employee_record_id)) ||
     String(log.employee_id || '').toLowerCase() === String(request.employee_id || '').toLowerCase()
   );
-  const actualOvertimeHours = Math.max(0, Number(requestAttendance?.ot_actual_hours ?? requestAttendance?.overtime_hours) || 0);
-  const hasFinalTimeOut = Boolean(requestAttendance?.time_out);
+  useEffect(() => {
+    if (requestAttendance?.time_out && !correctedTimeOut) {
+      setCorrectedTimeOut(formatManilaTime(requestAttendance.time_out, { hour12: false }));
+    }
+  }, [requestAttendance?.time_out, correctedTimeOut]);
+  const originalTimeOut = requestAttendance?.time_out || null;
+  const correctedTimeOutIso = correctedTimeOut && requestAttendance
+    ? new Date(`${manilaDateString(originalTimeOut || requestAttendance.date)}T${correctedTimeOut}:00+08:00`).toISOString()
+    : null;
+  const effectiveAttendance = requestAttendance
+    ? { ...requestAttendance, time_out: correctedTimeOutIso || originalTimeOut }
+    : null;
+  const fallbackShift = legacyShiftTimes(requestAttendance?.work_schedule);
+  const computationOptions = {
+    shiftStartTime: requestAttendance?.shift_start_time || fallbackShift.shift_start_time,
+    shiftEndTime: requestAttendance?.shift_end_time || fallbackShift.shift_end_time,
+    overtimeStartTime: requestAttendance?.shift_overtime_start_time || fallbackShift.overtime_start_time,
+    breakDurationMinutes: DEFAULT_BREAK_DURATION_MINUTES,
+    paidBreakTime: Boolean(requestAttendance?.shift_paid_break_time),
+  };
+  const recomputedHoursWorked = effectiveAttendance?.time_in && effectiveAttendance?.time_out
+    ? computeCreditedHoursWorked(effectiveAttendance, computationOptions)
+    : 0;
+  const actualOvertimeHours = effectiveAttendance?.time_out
+    ? computeOvertimeHours(effectiveAttendance, recomputedHoursWorked, computationOptions)
+    : 0;
+  const hasFinalTimeOut = Boolean(effectiveAttendance?.time_out);
+  const originalTimeOutInput = originalTimeOut ? formatManilaTime(originalTimeOut, { hour12: false }) : '';
+  const timeOutChanged = Boolean(correctedTimeOutIso && originalTimeOut && correctedTimeOut !== originalTimeOutInput);
 
   const verifyCodes = async () => {
     const records = await entities.filter('DailyPasscode', {
@@ -1387,6 +1415,14 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
       await verifyCodes();
       const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
       const reviewedAt = new Date().toISOString();
+      if (timeOutChanged) {
+        await onCorrectAttendance(requestAttendance.id, {
+          time_out: correctedTimeOutIso,
+          hours_worked: Number(recomputedHoursWorked.toFixed(2)),
+          ot_actual_hours: Number(actualOvertimeHours.toFixed(2)),
+          notes: `${requestAttendance.notes ? `${requestAttendance.notes}\n` : ''}Final Time Out corrected for callback OT by ${reviewer} on ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
+        }, request);
+      }
       await onConfirm({
         status: decision,
         approved_hours: Number(nextHours.toFixed(2)),
@@ -1397,7 +1433,7 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
         admin_approved: decision === 'approved',
         time_out_confirmed: decision === 'approved',
         time_out_confirmed_at: decision === 'approved' ? reviewedAt : null,
-        confirmed_time_out: decision === 'approved' ? requestAttendance.time_out : null,
+        confirmed_time_out: decision === 'approved' ? effectiveAttendance.time_out : null,
         confirmed_actual_ot_hours: decision === 'approved' ? actualOvertimeHours : 0,
         hr_confirmation_passcode: decision === 'approved' ? hrPasscode.trim() : undefined,
         admin_confirmation_passcode: decision === 'approved' ? adminPasscode.trim() : undefined,
@@ -1442,12 +1478,29 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Attendance verification</p>
             <div className="mt-2 flex justify-between text-sm">
               <span>Final Time Out</span>
-              <span className="font-semibold">{loadingAttendance ? 'Loading…' : hasFinalTimeOut ? formatManilaTime(requestAttendance.time_out) : 'Missing'}</span>
+              <span className="font-semibold">{loadingAttendance ? 'Loading…' : hasFinalTimeOut ? formatManilaTime(effectiveAttendance.time_out) : 'Missing'}</span>
             </div>
             <div className="mt-1 flex justify-between text-sm">
               <span>Actual OT supported</span>
               <span className="font-semibold">{actualOvertimeHours.toFixed(2)} hours</span>
             </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-foreground">Corrected Final Time Out</label>
+            <Input
+              type="time"
+              value={correctedTimeOut}
+              disabled={loadingAttendance || !requestAttendance?.time_out}
+              onChange={event => {
+                setCorrectedTimeOut(event.target.value);
+                setTimeOutConfirmed(false);
+              }}
+              className="mt-1"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Use the employee’s final callback punch. Example: 20 minutes of OT = <span className="font-semibold text-foreground">0.33 hours</span> (for example, 5:20 PM if OT starts at 5:00 PM).
+            </p>
           </div>
 
           <label className="flex items-start gap-2 rounded-lg border border-border p-3 text-sm">
@@ -1470,6 +1523,7 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
               onChange={event => setApprovedHours(event.target.value)}
               className="mt-1"
             />
+            <p className="mt-1 text-xs text-muted-foreground">Enter decimal hours: 15 min = 0.25, 20 min = 0.33, 30 min = 0.50.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -1550,6 +1604,8 @@ export default function Attendance() {
   const [selectedPeriod, setSelectedPeriod] = useState('all');
   const [summaryDate, setSummaryDate] = useState(() => manilaDateString());
   const [showQuickView, setShowQuickView] = useState(false);
+  const [showApprovedOtPage, setShowApprovedOtPage] = useState(false);
+  const [approvedOtDetail, setApprovedOtDetail] = useState(null);
   const { user: currentUser } = useAuth();
   const { activeCompanyId, activeCompany } = useCompany();
   const qc = useQueryClient();
@@ -1643,10 +1699,35 @@ export default function Attendance() {
         normalizeAttendanceKey(log.employee_id) === normalizeAttendanceKey(request.employee_id)
       )
     );
+    const originalTimeOutInput = attendance?.time_out ? formatManilaTime(attendance.time_out, { hour12: false }) : '';
+    const correctedTimeOutInput = otBatchReviews[request.id]?.correctedTimeOut ?? originalTimeOutInput;
+    const correctedTimeOutIso = correctedTimeOutInput && attendance
+      ? new Date(`${manilaDateString(attendance.time_out || attendance.date)}T${correctedTimeOutInput}:00+08:00`).toISOString()
+      : null;
+    const effectiveAttendance = attendance
+      ? { ...attendance, time_out: correctedTimeOutIso || attendance.time_out }
+      : null;
+    const fallbackShift = legacyShiftTimes(attendance?.work_schedule);
+    const computationOptions = {
+      shiftStartTime: attendance?.shift_start_time || fallbackShift.shift_start_time,
+      shiftEndTime: attendance?.shift_end_time || fallbackShift.shift_end_time,
+      overtimeStartTime: attendance?.shift_overtime_start_time || fallbackShift.overtime_start_time,
+      breakDurationMinutes: DEFAULT_BREAK_DURATION_MINUTES,
+      paidBreakTime: Boolean(attendance?.shift_paid_break_time),
+    };
+    const hoursWorked = effectiveAttendance?.time_in && effectiveAttendance?.time_out
+      ? computeCreditedHoursWorked(effectiveAttendance, computationOptions)
+      : 0;
     return {
       request,
       attendance,
-      actualOvertimeHours: Math.max(0, Number(attendance?.ot_actual_hours ?? attendance?.overtime_hours) || 0),
+      correctedTimeOutInput,
+      correctedTimeOutIso,
+      timeOutChanged: Boolean(correctedTimeOutIso && correctedTimeOutInput !== originalTimeOutInput),
+      hoursWorked,
+      actualOvertimeHours: effectiveAttendance?.time_out
+        ? computeOvertimeHours(effectiveAttendance, hoursWorked, computationOptions)
+        : 0,
     };
   });
   const selectedEmployeeOvertimeRequests = selectedEmployee
@@ -1695,6 +1776,30 @@ export default function Attendance() {
     ]);
   };
 
+  const correctAttendanceForOvertime = async (id, updates, request) => {
+    const correctedAt = new Date().toISOString();
+    const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
+    await entities.update('AttendanceLog', id, updates);
+    await entities.create('PasscodeAuditLog', {
+      company_profile_id: activeCompanyId,
+      source_entity: 'AttendanceLog',
+      source_record_id: id,
+      action: 'attendance_correction',
+      occurred_at: correctedAt,
+      authorized_by: reviewer,
+      reason: 'Final Time Out corrected for callback overtime review',
+      summary: `Final Time Out corrected during OT review for ${request.employee_name || request.employee_id} on ${request.date}`,
+      employee_id: request.employee_id,
+      employee_name: request.employee_name,
+      record_date: request.date,
+    });
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['attendance'] }),
+      qc.invalidateQueries({ queryKey: ['attendanceSummary'] }),
+      qc.invalidateQueries({ queryKey: ['ot-review-attendance'] }),
+    ]);
+  };
+
   const updateOvertimeRequest = async (id, updates) => {
     const request = overtimeRequests.find(item => item.id === id);
     const reviewedRequest = { ...(request || {}), ...updates, id };
@@ -1726,9 +1831,12 @@ export default function Attendance() {
     );
 
     await Promise.all(matchingLogs.map(log => {
-      const computationOptions = getEmployeeLogComputationOptions(log, requestEmployee);
-      const hoursWorked = computeCreditedHoursWorked(log, computationOptions);
-      const actualOvertime = computeOvertimeHours(log, hoursWorked, computationOptions);
+      const computationLog = reviewedRequest.confirmed_time_out
+        ? { ...log, time_out: reviewedRequest.confirmed_time_out }
+        : log;
+      const computationOptions = getEmployeeLogComputationOptions(computationLog, requestEmployee);
+      const hoursWorked = computeCreditedHoursWorked(computationLog, computationOptions);
+      const actualOvertime = computeOvertimeHours(computationLog, hoursWorked, computationOptions);
       const requestForCredit = reviewedRequest.status === 'approved' || reviewedRequest.status === 'denied'
         ? reviewedRequest
         : null;
@@ -1737,6 +1845,7 @@ export default function Attendance() {
       const lateMinutes = computeLateMinutes(log, computationOptions);
 
       return entities.update('AttendanceLog', log.id, {
+        ...(reviewedRequest.confirmed_time_out ? { time_out: reviewedRequest.confirmed_time_out } : {}),
         hours_worked: Number(hoursWorked.toFixed(2)),
         ot_actual_hours: Number(actualOvertime.toFixed(2)),
         overtime_hours: creditedOvertime,
@@ -1807,10 +1916,18 @@ export default function Attendance() {
 
       const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
       const reviewedAt = new Date().toISOString();
-      for (const { request, attendance, actualOvertimeHours } of pendingOvertimeRows) {
+      for (const { request, attendance, correctedTimeOutIso, timeOutChanged, hoursWorked, actualOvertimeHours } of pendingOvertimeRows) {
         const review = otBatchReviews[request.id];
         const approved = review.decision === 'approved';
         const approvedHours = approved ? Number(review.approvedHours) : 0;
+        if (timeOutChanged) {
+          await correctAttendanceForOvertime(attendance.id, {
+            time_out: correctedTimeOutIso,
+            hours_worked: Number(hoursWorked.toFixed(2)),
+            ot_actual_hours: Number(actualOvertimeHours.toFixed(2)),
+            notes: `${attendance.notes ? `${attendance.notes}\n` : ''}Final Time Out corrected for callback OT during batch review`,
+          }, request);
+        }
         await updateOvertimeRequest(request.id, {
           status: review.decision,
           approved_hours: Number(approvedHours.toFixed(2)),
@@ -1821,7 +1938,7 @@ export default function Attendance() {
           admin_approved: approved,
           time_out_confirmed: approved,
           time_out_confirmed_at: approved ? reviewedAt : null,
-          confirmed_time_out: approved ? attendance.time_out : null,
+          confirmed_time_out: approved ? (correctedTimeOutIso || attendance.time_out) : null,
           confirmed_actual_ot_hours: approved ? actualOvertimeHours : 0,
           hr_confirmation_passcode: otBatchHrPasscode.trim(),
           admin_confirmation_passcode: otBatchAdminPasscode.trim(),
@@ -2440,6 +2557,142 @@ export default function Attendance() {
       .filter(Boolean)
     : [];
 
+  if (showApprovedOtPage && !selectedEmployee) {
+    return (
+      <div className="w-full space-y-5 p-4 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowApprovedOtPage(false)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">Approved OT</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">Approved overtime summary and employee punch details</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+              <SelectTrigger className="h-8 w-48 text-sm"><SelectValue placeholder="All Periods" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Periods</SelectItem>
+                {displayedPayrollPeriods.map(period => (
+                  <SelectItem key={period.id} value={period.id}>{period.period_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterDept} onValueChange={setFilterDept}>
+              <SelectTrigger className="h-8 w-44 text-sm"><SelectValue placeholder="All Departments" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Departments</SelectItem>
+                {departments.map(department => <SelectItem key={department} value={department}>{department}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <Card className="overflow-hidden border border-border shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold">Approved OT Summary</p>
+              <p className="text-xs text-muted-foreground">
+                {activePeriod ? activePeriod.period_name : 'All payroll periods'} · {filterDept === 'all' ? 'All departments' : filterDept}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">{approvedOvertimeSummaryTotals.count} approved</Badge>
+              <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">{formatHours(approvedOvertimeSummaryTotals.approvedHours)} approved</Badge>
+              <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">{approvedOvertimeSummaryTotals.lateCount} late</Badge>
+              <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">{approvedOvertimeSummaryTotals.conductedCount} conducted OT</Badge>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1150px] text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Date</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Employee</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Department</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Time In(1)</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Time Out(2)</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Approved OT</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Actual OT</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Late</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approvedOvertimeSummaryRows.map(row => (
+                  <tr key={row.request.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                    <td className="whitespace-nowrap px-4 py-2.5 text-xs">{row.request.date}</td>
+                    <td className="px-4 py-2.5">
+                      <p className="font-medium text-foreground">{row.employeeName}</p>
+                      <p className="text-xs text-muted-foreground">{row.employee?.employee_id || row.request.employee_id || '—'}</p>
+                    </td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{row.department}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-emerald-700">{row.log?.time_in ? formatManilaTime(row.log.time_in) : 'Missing'}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-blue-700">{row.log?.time_out ? formatManilaTime(row.log.time_out) : 'Missing'}</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{formatHours(row.approvedHours)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-blue-700">{formatHours(row.actualOvertimeHours)}</td>
+                    <td className="px-4 py-2.5">
+                      {row.lateMinutes > 0
+                        ? <Badge variant="outline" className="border-amber-200 bg-amber-100 text-amber-800">Late {formatMinutes(row.lateMinutes)}</Badge>
+                        : <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Not late</Badge>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setApprovedOtDetail(row)}>
+                        <Eye className="h-3.5 w-3.5" /> View Details
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {approvedOvertimeSummaryRows.length === 0 && (
+                  <tr><td colSpan={9} className="py-12 text-center text-sm text-muted-foreground">No approved OT found for this filter.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Dialog open={!!approvedOtDetail} onOpenChange={open => !open && setApprovedOtDetail(null)}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader><DialogTitle>Employee OT Details</DialogTitle></DialogHeader>
+            {approvedOtDetail && (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-border bg-muted/30 p-4">
+                  <p className="font-semibold">{approvedOtDetail.employeeName}</p>
+                  <p className="text-xs text-muted-foreground">{approvedOtDetail.request.date} · {approvedOtDetail.department}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                    <p className="text-xs text-muted-foreground">Time In(1)</p>
+                    <p className="mt-1 font-semibold text-emerald-700">{approvedOtDetail.log?.time_in ? formatManilaTime(approvedOtDetail.log.time_in) : 'Missing'}</p>
+                  </div>
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-xs text-muted-foreground">Time Out(2)</p>
+                    <p className="mt-1 font-semibold text-blue-700">{approvedOtDetail.log?.time_out ? formatManilaTime(approvedOtDetail.log.time_out) : 'Missing'}</p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground">Approved OT</p>
+                    <p className="mt-1 font-semibold">{formatHours(approvedOtDetail.approvedHours)}</p>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground">Actual OT Conducted</p>
+                    <p className="mt-1 font-semibold">{formatHours(approvedOtDetail.actualOvertimeHours)}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-border p-3 text-sm">
+                  <p><span className="text-muted-foreground">Request reason:</span> {approvedOtDetail.request.reason || '—'}</p>
+                  <p className="mt-2"><span className="text-muted-foreground">Review note:</span> {approvedOtDetail.request.review_reason || '—'}</p>
+                  <p className="mt-2"><span className="text-muted-foreground">Reviewed by:</span> {approvedOtDetail.request.reviewed_by || '—'}</p>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
+
   // ── EMPLOYEE LIST VIEW ──
   if (!selectedEmployee) {
     return (
@@ -2464,6 +2717,10 @@ export default function Attendance() {
             <Button onClick={() => setShowQuickView(true)} variant="outline" className="gap-1.5">
               <Eye className="w-4 h-4" />
               Quick View
+            </Button>
+            <Button onClick={() => setShowApprovedOtPage(true)} variant="outline" className="gap-1.5">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              Approved OT
             </Button>
             <Button onClick={handleDownloadCSV} disabled={downloading} variant="outline" className="gap-1.5">
               <Download className="w-4 h-4" />
@@ -2675,7 +2932,7 @@ export default function Attendance() {
                       </tr>
                     </thead>
                     <tbody>
-                      {pendingOvertimeRows.map(({ request, attendance, actualOvertimeHours }) => {
+                      {pendingOvertimeRows.map(({ request, attendance, correctedTimeOutInput, actualOvertimeHours }) => {
                         const review = otBatchReviews[request.id] || {};
                         const requestedHours = Number(request.requested_hours) || 0;
                         const canApprove = Boolean(attendance?.time_out && actualOvertimeHours > 0);
@@ -2687,8 +2944,18 @@ export default function Attendance() {
                             </td>
                             <td className="whitespace-nowrap px-3 py-2">{request.date}</td>
                             <td className="px-3 py-2 text-right font-mono">{requestedHours.toFixed(2)}h</td>
-                            <td className={`whitespace-nowrap px-3 py-2 font-medium ${attendance?.time_out ? 'text-blue-700' : 'text-red-600'}`}>
-                              {attendance?.time_out ? formatManilaTime(attendance.time_out) : 'Missing'}
+                            <td className="px-3 py-2">
+                              <Input
+                                type="time"
+                                value={correctedTimeOutInput}
+                                disabled={!attendance?.time_out}
+                                onChange={event => updateOtBatchReview(request.id, {
+                                  correctedTimeOut: event.target.value,
+                                  timeOutConfirmed: false,
+                                })}
+                                className="h-8 w-28 text-blue-700"
+                              />
+                              {!attendance?.time_out && <p className="mt-1 text-xs text-red-600">Missing</p>}
                             </td>
                             <td className="px-3 py-2 text-right font-mono">{actualOvertimeHours.toFixed(2)}h</td>
                             <td className="px-3 py-2">
@@ -2748,14 +3015,18 @@ export default function Attendance() {
                   </table>
                 </div>
                 <div className="flex items-center justify-between gap-3 border-t border-amber-200 px-4 py-3">
-                  <p className="text-xs text-amber-800">
-                    Decide every request. Denials and reduced approvals require a reason.
-                  </p>
-                  {otBatchIsComplete && (
-                    <Button onClick={() => { setOtBatchError(''); setShowOtBatchFinalize(true); }}>
-                      Process OT Reviews
-                    </Button>
-                  )}
+                  <div>
+                    <p className="text-xs font-medium text-amber-900">All lines must be completed before the OT approval process can continue.</p>
+                    <p className="mt-0.5 text-xs text-amber-800">
+                      Select Approve or Deny for every request, verify approved Time Outs, and provide a reason for denials or reductions. Example: 20 minutes OT = 0.33 hours.
+                    </p>
+                  </div>
+                  <Button
+                    disabled={!otBatchIsComplete}
+                    onClick={() => { setOtBatchError(''); setShowOtBatchFinalize(true); }}
+                  >
+                    Process OT Approval
+                  </Button>
                 </div>
               </Card>
             )}
@@ -2991,7 +3262,7 @@ export default function Attendance() {
             </DialogHeader>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                You are processing {pendingOvertimeRows.length} OT request{pendingOvertimeRows.length === 1 ? '' : 's'}. Enter today’s matching passcodes to finalize every approval and denial.
+                You are about to process {pendingOvertimeRows.length} OT request{pendingOvertimeRows.length === 1 ? '' : 's'}. Enter today’s matching HR Officer and Admin passcodes, then confirm the OT approval process.
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -3020,8 +3291,11 @@ export default function Attendance() {
               {otBatchError && <p className="text-xs text-destructive">{otBatchError}</p>}
               <div className="flex justify-end gap-2">
                 <Button variant="outline" disabled={processingOtBatch} onClick={() => setShowOtBatchFinalize(false)}>Cancel</Button>
-                <Button disabled={processingOtBatch} onClick={processOtBatch}>
-                  {processingOtBatch ? 'Processing…' : 'Finalize Process'}
+                <Button
+                  disabled={processingOtBatch || !otBatchHrPasscode.trim() || !otBatchAdminPasscode.trim()}
+                  onClick={processOtBatch}
+                >
+                  {processingOtBatch ? 'Processing…' : 'Confirm Processing'}
                 </Button>
               </div>
             </div>
@@ -3034,6 +3308,7 @@ export default function Attendance() {
             activeCompanyId={activeCompanyId}
             onClose={() => setReviewingOvertimeRequest(null)}
             onConfirm={updates => updateOvertimeRequest(reviewingOvertimeRequest.id, updates)}
+            onCorrectAttendance={correctAttendanceForOvertime}
           />
         )}
       </div>
@@ -3390,6 +3665,7 @@ export default function Attendance() {
           activeCompanyId={activeCompanyId}
           onClose={() => setReviewingOvertimeRequest(null)}
           onConfirm={updates => updateOvertimeRequest(reviewingOvertimeRequest.id, updates)}
+          onCorrectAttendance={correctAttendanceForOvertime}
         />
       )}
 
