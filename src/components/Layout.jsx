@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
 		  LayoutDashboard, Users, Clock, CreditCard,
 		  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText, BadgeDollarSign, ListChecks, Calculator
+		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText, BadgeDollarSign, ListChecks, Calculator, BarChart3
 		} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,7 @@ const navItems = [
   { label: 'Attendance',      icon: Clock,             path: '/attendance',         roles: ['super_admin', 'admin', 'user'] },
   { label: 'Work Schedule',   icon: CalendarClock,     path: '/work-schedule',      roles: ['super_admin', 'admin', 'user'] },
   { label: 'Payroll',         icon: FileText,          path: '/payroll',            roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Management Reports', icon: BarChart3,      path: '/management-reports', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Special Rates',   icon: BadgeDollarSign,   path: '/special-rates',      roles: ['super_admin', 'admin'] },
   { label: 'Special Payroll', icon: Calculator,        path: '/special-rate-payroll', roles: ['super_admin', 'admin'] },
   { label: '13th Month Pay',  icon: Gift,              path: '/thirteenth-month-pay', roles: ['super_admin', 'admin', 'user'] },

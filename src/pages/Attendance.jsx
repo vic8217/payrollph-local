@@ -1703,6 +1703,10 @@ export default function Attendance() {
     .filter(request => request.status === 'pending')
     .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.employee_name || '').localeCompare(String(b.employee_name || '')));
   const pendingOvertimeRows = pendingOvertimeRequests.map(request => {
+    const employee = employees.find(item =>
+      String(request.employee_record_id || '') === String(item.id || '') ||
+      normalizeAttendanceKey(request.employee_id) === normalizeAttendanceKey(item.employee_id)
+    );
     const attendance = allAttendanceLogs.find(log =>
       log.date === request.date && (
         (request.employee_record_id && String(log.employee_record_id || '') === String(request.employee_record_id)) ||
@@ -1730,6 +1734,8 @@ export default function Attendance() {
       : 0;
     return {
       request,
+      employee,
+      department: employee?.department || request.department || '—',
       attendance,
       correctedTimeOutInput,
       correctedTimeOutIso,
@@ -2986,10 +2992,11 @@ export default function Attendance() {
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1350px] text-sm">
+                  <table className="w-full min-w-[1450px] text-sm">
                     <thead>
                       <tr className="border-b border-amber-200 bg-amber-100/50">
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Employee</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Department</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Date</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Requested</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Actual Time In(1)</th>
@@ -3003,7 +3010,7 @@ export default function Attendance() {
                       </tr>
                     </thead>
                     <tbody>
-                      {visiblePendingOvertimeRows.map(({ request, attendance, correctedTimeOutInput, actualOvertimeHours }) => {
+                      {visiblePendingOvertimeRows.map(({ request, department, attendance, correctedTimeOutInput, actualOvertimeHours }) => {
                         const review = otBatchReviews[request.id] || {};
                         const requestedHours = Number(request.requested_hours) || 0;
                         const canApprove = Boolean(attendance?.time_out && actualOvertimeHours > 0);
@@ -3013,6 +3020,7 @@ export default function Attendance() {
                               <p className="font-medium text-foreground">{request.employee_name || request.employee_id}</p>
                               <p className="max-w-52 truncate text-xs text-muted-foreground" title={request.reason}>{request.reason || 'No request note'}</p>
                             </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{department}</td>
                             <td className="whitespace-nowrap px-3 py-2">{request.date}</td>
                             <td className="px-3 py-2 text-right font-mono">{requestedHours.toFixed(2)}h</td>
                             <td className="whitespace-nowrap px-3 py-2 font-medium text-emerald-700">
@@ -3093,7 +3101,7 @@ export default function Attendance() {
                         );
                       })}
                       {visiblePendingOvertimeRows.length === 0 && (
-                        <tr><td colSpan={11} className="py-10 text-center text-sm text-muted-foreground">No open OT requests for this date.</td></tr>
+                        <tr><td colSpan={12} className="py-10 text-center text-sm text-muted-foreground">No open OT requests for this date.</td></tr>
                       )}
                     </tbody>
                   </table>
