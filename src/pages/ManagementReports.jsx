@@ -1,7 +1,15 @@
 // @ts-nocheck
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import {
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart,
+  Pie, PieChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis,
+} from 'recharts';
+import {
+  AlertTriangle, BarChart3, BriefcaseBusiness, CalendarDays, ChevronLeft,
+  ChevronRight, Clock3, Download, Eye, Filter, Moon, PhilippinePeso,
+  RefreshCw, TrendingDown, TrendingUp, Users, WalletCards, X,
+} from 'lucide-react';
 import { appApi } from '@/lib/appApi';
 import { useCompany } from '@/lib/CompanyContext';
 import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
@@ -10,135 +18,298 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
+const COLORS = ['#315ce8', '#7c3aed', '#17a673', '#f5a623', '#e54b4b', '#1e9bb5', '#8b5cf6'];
+const ATTENDANCE_COLORS = { Present: '#20a464', Late: '#f5b21b', Incomplete: '#e44d55', Leave: '#8a94a6' };
+const OT_THRESHOLDS = { warningPercent: 3, criticalPercent: 6, employeeHours: 20 };
+const money = value => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(Number(value) || 0);
+const compactMoney = value => {
+  const amount = Number(value) || 0;
+  if (Math.abs(amount) >= 1_000_000) return `₱${(amount / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(amount) >= 1_000) return `₱${(amount / 1_000).toFixed(0)}K`;
+  return `₱${amount.toFixed(0)}`;
+};
+const hours = value => `${(Number(value) || 0).toFixed(1)}h`;
 const fullName = employee => [employee?.first_name, employee?.middle_name, employee?.last_name].filter(Boolean).join(' ');
 const employeeKey = record => String(record?.employee_record_id || record?.employee_id || '').trim().toLowerCase();
-const hours = value => `${(Number(value) || 0).toFixed(2)}h`;
-const minutes = value => `${Math.round(Number(value) || 0)}m`;
-const punch = value => value ? formatManilaTime(value) : 'Missing';
+const sum = (rows, field) => rows.reduce((total, row) => total + (Number(row?.[field]) || 0), 0);
+const percentChange = (current, previous) => Number(previous) ? ((Number(current) - Number(previous)) / Number(previous)) * 100 : null;
+const periodLabel = period => period?.period_name || period?.label || `${period?.start_date || ''} - ${period?.end_date || ''}`;
 
-function periodDates(start, end) {
-  const result = [];
-  const cursor = new Date(`${start}T00:00:00Z`);
-  const last = new Date(`${end}T00:00:00Z`);
-  while (cursor <= last) {
-    result.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return result;
+function ChartCard({ title, subtitle, children, className = '' }) {
+  return <Card className={`min-w-0 border-border/80 p-4 shadow-sm ${className}`}>
+    <div className="mb-3"><h3 className="text-sm font-semibold">{title}</h3>{subtitle && <p className="text-[11px] text-muted-foreground">{subtitle}</p>}</div>
+    {children}
+  </Card>;
 }
 
-function summarize(logs, employeeCount) {
-  return {
-    employees: employeeCount,
-    present: new Set(logs.filter(log => log.time_in).map(log => `${log.date}:${employeeKey(log)}`)).size,
-    complete: logs.filter(log => log.status === 'approved').length,
-    incomplete: logs.filter(log => log.status !== 'approved').length,
-    workHours: logs.reduce((sum, log) => sum + (Number(log.hours_worked) || 0), 0),
-    undertime: logs.reduce((sum, log) => sum + (Number(log.undertime_minutes) || 0), 0),
-    overtime: logs.reduce((sum, log) => sum + (Number(log.overtime_hours) || 0), 0),
-    nightDiff: logs.reduce((sum, log) => sum + (Number(log.night_diff_hours) || 0), 0),
-  };
+function KpiCard({ label, value, icon: Icon, color, change, detail, inverse = false }) {
+  const available = change != null && Number.isFinite(change);
+  const increased = available && change > 0;
+  const favorable = inverse ? !increased : increased;
+  return <Card className="border-border/80 p-4 shadow-sm">
+    <div className="flex items-start gap-3">
+      <div className={`rounded-xl p-2.5 ${color}`}><Icon className="h-5 w-5" /></div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="mt-0.5 truncate text-xl font-bold tracking-tight">{value}</p>
+        <p className={`mt-1 flex items-center gap-1 text-[11px] ${!available ? 'text-muted-foreground' : favorable ? 'text-emerald-600' : 'text-red-600'}`}>
+          {available ? (increased ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />) : null}
+          {available ? `${Math.abs(change).toFixed(1)}% vs last period` : detail || 'No previous-period data'}
+        </p>
+      </div>
+    </div>
+  </Card>;
+}
+
+function EmptyChart({ children }) {
+  return <div className="flex h-[220px] items-center justify-center rounded-lg border border-dashed text-center text-xs text-muted-foreground">{children}</div>;
+}
+
+function TrendChart({ data, dataKey, color, formatter, onPeriod }) {
+  if (!data.some(item => Number(item[dataKey]) > 0)) return <EmptyChart>No processed data available for this trend.</EmptyChart>;
+  return <ResponsiveContainer width="100%" height={220}>
+    <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} onClick={state => state?.activePayload?.[0]?.payload?.period && onPeriod(state.activePayload[0].payload.period)}>
+      <defs><linearGradient id={`fill-${dataKey}`} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={color} stopOpacity={0.25}/><stop offset="95%" stopColor={color} stopOpacity={0}/></linearGradient></defs>
+      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e6eaf0" />
+      <XAxis dataKey="shortLabel" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+      <YAxis tickFormatter={formatter} tick={{ fontSize: 9 }} axisLine={false} tickLine={false} width={48} />
+      <Tooltip formatter={(value) => formatter(value)} labelFormatter={(_, payload) => payload?.[0]?.payload?.label} />
+      <Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2.5} fill={`url(#fill-${dataKey})`} activeDot={{ r: 5, cursor: 'pointer' }} />
+    </AreaChart>
+  </ResponsiveContainer>;
+}
+
+function Donut({ data, total, totalLabel, colors = COLORS }) {
+  if (!data.some(item => item.value > 0)) return <EmptyChart>No data available.</EmptyChart>;
+  const denominator = typeof total === 'number' ? total : data.reduce((sumValue, item) => sumValue + item.value, 0);
+  return <div className="grid grid-cols-[minmax(150px,1fr)_minmax(130px,1fr)] items-center gap-2">
+    <div className="relative h-[220px]">
+      <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="82%" paddingAngle={1}>{data.map((item, index) => <Cell key={item.name} fill={item.color || colors[index % colors.length]} />)}</Pie><Tooltip formatter={(value, name) => [Number(value).toLocaleString(), name]} /></PieChart></ResponsiveContainer>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><strong className="text-lg">{typeof total === 'number' ? total.toLocaleString() : total}</strong><span className="text-[10px] text-muted-foreground">{totalLabel}</span></div>
+    </div>
+    <div className="space-y-2">{data.map((item, index) => <div key={item.name} className="flex items-start gap-2 text-[11px]"><span className="mt-1 h-2 w-2 rounded-full" style={{ background: item.color || colors[index % colors.length] }}/><div className="min-w-0 flex-1"><div className="flex justify-between gap-2"><span>{item.name}</span><strong>{denominator ? `${((item.value / denominator) * 100).toFixed(1)}%` : '0%'}</strong></div><p className="text-muted-foreground">{item.display || item.value.toLocaleString()}</p></div></div>)}</div>
+  </div>;
+}
+
+function isIncompletePunch(log) {
+  if (!log?.time_in) return false;
+  if (!log.time_out) return true;
+  const expectsBreak = Boolean(log.shift_break_start_time || log.break_time_out || log.break_time_in);
+  return expectsBreak && (!log.break_time_out || !log.break_time_in);
+}
+
+function aggregateRecords(records, employeeMap) {
+  const groups = new Map();
+  records.forEach(record => {
+    const employee = employeeMap.get(String(record.employee_id || '').toLowerCase());
+    const department = record.department || employee?.department || 'Unassigned';
+    const current = groups.get(department) || { department, employeeKeys: new Set(), records: [], basicPay: 0, payroll: 0, otCost: 0, otHours: 0, nightDiff: 0, allowances: 0, holidayPay: 0 };
+    current.records.push(record);
+    current.employeeKeys.add(String(record.employee_id || record.id));
+    current.basicPay += Number(record.basic_pay) || 0;
+    current.payroll += Number(record.gross_pay) || 0;
+    current.otCost += Number(record.overtime_pay) || 0;
+    current.otHours += Number(record.overtime_hours) || 0;
+    current.nightDiff += Number(record.night_diff_pay) || 0;
+    current.allowances += (Number(record.allowance_pay) || Number(record.allowances) || Number(record.incentive_pay) || 0);
+    current.holidayPay += Number(record.holiday_pay) || 0;
+    groups.set(department, current);
+  });
+  return [...groups.values()].map(row => ({ ...row, employees: row.employeeKeys.size, average: row.employeeKeys.size ? row.payroll / row.employeeKeys.size : 0, otPercent: row.payroll ? row.otCost / row.payroll * 100 : 0 })).sort((a, b) => b.payroll - a.payroll);
 }
 
 export default function ManagementReports() {
-  const { activeCompany } = useCompany();
+  const { activeCompany, activeCompanyId } = useCompany();
+  const companyId = activeCompanyId || activeCompany?.id;
   const [periodOffset, setPeriodOffset] = useState(0);
-  const [otEmployee, setOtEmployee] = useState(null);
+  const [department, setDepartment] = useState('all');
+  const [employmentStatus, setEmploymentStatus] = useState('active');
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [selectedDepartment, setSelectedDepartment] = useState(null);
   const [attendanceDate, setAttendanceDate] = useState(null);
-  const [attendanceDepartment, setAttendanceDepartment] = useState(null);
-  const companyId = activeCompany?.id;
-  const period = getPayrollPeriodForDate(new Date(), activeCompany, periodOffset);
+  const fallbackPeriod = getPayrollPeriodForDate(new Date(), activeCompany, periodOffset);
 
-  const { data: employees = [], isLoading: employeesLoading } = useQuery({
-    queryKey: ['management-reports-employees', companyId],
-    queryFn: () => appApi.entities.Employee.filter({ company_profile_id: companyId, status: 'active' }, 'last_name', 5000),
-    enabled: Boolean(companyId),
-  });
-  const { data: logs = [], isLoading: logsLoading } = useQuery({
-    queryKey: ['management-reports-attendance', companyId, period.start_date, period.end_date],
-    queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: companyId, date: { $gte: period.start_date, $lte: period.end_date } }, 'date', 10000),
-    enabled: Boolean(companyId),
-  });
-  const { data: requests = [], isLoading: requestsLoading } = useQuery({
-    queryKey: ['management-reports-ot', companyId, period.start_date, period.end_date],
-    queryFn: () => appApi.entities.OvertimeRequest.filter({ company_profile_id: companyId, status: 'approved', date: { $gte: period.start_date, $lte: period.end_date } }, 'date', 10000),
-    enabled: Boolean(companyId),
+  const periodsQuery = useQuery({ queryKey: ['management-dashboard-periods', companyId], queryFn: () => appApi.entities.PayrollPeriod.filter({ company_profile_id: companyId }, '-start_date', 50), enabled: Boolean(companyId) });
+  const employeesQuery = useQuery({ queryKey: ['management-dashboard-employees', companyId], queryFn: () => appApi.entities.Employee.filter({ company_profile_id: companyId }, 'last_name', 5000), enabled: Boolean(companyId) });
+  const periods = periodsQuery.data || [];
+  const sortedPeriods = useMemo(() => [...periods].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))), [periods]);
+  const selectedPeriod = useMemo(() => {
+    const eligible = sortedPeriods.filter(item => item.start_date <= fallbackPeriod.end_date);
+    return eligible.at(-1) || { ...fallbackPeriod, id: null };
+  }, [sortedPeriods, fallbackPeriod.start_date, fallbackPeriod.end_date]);
+  const selectedIndex = sortedPeriods.findIndex(item => String(item.id) === String(selectedPeriod.id));
+  const previousPeriod = selectedIndex > 0 ? sortedPeriods[selectedIndex - 1] : null;
+  const trendPeriods = sortedPeriods.slice(Math.max(0, selectedIndex - 6), selectedIndex + 1);
+
+  const recordsQuery = useQuery({ queryKey: ['management-dashboard-records', companyId], queryFn: () => appApi.entities.PayrollRecord.filter({ company_profile_id: companyId }, '-created_date', 10000), enabled: Boolean(companyId) });
+  const logsQuery = useQuery({ queryKey: ['management-dashboard-attendance', companyId, selectedPeriod.start_date, selectedPeriod.end_date], queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: companyId, date: { $gte: selectedPeriod.start_date, $lte: selectedPeriod.end_date } }, 'date', 10000), enabled: Boolean(companyId && selectedPeriod.start_date) });
+  const requestsQuery = useQuery({ queryKey: ['management-dashboard-ot', companyId, selectedPeriod.start_date, selectedPeriod.end_date], queryFn: () => appApi.entities.OvertimeRequest.filter({ company_profile_id: companyId, date: { $gte: selectedPeriod.start_date, $lte: selectedPeriod.end_date } }, 'date', 10000), enabled: Boolean(companyId && selectedPeriod.start_date) });
+  const refresh = () => { periodsQuery.refetch(); employeesQuery.refetch(); recordsQuery.refetch(); logsQuery.refetch(); requestsQuery.refetch(); };
+
+  const employees = employeesQuery.data || [];
+  const allRecords = recordsQuery.data || [];
+  const logs = logsQuery.data || [];
+  const requests = requestsQuery.data || [];
+  const employeeMap = useMemo(() => new Map(employees.flatMap(employee => [[String(employee.id || '').toLowerCase(), employee], [String(employee.employee_id || '').toLowerCase(), employee]])), [employees]);
+  const departments = useMemo(() => [...new Set(employees.map(employee => employee.department || 'Unassigned'))].sort(), [employees]);
+  const employeeAllowed = employee => (employmentStatus === 'all' || employee?.status === employmentStatus) && (department === 'all' || (employee?.department || 'Unassigned') === department);
+  const recordAllowed = record => employeeAllowed(employeeMap.get(String(record.employee_id || '').toLowerCase()) || { department: record.department, status: 'active' });
+  const currentRecords = allRecords.filter(record => String(record.payroll_period_id) === String(selectedPeriod.id) && recordAllowed(record));
+  const previousRecords = previousPeriod ? allRecords.filter(record => String(record.payroll_period_id) === String(previousPeriod.id) && recordAllowed(record)) : [];
+  const filteredEmployees = employees.filter(employeeAllowed);
+  const filteredLogs = logs.filter(log => employeeAllowed(employeeMap.get(employeeKey(log)) || {}));
+  const filteredRequests = requests.filter(request => employeeAllowed(employeeMap.get(employeeKey(request)) || {}));
+
+  const totalPayroll = sum(currentRecords, 'gross_pay');
+  const previousPayroll = sum(previousRecords, 'gross_pay');
+  const overtimeCost = sum(currentRecords, 'overtime_pay');
+  const previousOtCost = sum(previousRecords, 'overtime_pay');
+  const overtimeHours = sum(currentRecords, 'overtime_hours');
+  const nightDiff = sum(currentRecords, 'night_diff_pay');
+  const previousNightDiff = sum(previousRecords, 'night_diff_pay');
+  const payrollEmployees = new Set(currentRecords.map(record => String(record.employee_id || record.id))).size;
+  const payrollChange = percentChange(totalPayroll, previousPayroll);
+  const previousDepartments = aggregateRecords(previousRecords, employeeMap);
+  const departmentRows = aggregateRecords(currentRecords, employeeMap).map(row => {
+    const previous = previousDepartments.find(item => item.department === row.department);
+    return { ...row, change: percentChange(row.payroll, previous?.payroll || 0) };
   });
 
-  const activeEmployees = useMemo(() => employees.filter(employee => !employee.special_rate_enabled), [employees]);
-  const employeeMap = useMemo(() => new Map(activeEmployees.flatMap(employee => [
-    [String(employee.id || '').toLowerCase(), employee],
-    [String(employee.employee_id || '').toLowerCase(), employee],
-  ])), [activeEmployees]);
-  const logsByDate = useMemo(() => logs.reduce((grouped, log) => {
-    (grouped[log.date] ||= []).push(log);
-    return grouped;
-  }, {}), [logs]);
-  const otRows = useMemo(() => {
+  const trends = trendPeriods.map(period => {
+    const rows = allRecords.filter(record => String(record.payroll_period_id) === String(period.id) && recordAllowed(record));
+    return { period, label: periodLabel(period), shortLabel: String(period.start_date || '').slice(5), payroll: sum(rows, 'gross_pay'), overtimeHours: sum(rows, 'overtime_hours'), overtimeCost: sum(rows, 'overtime_pay') };
+  });
+  const attendanceByKey = new Map();
+  filteredLogs.forEach(log => attendanceByKey.set(`${log.date}:${employeeKey(log)}`, log));
+  const attendanceCounts = { Present: 0, Late: 0, Incomplete: 0, Leave: 0 };
+  attendanceByKey.forEach(log => {
+    if (isIncompletePunch(log)) attendanceCounts.Incomplete += 1;
+    else if ((Number(log.late_minutes) || 0) > 0) attendanceCounts.Late += 1;
+    else if (log.time_in) attendanceCounts.Present += 1;
+    else if (String(log.day_type || '').includes('leave')) attendanceCounts.Leave += 1;
+  });
+  const attendanceData = Object.entries(attendanceCounts).map(([name, value]) => ({ name, value, color: ATTENDANCE_COLORS[name] }));
+  const attendanceTotal = attendanceData.reduce((total, item) => total + item.value, 0);
+  const incompleteLogs = filteredLogs.filter(isIncompletePunch);
+  const pendingOt = filteredRequests.filter(request => !['approved', 'denied', 'rejected', 'cancelled'].includes(String(request.status || '').toLowerCase()));
+  const approvedRequests = filteredRequests.filter(request => String(request.status).toLowerCase() === 'approved');
+
+  const topOvertime = useMemo(() => {
     const groups = new Map();
-    requests.forEach(request => {
+    approvedRequests.forEach(request => {
       const key = employeeKey(request);
       const employee = employeeMap.get(key);
-      const current = groups.get(key) || { key, employee, requests: [], requested: 0, approved: 0 };
+      const current = groups.get(key) || { key, employee, requests: [], approvedHours: 0, otCost: 0 };
       current.requests.push(request);
-      current.requested += Number(request.requested_hours) || 0;
-      current.approved += Number(request.approved_hours ?? request.requested_hours) || 0;
+      current.approvedHours += Number(request.approved_hours ?? request.requested_hours) || 0;
       groups.set(key, current);
     });
-    return [...groups.values()].sort((a, b) => fullName(a.employee).localeCompare(fullName(b.employee)));
-  }, [requests, employeeMap]);
-  const departments = useMemo(() => [...new Set(activeEmployees.map(employee => employee.department || 'Unassigned'))].sort(), [activeEmployees]);
-  const dailyRows = useMemo(() => periodDates(period.start_date, period.end_date).flatMap(date => departments.map(department => {
-    const departmentEmployees = activeEmployees.filter(employee => (employee.department || 'Unassigned') === department);
-    const departmentKeys = new Set(departmentEmployees.flatMap(employee => [String(employee.id || '').toLowerCase(), String(employee.employee_id || '').toLowerCase()]));
-    const departmentLogs = (logsByDate[date] || []).filter(log => departmentKeys.has(employeeKey(log)));
-    return { date, department, ...summarize(departmentLogs, departmentEmployees.length) };
-  })), [period.start_date, period.end_date, departments, logsByDate, activeEmployees]);
-  const periodSummary = useMemo(() => summarize(logs, activeEmployees.length), [logs, activeEmployees.length]);
-  const loading = employeesLoading || logsLoading || requestsLoading;
-  const detailRows = useMemo(() => {
-    if (!attendanceDate) return [];
-    const dayLogs = logsByDate[attendanceDate] || [];
-    const byEmployee = new Map(dayLogs.map(log => [employeeKey(log), log]));
-    return activeEmployees
-      .filter(employee => !attendanceDepartment || (employee.department || 'Unassigned') === attendanceDepartment)
-      .map(employee => ({ employee, log: byEmployee.get(String(employee.id || '').toLowerCase()) || byEmployee.get(String(employee.employee_id || '').toLowerCase()) || null }));
-  }, [attendanceDate, attendanceDepartment, logsByDate, activeEmployees]);
+    currentRecords.forEach(record => {
+      const key = String(record.employee_id || '').toLowerCase();
+      const current = groups.get(key);
+      if (current) current.otCost += Number(record.overtime_pay) || 0;
+    });
+    return [...groups.values()].sort((a, b) => b.approvedHours - a.approvedHours).slice(0, 10);
+  }, [approvedRequests, currentRecords, employeeMap]);
 
-  const SummaryTiles = ({ value }) => (
-    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 border-b border-border">
-      {[
-        ['Employees', value.employees], ['Present Days', value.present], ['Complete', value.complete], ['Incomplete', value.incomplete],
-        ['Work Hours', hours(value.workHours)], ['Undertime', minutes(value.undertime)], ['Overtime', hours(value.overtime)], ['Night Diff', hours(value.nightDiff)],
-      ].map(([label, number]) => <div key={label} className="px-4 py-3 border-r border-border last:border-r-0"><p className="text-xs text-muted-foreground">{label}</p><p className="text-lg font-semibold">{number}</p></div>)}
+  const allowances = currentRecords.reduce((total, record) => total + (Number(record.allowance_pay) || Number(record.allowances) || Number(record.incentive_pay) || 0), 0);
+  const composition = [
+    { name: 'Basic Pay', value: sum(currentRecords, 'basic_pay'), display: money(sum(currentRecords, 'basic_pay')) },
+    { name: 'Overtime Pay', value: overtimeCost, display: money(overtimeCost) },
+    { name: 'Night Differential', value: nightDiff, display: money(nightDiff) },
+    { name: 'Allowances', value: allowances, display: money(allowances) },
+    { name: 'Holiday Pay', value: sum(currentRecords, 'holiday_pay'), display: money(sum(currentRecords, 'holiday_pay')) },
+  ].filter(item => item.value > 0);
+  const knownComposition = composition.reduce((total, item) => total + item.value, 0);
+  if (totalPayroll - knownComposition > 0.01) composition.push({ name: 'Other Earnings', value: totalPayroll - knownComposition, display: money(totalPayroll - knownComposition) });
+
+  const budgetAmount = Number(activeCompany?.payroll_period_budget || activeCompany?.payroll_budget_per_period) || null;
+  const budgetPercent = budgetAmount ? totalPayroll / budgetAmount * 100 : null;
+  const insights = [];
+  if (payrollChange != null) insights.push(`Gross payroll ${payrollChange >= 0 ? 'increased' : 'decreased'} by ${Math.abs(payrollChange).toFixed(1)}% compared with the previous period.`);
+  if (departmentRows[0] && totalPayroll) insights.push(`${departmentRows[0].department} accounts for ${(departmentRows[0].payroll / totalPayroll * 100).toFixed(1)}% of gross payroll.`);
+  const otLeader = [...departmentRows].sort((a, b) => b.otHours - a.otHours)[0];
+  if (otLeader && overtimeHours) insights.push(`${otLeader.department} generated ${(otLeader.otHours / overtimeHours * 100).toFixed(1)}% of approved overtime hours.`);
+  const highOtDepartments = departmentRows.filter(row => row.otPercent > OT_THRESHOLDS.criticalPercent);
+  if (highOtDepartments.length) insights.push(`${highOtDepartments.map(row => row.department).join(', ')} exceeded the ${OT_THRESHOLDS.criticalPercent}% overtime-cost threshold.`);
+  if (budgetPercent != null) insights.push(`Payroll has used ${budgetPercent.toFixed(1)}% of the configured period budget.`);
+  if (incompleteLogs.length || pendingOt.length) insights.push(`${incompleteLogs.length} incomplete attendance log${incompleteLogs.length === 1 ? '' : 's'} and ${pendingOt.length} unprocessed OT request${pendingOt.length === 1 ? '' : 's'} require review.`);
+
+  const loading = periodsQuery.isLoading || employeesQuery.isLoading || recordsQuery.isLoading || logsQuery.isLoading || requestsQuery.isLoading;
+  const error = periodsQuery.error || employeesQuery.error || recordsQuery.error || logsQuery.error || requestsQuery.error;
+  const selectTrendPeriod = period => {
+    const index = sortedPeriods.findIndex(item => String(item.id) === String(period.id));
+    if (index >= 0 && selectedIndex >= 0) setPeriodOffset(value => value + index - selectedIndex);
+  };
+  const exportCsv = () => {
+    const header = ['Department', 'Employees', 'Basic Pay', 'Gross Payroll', 'OT Cost', 'OT Hours', 'Night Differential', 'Allowances', 'Average Payroll', 'OT %'];
+    const rows = departmentRows.map(row => [row.department, row.employees, row.basicPay, row.payroll, row.otCost, row.otHours, row.nightDiff, row.allowances, row.average, row.otPercent]);
+    const csv = [header, ...rows].map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `payroll-management-${selectedPeriod.start_date}-${selectedPeriod.end_date}.csv`; anchor.click(); URL.revokeObjectURL(url);
+  };
+
+  if (error) return <div className="p-6"><Card className="border-red-200 bg-red-50 p-6"><h2 className="font-semibold text-red-700">Unable to load management dashboard</h2><p className="mt-1 text-sm text-red-600">{error.message}</p><Button className="mt-4" variant="outline" onClick={refresh}>Retry</Button></Card></div>;
+
+  return <div className="w-full space-y-4 p-4 md:p-6">
+    <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-center">
+      <div><h1 className="flex items-center gap-2 text-2xl font-bold"><BarChart3 className="h-6 w-6 text-primary" />Payroll Management Dashboard</h1><p className="text-sm text-muted-foreground">Overview of gross payroll cost, overtime and attendance performance</p></div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="icon" onClick={() => setPeriodOffset(value => value - 1)} aria-label="Previous period"><ChevronLeft className="h-4 w-4" /></Button>
+        <Button variant="outline" className="min-w-52 justify-start gap-2"><CalendarDays className="h-4 w-4" />{periodLabel(selectedPeriod)}</Button>
+        <Button variant="outline" size="icon" onClick={() => setPeriodOffset(value => value + 1)} disabled={periodOffset >= 0} aria-label="Next period"><ChevronRight className="h-4 w-4" /></Button>
+        <Select value={department} onValueChange={setDepartment}><SelectTrigger className="w-44"><Filter className="mr-2 h-4 w-4" /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All departments</SelectItem>{departments.map(item => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select>
+        <Select value={employmentStatus} onValueChange={setEmploymentStatus}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="all">All status</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent></Select>
+        <Button variant="outline" size="icon" onClick={refresh} aria-label="Refresh"><RefreshCw className="h-4 w-4" /></Button>
+        <Button variant="outline" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />Export</Button>
+      </div>
     </div>
-  );
 
-  return <div className="w-full p-4 md:p-6 space-y-5">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="h-6 w-6 text-primary" />Management Reports</h1><p className="text-sm text-muted-foreground">Payroll-period overtime and attendance reports</p></div>
-      <div className="flex items-center gap-2"><Button variant="outline" size="icon" onClick={() => setPeriodOffset(value => value - 1)}><ChevronLeft className="h-4 w-4" /></Button><Button variant="outline" onClick={() => setPeriodOffset(0)}>{period.label}</Button><Button variant="outline" size="icon" onClick={() => setPeriodOffset(value => value + 1)} disabled={periodOffset >= 0}><ChevronRight className="h-4 w-4" /></Button></div>
+    {department !== 'all' && <div className="flex"><Badge variant="secondary" className="gap-2 px-3 py-1.5">Department: {department}<button onClick={() => setDepartment('all')} aria-label="Clear department filter"><X className="h-3.5 w-3.5" /></button></Badge></div>}
+
+    {(incompleteLogs.length > 0 || pendingOt.length > 0) && <Card className="border-amber-300 bg-amber-50 p-4 text-amber-950">
+      <div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600"/><div className="flex-1"><h2 className="text-sm font-semibold">Payroll data may be incomplete</h2><p className="mt-0.5 text-xs text-amber-800">Management review is required before relying on this period’s totals.</p><div className="mt-3 flex flex-wrap gap-2">{incompleteLogs.length > 0 && <Button size="sm" variant="outline" className="border-amber-300 bg-white" onClick={() => setAttendanceDate(incompleteLogs[0]?.date)}>{incompleteLogs.length} missing punch record{incompleteLogs.length === 1 ? '' : 's'}</Button>}{pendingOt.length > 0 && <Badge className="bg-amber-600 px-3 py-2">{pendingOt.length} unprocessed OT request{pendingOt.length === 1 ? '' : 's'}</Badge>}</div></div></div>
+    </Card>}
+
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+      <KpiCard label="Total Gross Payroll" value={money(totalPayroll)} icon={WalletCards} color="bg-blue-100 text-blue-700" change={payrollChange}/>
+      <KpiCard label="Overtime Cost" value={money(overtimeCost)} icon={Clock3} color="bg-violet-100 text-violet-700" change={percentChange(overtimeCost, previousOtCost)} inverse/>
+      <KpiCard label="Night Differential" value={money(nightDiff)} icon={Moon} color="bg-orange-100 text-orange-600" change={percentChange(nightDiff, previousNightDiff)} inverse/>
+      <KpiCard label="Payroll Employees" value={payrollEmployees || filteredEmployees.length} icon={Users} color="bg-emerald-100 text-emerald-700" detail={currentRecords.length ? `${payrollEmployees} included in payroll` : `${filteredEmployees.length} active employees`}/>
+      <KpiCard label="Average Gross Pay" value={money(payrollEmployees ? totalPayroll / payrollEmployees : 0)} icon={PhilippinePeso} color="bg-cyan-100 text-cyan-700" change={percentChange(payrollEmployees ? totalPayroll / payrollEmployees : 0, previousRecords.length ? previousPayroll / new Set(previousRecords.map(r => r.employee_id)).size : 0)} />
+      <KpiCard label="Payroll vs Last Period" value={payrollChange == null ? '—' : `${payrollChange >= 0 ? '+' : ''}${payrollChange.toFixed(1)}%`} icon={payrollChange > 0 ? TrendingUp : TrendingDown} color="bg-red-100 text-red-600" change={payrollChange} detail={`${money(totalPayroll - previousPayroll)} difference`} inverse/>
     </div>
 
-    <Card className="overflow-hidden">
-      <div className="px-4 py-3 border-b"><div className="flex justify-between"><div><h2 className="font-semibold">OT Summary per Employee</h2><p className="text-xs text-muted-foreground">Approved overtime for {period.label}</p></div><Badge variant="secondary">{otRows.length} employees</Badge></div></div>
-      <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted/60 text-muted-foreground"><tr>{['Employee','Department','Requests','Requested OT','Approved OT','Action'].map(label => <th key={label} className="text-left font-medium px-4 py-2">{label}</th>)}</tr></thead><tbody>
-        {!loading && otRows.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-muted-foreground">No approved overtime in this payroll period.</td></tr>}
-        {otRows.map(row => <tr key={row.key} className="border-t"><td className="px-4 py-3"><p className="font-medium">{fullName(row.employee) || row.requests[0]?.employee_name || 'Unknown employee'}</p><p className="text-xs text-muted-foreground">{row.employee?.employee_id}</p></td><td className="px-4 py-3">{row.employee?.department || '—'}</td><td className="px-4 py-3">{row.requests.length}</td><td className="px-4 py-3">{hours(row.requested)}</td><td className="px-4 py-3 text-primary font-medium">{hours(row.approved)}</td><td className="px-4 py-3"><Button size="sm" variant="outline" onClick={() => setOtEmployee(row)}><Eye className="h-4 w-4 mr-1" />View Details</Button></td></tr>)}
-      </tbody></table></div>
-    </Card>
+    {!loading && currentRecords.length === 0 && <Card className="border-dashed p-10 text-center"><BriefcaseBusiness className="mx-auto h-9 w-9 text-muted-foreground"/><h2 className="mt-3 font-semibold">Payroll has not been processed for this period</h2><p className="mt-1 text-sm text-muted-foreground">Attendance insights remain available, while payroll charts will populate after payroll records are generated.</p></Card>}
 
-    <Card className="overflow-hidden">
-      <div className="px-4 py-3 border-b"><h2 className="font-semibold">Attendance Summary</h2><p className="text-xs text-muted-foreground">Daily attendance totals for {period.label}</p></div>
-      <SummaryTiles value={periodSummary} />
-      <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted/60 text-muted-foreground"><tr>{['Date','Department','Employees','Present','Complete','Incomplete','Work Hours','Undertime','Overtime','Night Diff','Action'].map(label => <th key={label} className="text-left font-medium px-4 py-2">{label}</th>)}</tr></thead><tbody>
-        {dailyRows.map(row => <tr key={`${row.date}:${row.department}`} className="border-t"><td className="px-4 py-3 font-medium">{row.date}</td><td className="px-4 py-3 font-medium text-muted-foreground">{row.department}</td><td className="px-4 py-3">{row.employees}</td><td className="px-4 py-3">{row.present}</td><td className="px-4 py-3 text-emerald-700">{row.complete}</td><td className="px-4 py-3 text-amber-700">{row.incomplete}</td><td className="px-4 py-3">{hours(row.workHours)}</td><td className="px-4 py-3">{minutes(row.undertime)}</td><td className="px-4 py-3 text-blue-700">{hours(row.overtime)}</td><td className="px-4 py-3 text-violet-700">{hours(row.nightDiff)}</td><td className="px-4 py-3"><Button size="sm" variant="outline" onClick={() => { setAttendanceDepartment(row.department); setAttendanceDate(row.date); }}><Eye className="h-4 w-4 mr-1" />View Day</Button></td></tr>)}
-      </tbody></table></div>
-    </Card>
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+      <ChartCard title="Payroll Cost Trend" subtitle="Gross payroll across processed periods"><TrendChart data={trends} dataKey="payroll" color="#315ce8" formatter={compactMoney} onPeriod={selectTrendPeriod}/></ChartCard>
+      <ChartCard title="Overtime Hours Trend" subtitle="Payroll-calculated approved OT hours"><TrendChart data={trends} dataKey="overtimeHours" color="#7c3aed" formatter={hours} onPeriod={selectTrendPeriod}/></ChartCard>
+      <ChartCard title="Overtime Cost Trend" subtitle="Overtime amount stored in payroll records"><TrendChart data={trends} dataKey="overtimeCost" color="#9b43e6" formatter={compactMoney} onPeriod={selectTrendPeriod}/></ChartCard>
+      <ChartCard title="Attendance Overview" subtitle="One status per employee and date"><Donut data={attendanceData} total={attendanceTotal} totalLabel="Attendance days" colors={Object.values(ATTENDANCE_COLORS)}/></ChartCard>
+    </div>
 
-    <Dialog open={Boolean(otEmployee)} onOpenChange={open => !open && setOtEmployee(null)}><DialogContent className="max-w-5xl"><DialogHeader><DialogTitle>Employee OT Details — {fullName(otEmployee?.employee)} · {otEmployee?.employee?.department || 'Unassigned'}</DialogTitle></DialogHeader><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted"><tr>{['Date','Department','Time In(1)','Time Out(2)','Requested','Approved','Reason'].map(label => <th key={label} className="text-left px-3 py-2">{label}</th>)}</tr></thead><tbody>{otEmployee?.requests.map(request => { const log = logs.find(item => item.date === request.date && employeeKey(item) === otEmployee.key); return <tr key={request.id} className="border-t"><td className="px-3 py-3">{request.date}</td><td className="px-3 py-3">{otEmployee?.employee?.department || request.department || 'Unassigned'}</td><td className="px-3 py-3">{punch(log?.time_in)}</td><td className="px-3 py-3">{punch(log?.time_out)}</td><td className="px-3 py-3">{hours(request.requested_hours)}</td><td className="px-3 py-3">{hours(request.approved_hours ?? request.requested_hours)}</td><td className="px-3 py-3">{request.reason || '—'}</td></tr>})}</tbody></table></div></DialogContent></Dialog>
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+      <ChartCard title="Payroll Cost by Department" subtitle="Click a bar to filter the dashboard"><ResponsiveContainer width="100%" height={250}><BarChart data={departmentRows.slice(0, 10)} layout="vertical" margin={{ left: 10, right: 20 }}><CartesianGrid strokeDasharray="3 3" horizontal={false}/><XAxis type="number" tickFormatter={compactMoney} tick={{ fontSize: 9 }}/><YAxis type="category" dataKey="department" width={85} tick={{ fontSize: 10 }}/><Tooltip formatter={value => money(value)}/><Bar dataKey="payroll" fill="#315ce8" radius={[0, 5, 5, 0]} cursor="pointer" onClick={row => setDepartment(row.department)}/></BarChart></ResponsiveContainer></ChartCard>
+      <ChartCard title="Overtime Hours by Department" subtitle={`Red bars exceed ${OT_THRESHOLDS.criticalPercent}% of payroll`}><ResponsiveContainer width="100%" height={250}><BarChart data={[...departmentRows].sort((a,b) => b.otHours-a.otHours).slice(0,10)} layout="vertical" margin={{ left: 10, right: 20 }}><CartesianGrid strokeDasharray="3 3" horizontal={false}/><XAxis type="number" tickFormatter={hours} tick={{ fontSize: 9 }}/><YAxis type="category" dataKey="department" width={85} tick={{ fontSize: 10 }}/><Tooltip formatter={value => hours(value)}/><Bar dataKey="otHours" radius={[0,5,5,0]} cursor="pointer" onClick={row => setDepartment(row.department)}>{departmentRows.map(row => <Cell key={row.department} fill={row.otPercent > OT_THRESHOLDS.criticalPercent ? '#e54b4b' : '#8b5cf6'}/>)}</Bar></BarChart></ResponsiveContainer></ChartCard>
+      <ChartCard title="Payroll vs Overtime" subtitle="Bubble size represents payroll-covered employees"><ResponsiveContainer width="100%" height={250}><ComposedChart margin={{ left: 4, right: 10 }}><CartesianGrid strokeDasharray="3 3"/><XAxis type="number" dataKey="payroll" name="Payroll" tickFormatter={compactMoney} tick={{fontSize:9}}/><YAxis type="number" dataKey="otHours" name="OT Hours" tickFormatter={hours} tick={{fontSize:9}}/><Tooltip cursor={{strokeDasharray:'3 3'}} formatter={(value,name) => name === 'Payroll' ? money(value) : hours(value)}/><Scatter data={departmentRows} fill="#315ce8" onClick={row => setDepartment(row.department)} shape={({cx,cy,payload}) => <g cursor="pointer"><circle cx={cx} cy={cy} r={Math.max(5, Math.min(18, 5 + payload.employees))} fill="#315ce8" fillOpacity=".72"/><text x={cx} y={cy-12-Math.min(10,payload.employees)} fontSize="9" textAnchor="middle">{payload.department}</text></g>}/></ComposedChart></ResponsiveContainer></ChartCard>
+      <ChartCard title="Payroll Composition" subtitle="Components of gross payroll"><Donut data={composition} total={money(totalPayroll)} totalLabel="Gross payroll"/></ChartCard>
+    </div>
 
-    <Dialog open={Boolean(attendanceDate)} onOpenChange={open => !open && setAttendanceDate(null)}><DialogContent className="max-w-[96vw]"><DialogHeader><DialogTitle>Daily Punch Audit — {attendanceDate}</DialogTitle></DialogHeader><div className="max-h-[70vh] overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-muted"><tr>{['Employee','Department','Time In(1)','Time Out(1)','Time In(2)','Time Out(2)','Hours','OT','Review','Status'].map(label => <th key={label} className="text-left px-3 py-2 whitespace-nowrap">{label}</th>)}</tr></thead><tbody>{detailRows.map(({ employee, log }) => { const missing = log ? [['Time In(1)',log.time_in],['Time Out(1)',log.break_time_out],['Time In(2)',log.break_time_in],['Time Out(2)',log.time_out]].filter(([,value]) => !value).map(([label]) => label) : []; return <tr key={employee.id} className="border-t"><td className="px-3 py-3"><p className="font-medium">{fullName(employee)}</p><p className="text-xs text-muted-foreground">{employee.employee_id}</p></td><td className="px-3 py-3">{employee.department || '—'}</td><td className="px-3 py-3">{punch(log?.time_in)}</td><td className="px-3 py-3">{punch(log?.break_time_out)}</td><td className="px-3 py-3">{punch(log?.break_time_in)}</td><td className="px-3 py-3">{punch(log?.time_out)}</td><td className="px-3 py-3">{hours(log?.hours_worked)}</td><td className="px-3 py-3">{hours(log?.overtime_hours)}</td><td className="px-3 py-3">{!log ? 'No attendance log' : missing.length ? `Missing ${missing.join(', ')}` : 'Complete'}</td><td className="px-3 py-3"><Badge variant={log?.status === 'approved' ? 'default' : 'secondary'}>{log?.status || 'No log'}</Badge></td></tr>})}</tbody></table></div></DialogContent></Dialog>
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+      <Card className="overflow-hidden xl:col-span-2"><div className="border-b px-4 py-3"><h3 className="text-sm font-semibold">Department Summary</h3><p className="text-[11px] text-muted-foreground">Gross payroll and approved overtime performance</p></div><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-xs"><thead className="bg-muted/60 text-muted-foreground"><tr>{['Department','Employees','Basic Pay','Gross Payroll','OT Cost','OT Hours','Night Diff','Allowances','Average','OT %','Change','Action'].map(label => <th key={label} className="whitespace-nowrap px-3 py-2 text-left font-medium">{label}</th>)}</tr></thead><tbody>{departmentRows.map((row,index) => <tr key={row.department} className="border-t"><td className="px-3 py-2.5 font-semibold"><span className="mr-2 inline-block h-2 w-2 rounded-full" style={{background:COLORS[index%COLORS.length]}}/>{row.department}</td><td className="px-3 py-2.5">{row.employees}</td><td className="px-3 py-2.5">{money(row.basicPay)}</td><td className="px-3 py-2.5 font-semibold">{money(row.payroll)}</td><td className="px-3 py-2.5">{money(row.otCost)}</td><td className="px-3 py-2.5">{hours(row.otHours)}</td><td className="px-3 py-2.5">{money(row.nightDiff)}</td><td className="px-3 py-2.5">{money(row.allowances)}</td><td className="px-3 py-2.5">{money(row.average)}</td><td className={`px-3 py-2.5 font-semibold ${row.otPercent > 6 ? 'text-red-600' : row.otPercent >= 3 ? 'text-amber-600' : 'text-emerald-600'}`}>{row.otPercent.toFixed(2)}%</td><td className="px-3 py-2.5">{row.change == null ? '—' : `${row.change >= 0 ? '+' : ''}${row.change.toFixed(1)}%`}</td><td className="px-3 py-2.5"><Button size="sm" variant="ghost" onClick={() => setSelectedDepartment(row)}><Eye className="mr-1 h-3.5 w-3.5"/>View</Button></td></tr>)}</tbody></table></div></Card>
+
+      <Card className="p-4"><div className="mb-3"><h3 className="text-sm font-semibold">Top Employees by Overtime</h3><p className="text-[11px] text-muted-foreground">Approved OT requests for this period</p></div>{topOvertime.length === 0 ? <EmptyChart>No approved overtime exists for this period.</EmptyChart> : <div className="space-y-3">{topOvertime.map((row,index) => <button key={row.key} className="grid w-full grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2 text-left" onClick={() => setSelectedEmployee(row)}><span className="text-xs text-muted-foreground">{index+1}</span><div className="min-w-0"><div className="flex justify-between gap-2 text-xs"><span className="truncate font-medium">{fullName(row.employee) || row.requests[0]?.employee_name || row.key}</span><span>{hours(row.approvedHours)}</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-blue-500" style={{width:`${row.approvedHours / (topOvertime[0]?.approvedHours || 1) * 100}%`}}/></div><p className="mt-0.5 text-[10px] text-muted-foreground">{row.employee?.department || 'Unassigned'} · {money(row.otCost)}</p></div><ChevronRight className="h-3.5 w-3.5 text-muted-foreground"/></button>)}</div>}</Card>
+
+      <div className="space-y-4"><Card className="p-4"><h3 className="text-sm font-semibold">Payroll Budget</h3>{!budgetAmount ? <div className="flex h-32 flex-col items-center justify-center text-center"><WalletCards className="h-7 w-7 text-muted-foreground"/><p className="mt-2 text-sm font-medium">Payroll budget not configured</p><p className="text-[11px] text-muted-foreground">Add a per-period budget to the company settings.</p></div> : <div className="py-3 text-center"><p className={`text-3xl font-bold ${budgetPercent > 90 ? 'text-red-600' : budgetPercent >= 80 ? 'text-amber-600' : 'text-emerald-600'}`}>{budgetPercent.toFixed(0)}%</p><p className="text-xs text-muted-foreground">of budget used</p><div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div className={`h-full ${budgetPercent > 90 ? 'bg-red-500' : budgetPercent >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{width:`${Math.min(100,budgetPercent)}%`}}/></div><div className="mt-3 flex justify-between text-[11px]"><span>Current {money(totalPayroll)}</span><span>Budget {money(budgetAmount)}</span></div><p className="mt-1 text-[11px] text-muted-foreground">Remaining {money(Math.max(0,budgetAmount-totalPayroll))}</p></div>}</Card><Card className="border-blue-100 bg-blue-50/40 p-4"><h3 className="text-sm font-semibold">Executive Insights</h3><ul className="mt-3 space-y-2">{insights.length ? insights.map((item,index) => <li key={index} className="flex gap-2 text-[11px]"><span className="text-blue-600">✓</span><span>{item}</span></li>) : <li className="text-xs text-muted-foreground">Insights will appear when payroll data is available.</li>}</ul><p className="mt-4 text-[9px] text-muted-foreground">Generated on {new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</p></Card></div>
+    </div>
+
+    <Dialog open={Boolean(selectedDepartment)} onOpenChange={open => !open && setSelectedDepartment(null)}><DialogContent className="max-w-5xl"><DialogHeader><DialogTitle>{selectedDepartment?.department} Department Details</DialogTitle></DialogHeader>{selectedDepartment && <div className="space-y-4"><div className="grid grid-cols-2 gap-3 md:grid-cols-4"><Card className="p-3"><p className="text-xs text-muted-foreground">Gross payroll</p><p className="font-bold">{money(selectedDepartment.payroll)}</p></Card><Card className="p-3"><p className="text-xs text-muted-foreground">Employees</p><p className="font-bold">{selectedDepartment.employees}</p></Card><Card className="p-3"><p className="text-xs text-muted-foreground">OT hours</p><p className="font-bold">{hours(selectedDepartment.otHours)}</p></Card><Card className="p-3"><p className="text-xs text-muted-foreground">OT cost</p><p className="font-bold">{money(selectedDepartment.otCost)}</p></Card></div><div className="max-h-[55vh] overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-muted"><tr><th className="px-3 py-2 text-left">Employee</th><th className="px-3 py-2 text-right">Basic Pay</th><th className="px-3 py-2 text-right">OT Hours</th><th className="px-3 py-2 text-right">OT Cost</th><th className="px-3 py-2 text-right">Gross Pay</th></tr></thead><tbody>{selectedDepartment.records.map(record => <tr key={record.id} className="border-t"><td className="px-3 py-2">{record.employee_name}<p className="text-xs text-muted-foreground">{record.employee_id}</p></td><td className="px-3 py-2 text-right">{money(record.basic_pay)}</td><td className="px-3 py-2 text-right">{hours(record.overtime_hours)}</td><td className="px-3 py-2 text-right">{money(record.overtime_pay)}</td><td className="px-3 py-2 text-right font-semibold">{money(record.gross_pay)}</td></tr>)}</tbody></table></div></div>}</DialogContent></Dialog>
+
+    <Dialog open={Boolean(selectedEmployee)} onOpenChange={open => !open && setSelectedEmployee(null)}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>Employee Overtime — {fullName(selectedEmployee?.employee) || selectedEmployee?.key}</DialogTitle></DialogHeader><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted"><tr>{['Date','Department','Approved Hours','Status','Reason'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead><tbody>{selectedEmployee?.requests.map(request => <tr key={request.id} className="border-t"><td className="px-3 py-3">{request.date}</td><td className="px-3 py-3">{selectedEmployee.employee?.department || request.department || 'Unassigned'}</td><td className="px-3 py-3">{hours(request.approved_hours ?? request.requested_hours)}</td><td className="px-3 py-3"><Badge>{request.status}</Badge></td><td className="px-3 py-3">{request.reason || '—'}</td></tr>)}</tbody></table></div></DialogContent></Dialog>
+
+    <Dialog open={Boolean(attendanceDate)} onOpenChange={open => !open && setAttendanceDate(null)}><DialogContent className="max-w-5xl"><DialogHeader><DialogTitle>Incomplete Punches — {attendanceDate}</DialogTitle></DialogHeader><div className="max-h-[65vh] overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-muted"><tr>{['Employee','Date','Time In(1)','Time Out(1)','Time In(2)','Time Out(2)','Status'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead><tbody>{incompleteLogs.filter(log => !attendanceDate || log.date === attendanceDate).map(log => <tr key={log.id} className="border-t"><td className="px-3 py-2">{log.employee_name || fullName(employeeMap.get(employeeKey(log)))}</td><td className="px-3 py-2">{log.date}</td><td className="px-3 py-2">{log.time_in ? formatManilaTime(log.time_in) : 'Missing'}</td><td className="px-3 py-2">{log.break_time_out ? formatManilaTime(log.break_time_out) : 'Missing'}</td><td className="px-3 py-2">{log.break_time_in ? formatManilaTime(log.break_time_in) : 'Missing'}</td><td className="px-3 py-2">{log.time_out ? formatManilaTime(log.time_out) : 'Missing'}</td><td className="px-3 py-2"><Badge variant="destructive">Incomplete</Badge></td></tr>)}</tbody></table></div></DialogContent></Dialog>
   </div>;
 }
