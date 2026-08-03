@@ -1639,7 +1639,9 @@ export default function Attendance() {
     queryFn: () => entities.filter('Employee', { status: 'active', company_profile_id: activeCompanyId }),
     enabled: !!activeCompanyId,
   });
-  const employees = employeeRecords.filter(employee => !employee.special_rate_enabled);
+  // Special-rate employees use the same AttendanceLog and punch workflow as regular employees.
+  // Their pay computation remains isolated in Special Rate Payroll.
+  const employees = employeeRecords;
 
   const { data: attendanceData = { logs: [], periodLogs: [] }, isLoading: loadingLogs } = useQuery({
     queryKey: ['attendance', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId, startStr, endStr],
