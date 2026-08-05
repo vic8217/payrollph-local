@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { canReceiveBreakTimeAlerts, employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
+import { manilaDateString } from '@/lib/dateUtils';
 
 // super_admin = all access
 // admin = all except daily passcode & user management
@@ -76,18 +77,45 @@ export default function Layout() {
     enabled: !!activeCompanyId && canSeeBreakAlerts,
   });
 
-  const employeesNeedingBreakTime = useMemo(() => employeesMissingBreakTime(employees), [employees]);
+  const { data: shiftSettings = [] } = useQuery({
+    queryKey: ['settings', activeCompanyId, 'break-time-alerts'],
+    queryFn: () => appApi.entities.Settings.filter({ company_profile_id: activeCompanyId }),
+    enabled: !!activeCompanyId && canSeeBreakAlerts,
+  });
+
+  const employeesNeedingBreakTime = useMemo(
+    () => employeesMissingBreakTime(employees, shiftSettings, manilaDateString()),
+    [employees, shiftSettings],
+  );
   const missingBreakTimeCount = employeesNeedingBreakTime.length;
   const breakAlertKey = activeCompanyId && missingBreakTimeCount > 0
-    ? `break-time-alert:${activeCompanyId}:${missingBreakTimeCount}`
+    ? `break-time-alert:${activeCompanyId}:${employeesNeedingBreakTime.map(employee => employee.id).sort().join(',')}`
     : '';
+  const breakAlertStorageKey = activeCompanyId ? `payrollph:break-alert-dismissed:${activeCompanyId}` : '';
 
   useEffect(() => {
-    if (!breakAlertKey || !canSeeBreakAlerts || dismissedBreakAlertKey === breakAlertKey) return;
+    if (!breakAlertKey || !canSeeBreakAlerts) {
+      if (typeof window !== 'undefined' && breakAlertStorageKey) window.localStorage.removeItem(breakAlertStorageKey);
+      if (dismissedBreakAlertKey) setDismissedBreakAlertKey('');
+      setBreakAlertOpen(false);
+      return;
+    }
+    if (dismissedBreakAlertKey === breakAlertKey) return;
+    const storedKey = typeof window !== 'undefined' && breakAlertStorageKey
+      ? window.localStorage.getItem(breakAlertStorageKey)
+      : '';
+    if (storedKey === breakAlertKey) {
+      setDismissedBreakAlertKey(breakAlertKey);
+      setBreakAlertOpen(false);
+      return;
+    }
     setBreakAlertOpen(true);
-  }, [breakAlertKey, canSeeBreakAlerts, dismissedBreakAlertKey]);
+  }, [breakAlertKey, breakAlertStorageKey, canSeeBreakAlerts, dismissedBreakAlertKey]);
 
   const dismissBreakAlert = () => {
+    if (typeof window !== 'undefined' && breakAlertStorageKey && breakAlertKey) {
+      window.localStorage.setItem(breakAlertStorageKey, breakAlertKey);
+    }
     setDismissedBreakAlertKey(breakAlertKey);
     setBreakAlertOpen(false);
   };
@@ -228,7 +256,7 @@ export default function Layout() {
 
   return (
 	    <div className="flex h-screen bg-background overflow-hidden">
-        <Dialog open={breakAlertOpen} onOpenChange={setBreakAlertOpen}>
+        <Dialog open={breakAlertOpen} onOpenChange={open => open ? setBreakAlertOpen(true) : dismissBreakAlert()}>
           <DialogContent className="max-w-md">
             <DialogHeader>
               <div className="flex items-center gap-3">
@@ -262,7 +290,7 @@ export default function Layout() {
             <DialogFooter>
               <Button variant="outline" onClick={dismissBreakAlert}>Dismiss</Button>
               <Button asChild onClick={dismissBreakAlert}>
-                <NavLink to="/work-schedule">Set break times</NavLink>
+                <NavLink to="/settings">Set break times</NavLink>
               </Button>
             </DialogFooter>
           </DialogContent>
