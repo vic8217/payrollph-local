@@ -51,7 +51,9 @@ export async function ensureCashAdvanceAdditionLedger(advance) {
     employee_id: advance.employee_id,
     employee_name: advance.employee_name,
     company_profile_id: advance.company_profile_id,
-    transaction_date: advance.approved_date || new Date().toISOString().slice(0, 10),
+    // Some older approved advances do not have approved_date. Keep their ledger
+    // addition aligned with the request instead of incorrectly posting it today.
+    transaction_date: advance.approved_date || advance.request_date || new Date().toISOString().slice(0, 10),
     transaction_type: 'addition',
     description: advance.reason || 'Cash advance availed',
     amount,
