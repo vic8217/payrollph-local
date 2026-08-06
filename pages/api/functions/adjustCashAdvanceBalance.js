@@ -77,9 +77,6 @@ export default async function handler(req, res) {
     limit: 1,
   });
   if (!advance) return res.status(404).json({ error: "Cash advance not found." });
-  if (advance.advance_type !== "beginning_balance") {
-    return res.status(400).json({ error: "Only the employee's beginning cash advance balance can be adjusted." });
-  }
   if (!["approved", "deducted"].includes(advance.status)) {
     return res.status(400).json({ error: "Only approved or deducted cash advances can be adjusted." });
   }
@@ -120,7 +117,7 @@ export default async function handler(req, res) {
     filter: { employee_id: advance.employee_id, company_profile_id: companyProfileId },
     limit: 1,
   });
-  if (employee) {
+  if (employee && advance.advance_type === "beginning_balance") {
     await updateRecord("Employee", employee.id, {
       cash_advance_beginning_balance: balanceAfter,
       cash_advance_weekly_deduction: weeklyDeduction,
@@ -152,7 +149,7 @@ export default async function handler(req, res) {
     occurred_at: adjustedAt,
     authorized_by: adjustedBy,
     reason,
-    summary: `Beginning cash advance balance ${adjustmentType}d by ₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}. Balance: ₱${balanceBefore.toLocaleString("en-PH", { minimumFractionDigits: 2 })} to ₱${balanceAfter.toLocaleString("en-PH", { minimumFractionDigits: 2 })}; weekly deduction: ₱${weeklyDeduction.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`,
+    summary: `${advance.advance_type === "beginning_balance" ? "Beginning cash advance balance" : "Cash advance balance"} ${adjustmentType}d by ₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}. Balance: ₱${balanceBefore.toLocaleString("en-PH", { minimumFractionDigits: 2 })} to ₱${balanceAfter.toLocaleString("en-PH", { minimumFractionDigits: 2 })}; weekly deduction: ₱${weeklyDeduction.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`,
     employee_id: advance.employee_id,
     employee_name: advance.employee_name,
     amount,

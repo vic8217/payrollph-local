@@ -395,7 +395,7 @@ export default function CashAdvance() {
     const adjustableAdvances = adjustmentDialog
       ? cashAdvances.filter(ca =>
         ca.employee_id === adjustmentDialog.employee.employee_id &&
-        ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status)
+        ['approved', 'deducted'].includes(ca.status)
       )
       : [];
     const selectedAdvance = adjustmentDialog?.cashAdvance ||
@@ -757,10 +757,16 @@ export default function CashAdvance() {
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
-                  disabled={!selectedLedgerEmployee || !cashAdvances.some(ca => ca.employee_id === selectedLedgerEmployeeId && ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status))}
-                  onClick={() => openAdjustmentDialog(null, selectedLedgerEmployee)}
+                  disabled={!selectedLedgerEmployee || (selectedLedgerCashAdvance
+                    ? !['approved', 'deducted'].includes(selectedLedgerCashAdvance.status)
+                    : !cashAdvances.some(ca => ca.employee_id === selectedLedgerEmployeeId && ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status)))}
+                  onClick={() => openAdjustmentDialog(selectedLedgerCashAdvance || null, selectedLedgerEmployee)}
                 >
-                  <SlidersHorizontal className="h-3.5 w-3.5" /> Adjust Beginning Balance
+                  <SlidersHorizontal className="h-3.5 w-3.5" /> {selectedLedgerCashAdvance?.advance_type === 'beginning_balance'
+                    ? 'Adjust Beginning Balance'
+                    : selectedLedgerCashAdvance
+                      ? 'Adjust Advance'
+                      : 'Adjust Beginning Balance'}
                 </Button>
                 <Button
                   size="sm"
@@ -961,12 +967,18 @@ export default function CashAdvance() {
         setAdjustmentError('');
       }}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-lg">
-          <DialogHeader><DialogTitle>Adjust Beginning Balance</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {adjustmentDialog?.cashAdvance?.advance_type === 'beginning_balance'
+                ? 'Adjust Beginning Balance'
+                : 'Adjust Cash Advance'}
+            </DialogTitle>
+          </DialogHeader>
           {adjustmentDialog && (
             (() => {
               const adjustableAdvances = cashAdvances.filter(ca =>
                 ca.employee_id === adjustmentDialog.employee.employee_id &&
-                ca.advance_type === 'beginning_balance' && ['approved', 'deducted'].includes(ca.status)
+                ['approved', 'deducted'].includes(ca.status)
               );
               const selectedAdvance = adjustmentDialog.cashAdvance ||
                 adjustableAdvances.find(ca => String(ca.id) === String(selectedAdjustmentCashAdvanceId)) ||
@@ -977,7 +989,9 @@ export default function CashAdvance() {
                 <p className="font-semibold text-foreground">
                   {adjustmentDialog.employee.first_name} {adjustmentDialog.employee.last_name}
                 </p>
-                <p className="break-words text-xs text-muted-foreground">{selectedAdvance?.reason || 'Cash advance'}</p>
+                <p className="break-words text-xs text-muted-foreground">
+                  {selectedAdvance?.advance_type === 'beginning_balance' ? 'Beginning Balance' : 'Cash Advance'} · {selectedAdvance?.reason || 'No particulars'}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Current balance: <span className="font-semibold text-foreground">₱{Number(getCashAdvanceBalance(selectedAdvance) || 0).toLocaleString()}</span>
                 </p>
@@ -1040,7 +1054,7 @@ export default function CashAdvance() {
                   }}
                   className="h-8 text-sm"
                 />
-                <p className="text-xs text-muted-foreground">Required so the adjusted beginning balance is deducted in each payroll week.</p>
+                <p className="text-xs text-muted-foreground">Used to recalculate the remaining payroll schedule after the adjustment.</p>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Reason *</Label>
