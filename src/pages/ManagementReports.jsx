@@ -172,6 +172,7 @@ export default function ManagementReports() {
   const totalPayroll = sum(currentRecords, 'gross_pay');
   const totalNetPayroll = sum(currentRecords, 'net_pay');
   const previousPayroll = sum(previousRecords, 'gross_pay');
+  const previousNetPayroll = sum(previousRecords, 'net_pay');
   const overtimeCost = sum(currentRecords, 'overtime_pay');
   const previousOtCost = sum(previousRecords, 'overtime_pay');
   const overtimeHours = sum(currentRecords, 'overtime_hours');
@@ -179,6 +180,36 @@ export default function ManagementReports() {
   const previousNightDiff = sum(previousRecords, 'night_diff_pay');
   const payrollEmployees = new Set(currentRecords.map(record => String(record.employee_id || record.id))).size;
   const payrollChange = percentChange(totalPayroll, previousPayroll);
+  const payrollComparisonRows = useMemo(() => {
+    const rows = new Map();
+    const addRecords = (records, period) => records.forEach(record => {
+      const key = String(record.employee_id || record.employee_record_id || record.id || '').trim().toLowerCase();
+      const employee = employeeMap.get(key);
+      const current = rows.get(key) || {
+        key,
+        employeeName: record.employee_name || fullName(employee) || 'Unknown employee',
+        employeeId: record.employee_id || employee?.employee_id || '—',
+        department: record.department || employee?.department || 'Unassigned',
+        currentGross: 0,
+        currentNet: 0,
+        previousGross: 0,
+        previousNet: 0,
+        hasCurrent: false,
+        hasPrevious: false,
+      };
+      current[`${period}Gross`] += Number(record.gross_pay) || 0;
+      current[`${period}Net`] += Number(record.net_pay) || 0;
+      current[period === 'current' ? 'hasCurrent' : 'hasPrevious'] = true;
+      rows.set(key, current);
+    });
+    addRecords(currentRecords, 'current');
+    addRecords(previousRecords, 'previous');
+    return [...rows.values()].map(row => ({
+      ...row,
+      grossDifference: row.currentGross - row.previousGross,
+      netDifference: row.currentNet - row.previousNet,
+    })).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+  }, [currentRecords, previousRecords, employeeMap]);
   const previousDepartments = aggregateRecords(previousRecords, employeeMap);
   const departmentRows = aggregateRecords(currentRecords, employeeMap).map(row => {
     const previous = previousDepartments.find(item => item.department === row.department);
@@ -296,6 +327,21 @@ export default function ManagementReports() {
       <KpiCard label="Average Gross Pay" value={money(payrollEmployees ? totalPayroll / payrollEmployees : 0)} icon={PhilippinePeso} color="bg-cyan-100 text-cyan-700" change={percentChange(payrollEmployees ? totalPayroll / payrollEmployees : 0, previousRecords.length ? previousPayroll / new Set(previousRecords.map(r => r.employee_id)).size : 0)} onClick={() => setSelectedKpi('average')} />
       <KpiCard label="Payroll vs Last Period" value={payrollChange == null ? '—' : `${payrollChange >= 0 ? '+' : ''}${payrollChange.toFixed(1)}%`} icon={payrollChange > 0 ? TrendingUp : TrendingDown} color="bg-red-100 text-red-600" change={payrollChange} detail={`${money(totalPayroll - previousPayroll)} difference`} inverse onClick={() => setSelectedKpi('comparison')}/>
     </div>
+
+    <Card className="overflow-hidden">
+      <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div><h3 className="text-sm font-semibold">Employee Payroll Comparison</h3><p className="text-[11px] text-muted-foreground">Gross and net pay for {periodLabel(selectedPeriod)} versus {previousPeriod ? periodLabel(previousPeriod) : 'the previous payroll'}</p></div>
+        <Badge variant="secondary">{payrollComparisonRows.length} employee{payrollComparisonRows.length === 1 ? '' : 's'}</Badge>
+      </div>
+      {!previousPeriod ? <div className="p-8 text-center text-sm text-muted-foreground">No previous payroll period is available for comparison.</div> : <div className="max-h-[520px] overflow-auto">
+        <table className="w-full min-w-[1120px] text-xs">
+          <thead className="sticky top-0 z-10 bg-muted/95 text-muted-foreground"><tr><th className="px-3 py-2 text-left font-medium">Employee</th><th className="px-3 py-2 text-left font-medium">Employee ID</th><th className="px-3 py-2 text-left font-medium">Department</th><th className="px-3 py-2 text-right font-medium">Previous Gross</th><th className="px-3 py-2 text-right font-medium">Current Gross</th><th className="px-3 py-2 text-right font-medium">Gross Change</th><th className="px-3 py-2 text-right font-medium">Previous Net</th><th className="px-3 py-2 text-right font-medium">Current Net</th><th className="px-3 py-2 text-right font-medium">Net Change</th></tr></thead>
+          <tbody>{payrollComparisonRows.map(row => <tr key={row.key} className="border-t"><td className="px-3 py-2.5 font-semibold">{row.employeeName}{(!row.hasCurrent || !row.hasPrevious) && <Badge variant="outline" className="ml-2 text-[9px]">{row.hasCurrent ? 'New this payroll' : 'Not in current payroll'}</Badge>}</td><td className="px-3 py-2.5 text-muted-foreground">{row.employeeId}</td><td className="px-3 py-2.5">{row.department}</td><td className="px-3 py-2.5 text-right">{preciseMoney(row.previousGross)}</td><td className="px-3 py-2.5 text-right font-semibold">{preciseMoney(row.currentGross)}</td><td className={`px-3 py-2.5 text-right font-semibold ${row.grossDifference > 0 ? 'text-red-600' : row.grossDifference < 0 ? 'text-emerald-600' : 'text-muted-foreground'}`}>{row.grossDifference > 0 ? '+' : ''}{preciseMoney(row.grossDifference)}</td><td className="px-3 py-2.5 text-right">{preciseMoney(row.previousNet)}</td><td className="px-3 py-2.5 text-right font-semibold">{preciseMoney(row.currentNet)}</td><td className={`px-3 py-2.5 text-right font-semibold ${row.netDifference > 0 ? 'text-blue-700' : row.netDifference < 0 ? 'text-amber-600' : 'text-muted-foreground'}`}>{row.netDifference > 0 ? '+' : ''}{preciseMoney(row.netDifference)}</td></tr>)}</tbody>
+          <tfoot className="sticky bottom-0 bg-muted/95"><tr className="border-t-2 font-bold"><td className="px-3 py-2.5" colSpan={3}>TOTAL</td><td className="px-3 py-2.5 text-right">{preciseMoney(previousPayroll)}</td><td className="px-3 py-2.5 text-right">{preciseMoney(totalPayroll)}</td><td className="px-3 py-2.5 text-right">{totalPayroll - previousPayroll > 0 ? '+' : ''}{preciseMoney(totalPayroll - previousPayroll)}</td><td className="px-3 py-2.5 text-right">{preciseMoney(previousNetPayroll)}</td><td className="px-3 py-2.5 text-right">{preciseMoney(totalNetPayroll)}</td><td className="px-3 py-2.5 text-right">{totalNetPayroll - previousNetPayroll > 0 ? '+' : ''}{preciseMoney(totalNetPayroll - previousNetPayroll)}</td></tr></tfoot>
+        </table>
+        {payrollComparisonRows.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">No processed payroll records exist in either period.</p>}
+      </div>}
+    </Card>
 
     {!loading && currentRecords.length === 0 && <Card className="border-dashed p-10 text-center"><BriefcaseBusiness className="mx-auto h-9 w-9 text-muted-foreground"/><h2 className="mt-3 font-semibold">Payroll has not been processed for this period</h2><p className="mt-1 text-sm text-muted-foreground">Attendance insights remain available, while payroll charts will populate after payroll records are generated.</p></Card>}
 
