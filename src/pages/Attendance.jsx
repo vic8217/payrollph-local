@@ -680,6 +680,23 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
     if (dayType !== (log.day_type || 'regular')) {
       updates.day_type = dayType;
     }
+
+    // A daytime shift may legitimately finish after midnight because of
+    // overtime. A time-only input such as 03:10 would otherwise be saved on
+    // the attendance date (before the 13:00 second Time In), causing the
+    // calculator to discard the second work segment and show only four hours.
+    const provisionalBreakIn = 'break_time_in' in updates ? updates.break_time_in : log.break_time_in;
+    const provisionalTimeIn = 'time_in' in updates ? updates.time_in : log.time_in;
+    const provisionalTimeOut = 'time_out' in updates ? updates.time_out : log.time_out;
+    const lastStart = provisionalBreakIn || provisionalTimeIn;
+    if (canEditTimeOut && provisionalTimeOut && lastStart) {
+      const outDate = new Date(provisionalTimeOut);
+      const startDate = new Date(lastStart);
+      if (Number.isFinite(outDate.getTime()) && Number.isFinite(startDate.getTime()) && outDate.getTime() <= startDate.getTime()) {
+        outDate.setUTCDate(outDate.getUTCDate() + 1);
+        updates.time_out = outDate.toISOString();
+      }
+    }
     const pick = (key) => (key in updates ? updates[key] : log[key]);
     const effDate = pick('date');
     const effTimeIn = pick('time_in');

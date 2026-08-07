@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -374,6 +375,7 @@ function automaticIncentivesForEmployee(employee, logs, periodStartDate, periodE
 }
 
 export default function Payroll() {
+  const navigate = useNavigate();
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState(/** @type {PayrollEntity | null} */ (null));
   const [selectedRecord, setSelectedRecord] = useState(/** @type {PayrollEntity | null} */ (null));
@@ -658,6 +660,62 @@ export default function Payroll() {
       );
       const incentivePay = money(incentiveDetails.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
 
+      // Preview cash advances with the same period eligibility, remaining-balance,
+      // and available-net-pay rules used by payroll generation. This is read-only:
+      // no ledger entry or cash-advance balance is changed here.
+      const [currentCashAdvances, cashAdvanceLedger] = await Promise.all([
+        entities.CashAdvance.filter({ company_profile_id: activeCompanyId }),
+        entities.CashAdvanceLedger.filter({ company_profile_id: activeCompanyId, transaction_type: 'deduction' }, undefined, 5000),
+      ]);
+      const employeeCashAdvances = currentCashAdvances.filter(cashAdvance =>
+        normalizedId(cashAdvance.employee_id) === normalizedId(employee.employee_id)
+      );
+      const cashAdvanceReleases = employeeCashAdvances.filter(cashAdvance => {
+        const approvedDate = String(cashAdvance.approved_date || '').slice(0, 10);
+        return cashAdvance.advance_type !== 'beginning_balance' &&
+          approvedDate >= previewStartDate && approvedDate <= previewEndDate &&
+          Number(cashAdvance.amount_approved || cashAdvance.amount_requested) > 0;
+      });
+      const cashAdvanceReceived = money(cashAdvanceReleases.reduce(
+        (total, cashAdvance) => total + (Number(cashAdvance.amount_approved || cashAdvance.amount_requested) || 0), 0
+      ));
+      const eligibleCashAdvances = employeeCashAdvances.filter(cashAdvance =>
+        cashAdvance.status === 'approved' &&
+        (cashAdvance.deduction_periods_remaining == null || cashAdvance.deduction_periods_remaining > 0) &&
+        isCashAdvanceDeductibleForPeriod(cashAdvance, previewStartDate)
+      );
+      const netBeforeCashAdvance = money(computed.net_pay + incentivePay + cashAdvanceReceived);
+      const previewCashAdvanceDeductions = capCashAdvanceDeductions(eligibleCashAdvances.map(cashAdvance => {
+        const scheduledDeduction = Number(cashAdvance.deduction_amount_per_payroll) || 0;
+        const storedRemainingBalance = cashAdvance.remaining_balance != null
+          ? Number(cashAdvance.remaining_balance)
+          : scheduledDeduction * (Number(cashAdvance.deduction_periods_remaining || cashAdvance.deduction_payroll_periods) || 0);
+        const approvedPrincipal = money(cashAdvance.amount_approved || cashAdvance.amount_requested || cashAdvance.beginning_balance);
+        const deducted = money(cashAdvanceLedger
+          .filter(row => normalizedId(row.cash_advance_id) === normalizedId(cashAdvance.id))
+          .reduce((total, row) => total + (Number(row.amount) || 0), 0));
+        const remainingBalance = money(Math.max(0, Math.min(storedRemainingBalance, approvedPrincipal - deducted)));
+        return { ca: cashAdvance, amount: Math.min(scheduledDeduction, remainingBalance), remainingBalance };
+      }), netBeforeCashAdvance);
+      const cashAdvanceDeduction = money(previewCashAdvanceDeductions.reduce((total, item) => total + item.amount, 0));
+      const cashAdvanceDeductionDetails = previewCashAdvanceDeductions.filter(item => item.amount > 0).map(({ ca, amount, remainingBalance }) => {
+        const total = Number(ca.deduction_payroll_periods || ca.deduction_periods_remaining) || 1;
+        const remaining = Number(ca.deduction_periods_remaining ?? total);
+        const deductionNumber = Math.min(total, Math.max(1, total - remaining + 1));
+        return {
+          cash_advance_id: ca.id,
+          request_date: ca.request_date || ca.approved_date,
+          deduction_date: previewEndDate,
+          description: ca.reason || ca.advance_type || 'Cash advance',
+          amount,
+          balance_before: remainingBalance,
+          balance_after: money(Math.max(remainingBalance - amount, 0)),
+          deduction_number: deductionNumber,
+          deduction_total: total,
+          deductions_remaining: Math.max(total - deductionNumber, 0),
+        };
+      });
+
       setPayPreview({
         ...computed,
         employee_name: `${employee.first_name} ${employee.last_name}`,
@@ -666,7 +724,11 @@ export default function Payroll() {
         incentive_pay: incentivePay,
         incentive_details: incentiveDetails,
         gross_pay: money(computed.gross_pay + incentivePay),
-        net_pay: money(computed.net_pay + incentivePay),
+        cash_advance_received: cashAdvanceReceived,
+        cash_advance_deduction: cashAdvanceDeduction,
+        cash_advance_deduction_details: cashAdvanceDeductionDetails,
+        total_deductions: money(computed.total_deductions + cashAdvanceDeduction),
+        net_pay: money(netBeforeCashAdvance - cashAdvanceDeduction),
         included_logs: usableLogs.length,
         incomplete_dates: incompleteDates,
       });
@@ -1162,6 +1224,9 @@ export default function Payroll() {
           <p className="text-muted-foreground text-sm mt-0.5">{format(weekStart, 'MMM d')} – {format(weekEnd, 'MMM d, yyyy')}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => navigate('/payroll/reconciliation')} className="gap-2">
+            <Calculator className="h-4 w-4" /> Payroll Recon
+          </Button>
           <Button
             onClick={() => { setGenerationReviewConfirmed(false); setGenerationReviewOpen(true); }}
             disabled={generateDisabled}
@@ -1272,14 +1337,9 @@ export default function Payroll() {
                   </p>
                 </div>
                 <div className="rounded-lg bg-background p-3">
-                  <p className="text-xs text-muted-foreground">Attendance Deductions</p>
+                  <p className="text-xs text-muted-foreground">Total Deductions</p>
                   <p className="font-semibold text-destructive">
-                    -₱{Number(
-                      (payPreview.late_deduction || 0) +
-                      (payPreview.undertime_deduction || 0) +
-                      (payPreview.absent_deduction || 0) +
-                      (payPreview.agency_fee || 0)
-                    ).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                    -₱{Number(payPreview.total_deductions || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                   </p>
                 </div>
               </div>
@@ -1289,7 +1349,7 @@ export default function Payroll() {
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Preview only. No payroll record or cash-advance deduction was posted. Statutory deductions are applied during the actual payroll run.
+                Preview only. Eligible cash-advance deductions are included, but nothing is posted. Statutory deductions are applied during the actual payroll run.
               </p>
               <Button size="sm" variant="outline" onClick={() => setReviewRecord(payPreview)} className="gap-1">
                 <Search className="w-3 h-3" /> View Breakdown

@@ -39,6 +39,7 @@ import SpecialRates from '@/pages/SpecialRates';
 import SpecialRatePayroll from '@/pages/SpecialRatePayroll';
 import MandatoryDeductions from '@/pages/MandatoryDeductions';
 import ManagementReports from '@/pages/ManagementReports';
+import PayrollReconciliation from '@/pages/PayrollReconciliation';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
@@ -89,6 +90,7 @@ const AuthenticatedApp = () => {
         <Route path="/scan" element={<QRScanner />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/payroll" element={<Payroll />} />
+        <Route path="/payroll/reconciliation" element={<PayrollReconciliation />} />
         <Route path="/management-reports" element={<ManagementReports />} />
         <Route path="/special-rates" element={<SpecialRates />} />
         <Route path="/special-rate-payroll" element={<SpecialRatePayroll />} />
