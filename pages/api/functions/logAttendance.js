@@ -22,6 +22,7 @@ const DEFAULT_BREAK_DURATION_MINUTES = 60;
 const DUPLICATE_SCAN_WINDOW_MS = 2 * 60 * 1000;
 const MIN_STEP_INTERVAL_MS = 5 * 60 * 1000;
 const OVERNIGHT_LOG_GRACE_MS = 6 * 60 * 60 * 1000;
+const MAX_EARLY_TIME_IN_MS = 60 * 60 * 1000;
 // Mirrors the Attendance UI's "Time In(2) missing" rule: once this much time has
 // passed since the scheduled break-out without a break-in, the break-in window
 // is considered lapsed and the next scan is treated as the final Time Out.
@@ -413,6 +414,12 @@ export default async function handler(req, res) {
 
   if (!lastLog) {
     const shiftStart = scheduledShiftStart(attendanceDate, currentShiftOptions);
+    if (shiftStart && nowDate.getTime() < shiftStart.getTime() - MAX_EARLY_TIME_IN_MS) {
+      return res.status(409).json({
+        error: `Time In (1) is allowed only within 1 hour before the ${currentShiftOptions.shiftStartTime} shift start. This scan was not recorded.`,
+        code: "TIME_IN_TOO_EARLY",
+      });
+    }
     const isEarlyTimeIn = Boolean(
       shiftStart &&
       nowDate.getTime() < shiftStart.getTime()
@@ -425,6 +432,12 @@ export default async function handler(req, res) {
     if (firstBreakPunch) {
       const scheduledBreakOut = scheduledBreak(employee, attendanceDate, currentShiftOptions);
       const scheduledBreakReturn = scheduledBreakIn(employee, attendanceDate, currentShiftOptions);
+      if (scheduledBreakReturn && nowDate.getTime() < new Date(scheduledBreakReturn).getTime() - MAX_EARLY_TIME_IN_MS) {
+        return res.status(409).json({
+          error: "Time In (2) is allowed only within 1 hour before the scheduled break return. This scan was not recorded.",
+          code: "BREAK_TIME_IN_TOO_EARLY",
+        });
+      }
       const isEarlyBreakReturn = scheduledBreakReturn && nowDate.getTime() < new Date(scheduledBreakReturn).getTime();
       const log = await createRecord("AttendanceLog", {
         company_profile_id: employee.company_profile_id,
@@ -550,6 +563,12 @@ export default async function handler(req, res) {
     }
 
     const scheduledBreakReturn = scheduledBreakIn(employee, currentLog.date, currentShiftOptions);
+    if (scheduledBreakReturn && nowDate.getTime() < new Date(scheduledBreakReturn).getTime() - MAX_EARLY_TIME_IN_MS) {
+      return res.status(409).json({
+        error: "Time In (2) is allowed only within 1 hour before the scheduled break return. This scan was not recorded.",
+        code: "BREAK_TIME_IN_TOO_EARLY",
+      });
+    }
     const isEarlyScheduledBreakReturn = Boolean(
       isScheduledBreakOut &&
       scheduledBreakReturn &&

@@ -48,6 +48,7 @@ const LABOR_CODE_INFO = {
   },
 };
 const DEFAULT_BREAK_DURATION_MINUTES = 60;
+const MAX_EARLY_TIME_IN_MS = 60 * 60 * 1000;
 
 function addOneDay(date) {
   const d = new Date(`${date}T00:00:00+08:00`);
@@ -343,6 +344,23 @@ export default function ScanConfirm() {
       work_schedule: effectiveWorkSchedule,
     };
     const shiftOptions = resolveEmployeeShiftOptions(shiftEmployee, shiftSettings, logDate, todayLog);
+    const nowDate = new Date(now);
+    if (action === 'time_in') {
+      const shiftStart = scheduledShiftStart(today, shiftOptions);
+      if (shiftStart && nowDate.getTime() < shiftStart.getTime() - MAX_EARLY_TIME_IN_MS) {
+        setPhotoError(`Time In (1) is allowed only within 1 hour before the ${shiftOptions.shiftStartTime} shift start. This scan was not recorded.`);
+        setConfirming(false);
+        return;
+      }
+    }
+    if (action === 'break_time_in' && todayLog) {
+      const breakReturn = scheduledBreakIn(employee, logDate, shiftOptions.isOvernightShift);
+      if (breakReturn && nowDate.getTime() < new Date(breakReturn).getTime() - MAX_EARLY_TIME_IN_MS) {
+        setPhotoError('Time In (2) is allowed only within 1 hour before the scheduled break return. This scan was not recorded.');
+        setConfirming(false);
+        return;
+      }
+    }
     const faceResult = null;
     let photoUpdates = {};
     try {
