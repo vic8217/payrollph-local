@@ -20,6 +20,7 @@ import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
 import { capCashAdvanceDeductions } from '@/lib/cashAdvanceDeduction';
 import { manilaDateString } from '@/lib/dateUtils';
 import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
+import { approvedOvertimeRequestForLog, capOvertimeByApprovedRequest } from '@/lib/overtimeRequests';
 import PayslipView from '@/components/payroll/PayslipView';
 import GrossBreakdownDialog from '@/components/payroll/GrossBreakdownDialog';
 
@@ -907,11 +908,38 @@ export default function Payroll() {
     const overtimeStartTime = defaultShift.overtime_start_time || '17:30';
 
     for (const emp of activeEmployees) {
-      const empLogs = allLogs.filter(log =>
-        log.employee_id === emp.employee_id &&
-        log.date >= startStr && log.date <= endStr &&
-        (log.status === 'approved' || log.status === 'pending')
-      );
+      const empLogs = allLogs
+        .filter(log =>
+          log.employee_id === emp.employee_id &&
+          log.date >= startStr && log.date <= endStr &&
+          (log.status === 'approved' || log.status === 'pending')
+        )
+        .map(log => {
+          if ((Number(log.overtime_hours) || 0) > 0) return log;
+          const approvedRequest = approvedOvertimeRequestForLog(log, overtimeRequestsForCheck, emp);
+          if (!approvedRequest) return log;
+
+          // Some approved legacy/request callbacks did not persist credited OT
+          // back to AttendanceLog. The approval itself contains the confirmed
+          // actual OT, so payroll can safely recover it without guessing from
+          // punches and still cap it at the approved amount.
+          const confirmedActual = Number(approvedRequest.confirmed_actual_ot_hours) || 0;
+          const loggedActual = Number(log.ot_actual_hours) || 0;
+          const creditedOvertime = capOvertimeByApprovedRequest(
+            confirmedActual > 0 ? confirmedActual : loggedActual,
+            approvedRequest,
+          );
+          if (!(creditedOvertime > 0)) return log;
+
+          return {
+            ...log,
+            overtime_hours: creditedOvertime,
+            ot_actual_hours: confirmedActual > 0 ? confirmedActual : loggedActual,
+            ot_requested_hours: Number((approvedRequest.approved_hours ?? approvedRequest.requested_hours) || 0),
+            overtime_request_id: approvedRequest.id,
+            ot_status: 'approved',
+          };
+        });
       const empLogDates = new Set(empLogs.map(log => log.date));
       const payrollLogs = [
         ...empLogs,
