@@ -644,7 +644,9 @@ export default function Payroll() {
             ? Number(employee.break_duration_minutes)
             : 60,
           paidBreakTime: Boolean(defaultShift.paid_break_time),
-          applyStatutoryDeductions: false,
+          // The preview is read-only, but it should still show the employee's
+          // estimated government deductions so its net pay is meaningful.
+          applyStatutoryDeductions: true,
           resolveLogOptions: (log) => ({
             ...resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift),
           }),
@@ -1377,7 +1379,7 @@ export default function Payroll() {
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Preview only. Eligible cash-advance deductions are included, but nothing is posted. Statutory deductions are applied during the actual payroll run.
+                Preview only. Estimated SSS, PhilHealth, Pag-IBIG, and eligible cash-advance deductions are included, but nothing is posted.
               </p>
               <Button size="sm" variant="outline" onClick={() => setReviewRecord(payPreview)} className="gap-1">
                 <Search className="w-3 h-3" /> View Breakdown
