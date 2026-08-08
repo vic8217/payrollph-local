@@ -6,6 +6,13 @@ import { prisma } from "@/server/prisma";
 import { manilaDateString } from "@/lib/dateUtils";
 
 const money = (value) => parseFloat((Number(value) || 0).toFixed(2));
+const normalizedDate = value => {
+  const text = String(value || "").trim();
+  const dayFirst = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  return dayFirst
+    ? `${dayFirst[3]}-${dayFirst[2].padStart(2, "0")}-${dayFirst[1].padStart(2, "0")}`
+    : text.slice(0, 10);
+};
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -32,6 +39,7 @@ export default async function handler(req, res) {
   const companyProfileId = String(req.body?.company_profile_id || "").trim();
   const cashAdvanceId = String(req.body?.cash_advance_id || "").trim();
   const adjustmentType = String(req.body?.adjustment_type || "").trim();
+  const establishedDate = String(req.body?.established_date || "").trim();
   const amount = money(req.body?.amount);
   const weeklyDeduction = money(req.body?.weekly_deduction);
   const reason = String(req.body?.reason || "").trim();
@@ -44,8 +52,11 @@ export default async function handler(req, res) {
   if (!["increase", "decrease"].includes(adjustmentType)) {
     return res.status(400).json({ error: "Choose whether to increase or decrease the balance." });
   }
-  if (!(amount > 0)) {
-    return res.status(400).json({ error: "Enter a valid adjustment amount." });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(establishedDate) || Number.isNaN(Date.parse(`${establishedDate}T00:00:00Z`))) {
+    return res.status(400).json({ error: "Enter a valid date when the advance was established." });
+  }
+  if (amount < 0) {
+    return res.status(400).json({ error: "Adjustment amount cannot be negative." });
   }
   if (!(weeklyDeduction > 0)) {
     return res.status(400).json({ error: "Weekly deduction amount is required before saving the adjustment." });
@@ -80,6 +91,10 @@ export default async function handler(req, res) {
   if (!["approved", "deducted"].includes(advance.status)) {
     return res.status(400).json({ error: "Only approved or deducted cash advances can be adjusted." });
   }
+  const establishedDateChanged = normalizedDate(advance.request_date || advance.approved_date) !== establishedDate;
+  if (!(amount > 0) && !establishedDateChanged) {
+    return res.status(400).json({ error: "Change the established date or enter an adjustment amount." });
+  }
 
   const balanceBefore = money(advance.remaining_balance ?? advance.amount_approved ?? advance.amount_requested ?? 0);
   if (adjustmentType === "decrease" && amount > balanceBefore) {
@@ -102,6 +117,7 @@ export default async function handler(req, res) {
   const totalPayrollPeriods = payrollDeductionsCompleted + remainingPayrollPeriods;
 
   const updatedAdvance = await updateRecord("CashAdvance", advance.id, {
+    request_date: establishedDate,
     remaining_balance: balanceAfter,
     amount_approved: adjustmentType === "increase" ? money(currentApproved + amount) : currentApproved,
     status: nextStatus,
@@ -112,6 +128,16 @@ export default async function handler(req, res) {
     manual_adjustment_by: adjustedBy,
     manual_adjustment_reason: reason,
   });
+
+  const originalLedgerRows = await listRecords("CashAdvanceLedger", {
+    filter: { cash_advance_id: advance.id },
+    limit: 1000,
+  });
+  await Promise.all(originalLedgerRows
+    .filter(row => ["beginning", "addition"].includes(row.transaction_type))
+    .map(row => updateRecord("CashAdvanceLedger", row.id, {
+      transaction_date: establishedDate,
+    })));
 
   const [employee] = await listRecords("Employee", {
     filter: { employee_id: advance.employee_id, company_profile_id: companyProfileId },
@@ -125,21 +151,23 @@ export default async function handler(req, res) {
   }
 
   const transactionType = adjustmentType === "increase" ? "addition" : "deduction";
-  const ledger = await createRecord("CashAdvanceLedger", {
-    cash_advance_id: advance.id,
-    employee_id: advance.employee_id,
-    employee_name: advance.employee_name,
-    company_profile_id: companyProfileId,
-    transaction_date: manilaDateString(),
-    transaction_type: transactionType,
-    source: "manual_adjustment",
-    description: `Manual CA balance ${adjustmentType}: ${reason}`,
-    amount,
-    balance_before: balanceBefore,
-    balance_after: balanceAfter,
-    deduction_number: null,
-    deduction_total: totalPayrollPeriods || null,
-  });
+  const ledger = amount > 0
+    ? await createRecord("CashAdvanceLedger", {
+      cash_advance_id: advance.id,
+      employee_id: advance.employee_id,
+      employee_name: advance.employee_name,
+      company_profile_id: companyProfileId,
+      transaction_date: manilaDateString(),
+      transaction_type: transactionType,
+      source: "manual_adjustment",
+      description: `Manual CA balance ${adjustmentType}: ${reason}`,
+      amount,
+      balance_before: balanceBefore,
+      balance_after: balanceAfter,
+      deduction_number: null,
+      deduction_total: totalPayrollPeriods || null,
+    })
+    : null;
 
   await createRecord("PasscodeAuditLog", {
     company_profile_id: companyProfileId,
@@ -149,7 +177,9 @@ export default async function handler(req, res) {
     occurred_at: adjustedAt,
     authorized_by: adjustedBy,
     reason,
-    summary: `${advance.advance_type === "beginning_balance" ? "Beginning cash advance balance" : "Cash advance balance"} ${adjustmentType}d by ₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}. Balance: ₱${balanceBefore.toLocaleString("en-PH", { minimumFractionDigits: 2 })} to ₱${balanceAfter.toLocaleString("en-PH", { minimumFractionDigits: 2 })}; weekly deduction: ₱${weeklyDeduction.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`,
+    summary: amount > 0
+      ? `${advance.advance_type === "beginning_balance" ? "Beginning cash advance balance" : "Cash advance balance"} ${adjustmentType}d by ₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}. Balance: ₱${balanceBefore.toLocaleString("en-PH", { minimumFractionDigits: 2 })} to ₱${balanceAfter.toLocaleString("en-PH", { minimumFractionDigits: 2 })}; established date: ${establishedDate}; weekly deduction: ₱${weeklyDeduction.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`
+      : `${advance.advance_type === "beginning_balance" ? "Beginning cash advance" : "Cash advance"} established date corrected from ${normalizedDate(advance.request_date || advance.approved_date) || "unset"} to ${establishedDate}. Balance unchanged at ₱${balanceAfter.toLocaleString("en-PH", { minimumFractionDigits: 2 })}.`,
     employee_id: advance.employee_id,
     employee_name: advance.employee_name,
     amount,

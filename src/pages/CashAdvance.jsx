@@ -44,21 +44,53 @@ function ledgerTypeLabel(row) {
   return ledgerTypeLabels[row.transaction_type] || row.transaction_type;
 }
 
-const ledgerSortKey = (row) => `${row.transaction_date || ''}${row.created_date || ''}${row.id || ''}`;
+function ledgerDateValue(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const dayFirst = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dayFirst) return Date.UTC(Number(dayFirst[3]), Number(dayFirst[2]) - 1, Number(dayFirst[1]));
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function displayLedgerDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return '—';
+  const dayFirst = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dayFirst) {
+    return `${dayFirst[3]}-${dayFirst[2].padStart(2, '0')}-${dayFirst[1].padStart(2, '0')}`;
+  }
+  return text.slice(0, 10);
+}
+
+const ledgerSortKey = row => [
+  ledgerDateValue(row.transaction_date),
+  ledgerDateValue(row.created_date),
+  String(row.id || ''),
+];
+
+function compareLedgerRows(a, b) {
+  const left = ledgerSortKey(a);
+  const right = ledgerSortKey(b);
+  return left[0] - right[0] || left[1] - right[1] || left[2].localeCompare(right[2]);
+}
 
 function withEmployeeRunningBalances(rows) {
   const balancesByAdvance = new Map();
   const paymentCountsByAdvance = new Map();
-  const chronologicalRows = [...rows].sort((a, b) => ledgerSortKey(a).localeCompare(ledgerSortKey(b)));
+  const chronologicalRows = [...rows].sort(compareLedgerRows);
 
   return chronologicalRows
     .map(row => {
       const amount = Number(row.amount) || 0;
       const advanceKey = String(row.cash_advance_id || 'unlinked');
       const previousBalance = balancesByAdvance.get(advanceKey) || 0;
-      const nextBalance = row.transaction_type === 'deduction'
+      const calculatedBalance = row.transaction_type === 'deduction'
         ? Math.max(previousBalance - amount, 0)
         : previousBalance + amount;
+      const nextBalance = row.balance_after != null
+        ? Math.max(Number(row.balance_after) || 0, 0)
+        : calculatedBalance;
       balancesByAdvance.set(advanceKey, nextBalance);
       const isPayrollDeduction = row.transaction_type === 'deduction' && row.source !== 'manual_adjustment';
       let advancePaymentNumber = null;
@@ -80,11 +112,12 @@ function withEmployeeRunningBalances(rows) {
 function ledgerBalanceForAdvance(advance, ledgerRows) {
   const rows = ledgerRows
     .filter(row => String(row.cash_advance_id || '') === String(advance.id || ''))
-    .sort((a, b) => ledgerSortKey(a).localeCompare(ledgerSortKey(b)));
+    .sort(compareLedgerRows);
   if (rows.length === 0) return getCashAdvanceBalance(advance);
 
   const balance = rows.reduce((runningBalance, row) => {
     const amount = Number(row.amount) || 0;
+    if (row.balance_after != null) return Math.max(Number(row.balance_after) || 0, 0);
     return row.transaction_type === 'deduction'
       ? Math.max(runningBalance - amount, 0)
       : runningBalance + amount;
@@ -160,6 +193,7 @@ export default function CashAdvance() {
   const [selectedAdjustmentCashAdvanceId, setSelectedAdjustmentCashAdvanceId] = useState('');
   const [adjustmentType, setAdjustmentType] = useState('decrease');
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
+  const [adjustmentEstablishedDate, setAdjustmentEstablishedDate] = useState('');
   const [adjustmentWeeklyDeduction, setAdjustmentWeeklyDeduction] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentHrPasscode, setAdjustmentHrPasscode] = useState('');
@@ -300,6 +334,7 @@ export default function CashAdvance() {
       qc.invalidateQueries({ queryKey: ['passcodeAudit'] });
       setAdjustmentDialog(null);
       setAdjustmentAmount('');
+      setAdjustmentEstablishedDate('');
       setAdjustmentWeeklyDeduction('');
       setAdjustmentReason('');
       setAdjustmentHrPasscode('');
@@ -380,11 +415,17 @@ export default function CashAdvance() {
   };
 
   const openAdjustmentDialog = (cashAdvance, employee) => {
+    const initialAdvance = cashAdvance || cashAdvances.find(ca =>
+      ca.employee_id === employee?.employee_id &&
+      ca.advance_type === 'beginning_balance' &&
+      ['approved', 'deducted'].includes(ca.status)
+    );
     setAdjustmentDialog({ cashAdvance, employee });
-    setSelectedAdjustmentCashAdvanceId(cashAdvance?.id ? String(cashAdvance.id) : '');
+    setSelectedAdjustmentCashAdvanceId(initialAdvance?.id ? String(initialAdvance.id) : '');
     setAdjustmentType('decrease');
     setAdjustmentAmount('');
-    setAdjustmentWeeklyDeduction(String(cashAdvance?.deduction_amount_per_payroll || employee?.cash_advance_weekly_deduction || ''));
+    setAdjustmentEstablishedDate(displayLedgerDate(initialAdvance?.request_date || initialAdvance?.approved_date).replace('—', ''));
+    setAdjustmentWeeklyDeduction(String(initialAdvance?.deduction_amount_per_payroll || employee?.cash_advance_weekly_deduction || ''));
     setAdjustmentReason('');
     setAdjustmentHrPasscode('');
     setAdjustmentAdminPasscode('');
@@ -406,9 +447,14 @@ export default function CashAdvance() {
       setAdjustmentError('Select the cash advance to adjust.');
       return;
     }
-    const amount = parseFloat(adjustmentAmount);
-    if (!(amount > 0)) {
-      setAdjustmentError('Enter a valid adjustment amount.');
+    const amount = parseFloat(adjustmentAmount) || 0;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(adjustmentEstablishedDate)) {
+      setAdjustmentError('Enter the date when the advance was established.');
+      return;
+    }
+    const existingEstablishedDate = displayLedgerDate(selectedAdvance.request_date || selectedAdvance.approved_date).replace('—', '');
+    if (!(amount > 0) && adjustmentEstablishedDate === existingEstablishedDate) {
+      setAdjustmentError('Change the established date or enter an adjustment amount.');
       return;
     }
     const weeklyDeduction = parseFloat(adjustmentWeeklyDeduction);
@@ -430,6 +476,7 @@ export default function CashAdvance() {
       cash_advance_id: selectedAdvance.id,
       adjustment_type: adjustmentType,
       amount,
+      established_date: adjustmentEstablishedDate,
       weekly_deduction: weeklyDeduction,
       reason: adjustmentReason.trim(),
       hr_passcode: adjustmentHrPasscode.trim(),
@@ -467,7 +514,7 @@ export default function CashAdvance() {
     : employeeSummary;
 
   const sortedLedger = [...cashAdvanceLedger]
-    .sort((a, b) => ledgerSortKey(b).localeCompare(ledgerSortKey(a)));
+    .sort((a, b) => compareLedgerRows(b, a));
   const selectedLedgerEmployee = employees.find(e => e.employee_id === selectedLedgerEmployeeId);
   const selectedLedgerCashAdvance = cashAdvances.find(ca => String(ca.id) === String(selectedLedgerCashAdvanceId));
   const employeeLedgerRows = selectedLedgerEmployeeId
@@ -740,7 +787,7 @@ export default function CashAdvance() {
                   </p>
                   {selectedLedgerCashAdvance && (
                     <p className="text-xs font-medium text-primary">
-                      Specific advance: {selectedLedgerCashAdvance.advance_type === 'beginning_balance' ? 'Beginning Balance' : 'Cash Advance'} · {selectedLedgerCashAdvance.request_date || selectedLedgerCashAdvance.approved_date || 'No date'} · ₱{Number(selectedLedgerCashAdvance.amount_approved || selectedLedgerCashAdvance.amount_requested || selectedLedgerCashAdvance.beginning_balance || 0).toLocaleString()} · {selectedLedgerCashAdvance.reason || 'No particulars'}
+                      Specific advance: {selectedLedgerCashAdvance.advance_type === 'beginning_balance' ? 'Beginning Balance' : 'Cash Advance'} · {displayLedgerDate(selectedLedgerCashAdvance.request_date || selectedLedgerCashAdvance.approved_date)} · ₱{Number(selectedLedgerCashAdvance.amount_approved || selectedLedgerCashAdvance.amount_requested || selectedLedgerCashAdvance.beginning_balance || 0).toLocaleString()} · {selectedLedgerCashAdvance.reason || 'No particulars'}
                     </p>
                   )}
                 </div>
@@ -831,7 +878,7 @@ export default function CashAdvance() {
                                 : 'Cash Advance';
                             return (
                               <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/20">
-                                <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{row.transaction_date || '—'}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{displayLedgerDate(row.transaction_date)}</td>
                                 <td className="px-3 py-2 text-foreground whitespace-nowrap">
                                   <div className="flex items-center gap-2">
                                     <span>{ledgerTypeLabel(row)}</span>
@@ -860,7 +907,7 @@ export default function CashAdvance() {
                                   </p>
                                   {appliedAdvance && (
                                     <p className="mt-0.5 font-medium text-foreground">
-                                      Applied to: {appliedAdvanceType} · {appliedAdvance.request_date || appliedAdvance.approved_date || 'No date'} · ₱{appliedAdvanceAmount.toLocaleString()}{appliedAdvance.reason ? ` · ${appliedAdvance.reason}` : ''}
+                                      Applied to: {appliedAdvanceType} · {displayLedgerDate(appliedAdvance.request_date || appliedAdvance.approved_date)} · ₱{appliedAdvanceAmount.toLocaleString()}{appliedAdvance.reason ? ` · ${appliedAdvance.reason}` : ''}
                                     </p>
                                   )}
                                 </td>
@@ -1003,6 +1050,8 @@ export default function CashAdvance() {
                     value={selectedAdjustmentCashAdvanceId || (selectedAdvance?.id ? String(selectedAdvance.id) : '')}
                     onValueChange={value => {
                       setSelectedAdjustmentCashAdvanceId(value);
+                      const nextAdvance = adjustableAdvances.find(ca => String(ca.id) === String(value));
+                      setAdjustmentEstablishedDate(displayLedgerDate(nextAdvance?.request_date || nextAdvance?.approved_date).replace('—', ''));
                       setAdjustmentError('');
                     }}
                   >
@@ -1018,6 +1067,19 @@ export default function CashAdvance() {
                 </div>
               )}
               <div className="min-w-0 space-y-1">
+                <Label className="text-xs">Advance Established Date *</Label>
+                <Input
+                  type="date"
+                  value={adjustmentEstablishedDate}
+                  onChange={event => {
+                    setAdjustmentEstablishedDate(event.target.value);
+                    setAdjustmentError('');
+                  }}
+                  className="h-8 text-sm"
+                />
+                <p className="text-xs text-muted-foreground">Updates the date of the original advance entry. Adjustment transactions retain their actual posting dates.</p>
+              </div>
+              <div className="min-w-0 space-y-1">
                 <Label className="text-xs">Adjustment Type *</Label>
                 <Select value={adjustmentType} onValueChange={setAdjustmentType}>
                   <SelectTrigger className="h-8 min-w-0 text-sm"><SelectValue /></SelectTrigger>
@@ -1028,7 +1090,7 @@ export default function CashAdvance() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Amount (₱) *</Label>
+                <Label className="text-xs">Amount (₱) <span className="font-normal text-muted-foreground">(optional for date-only correction)</span></Label>
                 <Input
                   type="number"
                   min="0.01"
