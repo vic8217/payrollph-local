@@ -17,7 +17,7 @@ const SUMMARY_FIELDS = [
   ['regular_days', 'Regular Days', 'number'], ['daily_rate', 'Rate / Day', 'money'], ['basic_pay', 'Basic Pay', 'money'],
   ['overtime_hours', 'OT Hours', 'number'], ['overtime_pay', 'OT Pay', 'money'], ['night_diff_hours', 'Night Diff Hours', 'number'],
   ['night_diff_pay', 'Night Diff Pay', 'money'], ['rest_day_pay', 'Rest Day Pay', 'money'], ['holiday_pay', 'Holiday Pay', 'money'],
-  ['cash_advance_deduction', 'Cash Advance', 'money'], ['sss_contribution', 'SSS', 'money'], ['philhealth_contribution', 'PhilHealth', 'money'],
+  ['cash_advance_received', 'CA Received', 'money'], ['cash_advance_deduction', 'Cash Advance Deduction', 'money'], ['sss_contribution', 'SSS', 'money'], ['philhealth_contribution', 'PhilHealth', 'money'],
   ['pagibig_contribution', 'Pag-IBIG', 'money'], ['withholding_tax', 'Withholding Tax', 'money'], ['incentive_pay', 'Incentives / Adj.', 'money'],
   ['late_deduction', 'Late Deduction', 'money'], ['undertime_deduction', 'Undertime', 'money'], ['absent_deduction', 'Absence Deduction', 'money'],
   ['agency_fee', 'Agency Fee', 'money'], ['total_deductions', 'Total Deductions', 'money'], ['gross_pay', 'Gross Pay', 'money'], ['net_pay', 'Net Pay', 'money'],
@@ -60,15 +60,18 @@ const reconciledOvertimeHours = (log = {}, requests = []) => {
 
 const CONSOLIDATED_FIELDS = [
   ['basic_pay', 'Basic Pay'], ['overtime_hours', 'OT Hours'], ['overtime_pay', 'OT Pay'],
-  ['night_diff_pay', 'Night Diff Pay'], ['cash_advance_deduction', 'Cash Advance'],
+  ['night_diff_pay', 'Night Diff Pay'], ['cash_advance_received', 'CA Received'], ['cash_advance_deduction', 'Cash Advance Deduction'],
   ['total_deductions', 'Total Deductions'], ['gross_pay', 'Gross Pay'], ['net_pay', 'Net Pay'],
 ];
 const DERIVED_SUMMARY_FIELDS = new Set(['total_deductions', 'gross_pay', 'net_pay']);
 const deriveManualSummary = (values = {}, record = {}) => {
   const next = { ...values };
+  // Older saved reconciliations predate this visible field. Default them to the
+  // payroll record so opening an existing review does not create a false variance.
+  next.cash_advance_received = values.cash_advance_received ?? num(record.cash_advance_received);
   next.gross_pay = num(next.basic_pay) + num(next.overtime_pay) + num(next.night_diff_pay) + num(next.rest_day_pay) + num(next.holiday_pay) + num(next.incentive_pay);
   next.total_deductions = num(next.cash_advance_deduction) + num(next.sss_contribution) + num(next.philhealth_contribution) + num(next.pagibig_contribution) + num(next.withholding_tax) + num(next.late_deduction) + num(next.undertime_deduction) + num(next.absent_deduction) + num(next.agency_fee);
-  next.net_pay = next.gross_pay + num(record.cash_advance_received) - next.total_deductions;
+  next.net_pay = next.gross_pay + num(next.cash_advance_received) - next.total_deductions;
   return next;
 };
 
