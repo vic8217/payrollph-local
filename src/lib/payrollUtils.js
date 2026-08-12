@@ -327,7 +327,22 @@ export function normalizeOvernightBreakPunches(
 	{ shiftStartTime = '08:00' } = {},
 ) {
 	const timeIn = toValidDate(log.time_in);
-	const timeOut = toValidDate(log.time_out);
+	const recordedTimeOut = toValidDate(log.time_out);
+	let timeOut = recordedTimeOut;
+	const lastStart = toValidDate(log.break_time_in) || timeIn;
+
+	// A manual time-only correction can leave a daytime timeout on tomorrow's
+	// date. Attendance shifts cannot span more than 24 hours, so move such a
+	// timeout back to the earliest valid occurrence after the last work start.
+	while (
+		timeOut &&
+		lastStart &&
+		timeOut.getTime() - lastStart.getTime() > 24 * 36e5
+	) {
+		const previousDay = addDays(timeOut, -1);
+		if (previousDay.getTime() <= lastStart.getTime()) break;
+		timeOut = previousDay;
+	}
 	if (!timeIn || !timeOut || timeOut.getTime() <= timeIn.getTime()) {
 		return { log, updates: {} };
 	}
@@ -339,6 +354,9 @@ export function normalizeOvernightBreakPunches(
 	const breakOut = normalizePunchWithinWorkInterval(log, log.break_time_out, workStart, timeOut);
 	const breakIn = normalizePunchWithinWorkInterval(log, log.break_time_in, workStart, timeOut);
 	const updates = {};
+	if (recordedTimeOut && timeOut.getTime() !== recordedTimeOut.getTime()) {
+		updates.time_out = timeOut.toISOString();
+	}
 
 	if (breakOut && log.break_time_out && breakOut.getTime() !== toValidDate(log.break_time_out)?.getTime()) {
 		updates.break_time_out = breakOut.toISOString();
@@ -372,9 +390,9 @@ export function computeCreditedHoursWorked(
 	const timeIn = actualTimeIn && creditedTimeIn && actualTimeIn.getTime() > creditedTimeIn.getTime()
 		? actualTimeIn
 		: creditedTimeIn;
-	const timeOut = toValidDate(log.time_out);
-	if (!timeIn || !timeOut) return Number(log.hours_worked) || 0;
 	const normalizedLog = normalizeOvernightBreakPunches(log, { shiftStartTime }).log;
+	const timeOut = toValidDate(normalizedLog.time_out);
+	if (!timeIn || !timeOut) return Number(log.hours_worked) || 0;
 
 	const allowance = Math.max(0, Number(timeInAllowanceMinutes) || 0);
 	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
