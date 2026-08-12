@@ -365,7 +365,13 @@ export function computeCreditedHoursWorked(
 		paidBreakTime = false,
 	} = {},
 ) {
-	const timeIn = toValidDate(log.time_in);
+	const creditedTimeIn = toValidDate(log.time_in);
+	const actualTimeIn = toValidDate(log.time_in_actual_punch_at);
+	// Early arrivals can be credited at the scheduled shift start, but a captured
+	// actual punch later than the credited value must not create unworked hours.
+	const timeIn = actualTimeIn && creditedTimeIn && actualTimeIn.getTime() > creditedTimeIn.getTime()
+		? actualTimeIn
+		: creditedTimeIn;
 	const timeOut = toValidDate(log.time_out);
 	if (!timeIn || !timeOut) return Number(log.hours_worked) || 0;
 	const normalizedLog = normalizeOvernightBreakPunches(log, { shiftStartTime }).log;

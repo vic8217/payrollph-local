@@ -24,7 +24,7 @@ import {
   manilaDateString,
 } from '@/lib/dateUtils';
 import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot, sortedShiftAssignments } from '@/lib/shiftSettings';
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert, QrCode, ScanFace } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert, QrCode, ScanFace, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -681,20 +681,26 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       updates.day_type = dayType;
     }
 
-    // A daytime shift may legitimately finish after midnight because of
-    // overtime. A time-only input such as 03:10 would otherwise be saved on
-    // the attendance date (before the 13:00 second Time In), causing the
-    // calculator to discard the second work segment and show only four hours.
+    // Resolve the final timeout against the last recorded start. Keeping the
+    // timeout's old calendar day is incorrect after a manual clock-time edit:
+    // e.g. an old next-day timeout changed to 17:30 would remain next-day and
+    // add 24 hours. Choose the earliest occurrence of the entered clock time
+    // after Time In(2) (or Time In(1)), which also preserves overnight shifts.
     const provisionalBreakIn = 'break_time_in' in updates ? updates.break_time_in : log.break_time_in;
     const provisionalTimeIn = 'time_in' in updates ? updates.time_in : log.time_in;
     const provisionalTimeOut = 'time_out' in updates ? updates.time_out : log.time_out;
     const lastStart = provisionalBreakIn || provisionalTimeIn;
-    if (canEditTimeOut && provisionalTimeOut && lastStart) {
-      const outDate = new Date(provisionalTimeOut);
+    if (canEditTimeOut && timeOut && provisionalTimeOut && lastStart) {
       const startDate = new Date(lastStart);
-      if (Number.isFinite(outDate.getTime()) && Number.isFinite(startDate.getTime()) && outDate.getTime() <= startDate.getTime()) {
-        outDate.setUTCDate(outDate.getUTCDate() + 1);
-        updates.time_out = outDate.toISOString();
+      const startDay = manilaDateString(startDate);
+      const outDate = new Date(`${startDay}T${timeOut}:00+08:00`);
+      if (Number.isFinite(outDate.getTime()) && Number.isFinite(startDate.getTime())) {
+        if (outDate.getTime() <= startDate.getTime()) {
+          outDate.setUTCDate(outDate.getUTCDate() + 1);
+        }
+        if (outDate.toISOString() !== log.time_out) {
+          updates.time_out = outDate.toISOString();
+        }
       }
     }
     const pick = (key) => (key in updates ? updates[key] : log[key]);
@@ -1612,6 +1618,7 @@ export default function Attendance() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [filterDept, setFilterDept] = useState('all');
+  const [employeeSearch, setEmployeeSearch] = useState('');
   const [editingLog, setEditingLog] = useState(null);
   const [reviewingOvertimeLog, setReviewingOvertimeLog] = useState(null);
   const [reviewingOvertimeRequest, setReviewingOvertimeRequest] = useState(null);
@@ -2310,6 +2317,15 @@ export default function Attendance() {
 
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
+  const normalizedEmployeeSearch = normalizeAttendanceKey(employeeSearch);
+  const visibleEmployees = normalizedEmployeeSearch
+    ? filteredEmployees.filter(employee => [
+        employeeFullName(employee),
+        employee.employee_id,
+        employee.position,
+        employee.department,
+      ].some(value => normalizeAttendanceKey(value).includes(normalizedEmployeeSearch)))
+    : filteredEmployees;
   const savedPeriodsByRange = new Map(payrollPeriods.map(period => [`${period.start_date}:${period.end_date}`, period]));
   const attendanceDates = allAttendanceLogs.map(log => log.date).filter(Boolean).sort();
   const earliestAttendanceDate = attendanceDates[0];
@@ -3245,8 +3261,25 @@ export default function Attendance() {
                 </p>
               )}
             </Card>}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="relative w-full sm:max-w-md">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={employeeSearch}
+                  onChange={event => setEmployeeSearch(event.target.value)}
+                  placeholder="Search employee name, ID, or position..."
+                  aria-label="Search employees"
+                  className="pl-9"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Showing {visibleEmployees.length} of {filteredEmployees.length} employees
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {filteredEmployees.map(emp => (
+              {visibleEmployees.map(emp => (
                 <button
                   key={emp.id}
                   onClick={() => setSelectedEmployee(emp)}
@@ -3263,8 +3296,10 @@ export default function Attendance() {
                   </div>
                 </button>
               ))}
-              {filteredEmployees.length === 0 && (
-                <p className="col-span-3 text-center py-10 text-muted-foreground text-sm">No employees found.</p>
+              {visibleEmployees.length === 0 && (
+                <p className="col-span-3 text-center py-10 text-muted-foreground text-sm">
+                  {employeeSearch.trim() ? `No employees match “${employeeSearch.trim()}”.` : 'No employees found.'}
+                </p>
               )}
             </div>
           </>
