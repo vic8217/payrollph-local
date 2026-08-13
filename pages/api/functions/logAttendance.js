@@ -297,7 +297,7 @@ function scheduledShiftStart(logDate, shiftOptions) {
 }
 
 function isActiveOvernightLog(log, employee, shiftSettings, date, nowDate) {
-  if (!log || log.time_out || log.date !== addDays(date, -1)) return false;
+  if (!log || log.status === "rejected" || log.time_out || log.date !== addDays(date, -1)) return false;
 
   const shiftOptions = resolveEmployeeShiftOptions(
     { ...employee, work_schedule: log.work_schedule || employee.work_schedule },
@@ -315,7 +315,7 @@ function isActiveOvernightLog(log, employee, shiftSettings, date, nowDate) {
 }
 
 function isRecentCompletedOvernightLog(log, employee, shiftSettings, date, nowDate) {
-  if (!log?.time_out || log.date !== addDays(date, -1)) return false;
+  if (!log?.time_out || log.status === "rejected" || log.date !== addDays(date, -1)) return false;
 
   const shiftOptions = resolveEmployeeShiftOptions(
     { ...employee, work_schedule: log.work_schedule || employee.work_schedule },
@@ -389,7 +389,8 @@ export default async function handler(req, res) {
     limit: 1000,
   });
   const todayLog = employeeLogs.find((log) =>
-    log.date === date || attendanceLogManilaDate(log) === date
+    log.status !== "rejected" &&
+    (log.date === date || attendanceLogManilaDate(log) === date)
   );
   const overnightLog = employeeLogs.find((log) =>
     isActiveOvernightLog(log, employee, shiftSettings, date, nowDate)
