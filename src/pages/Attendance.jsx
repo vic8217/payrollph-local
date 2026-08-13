@@ -54,6 +54,7 @@ const normalizeAttendanceCode = (value) =>
     .replace(/-payrollph$/i, '')
     .replace(/[^a-z0-9]/g, '');
 const normalizeDailyPasscode = (value) => String(value ?? '').trim();
+const enabledBooleanSetting = (value) => value === true || value === 1 || String(value).toLowerCase() === 'true';
 const matchesDailyPasscode = (record, input) => {
   const normalizedInput = normalizeDailyPasscode(input);
   return Boolean(
@@ -728,7 +729,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         lateGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee, selectedShift),
-        paidBreakTime: Boolean(selectedShift.paid_break_time),
+        paidBreakTime: enabledBooleanSetting(selectedShift.paid_break_time),
       });
       updates.hours_worked = parseFloat(hrs.toFixed(2));
       const recomputedOvertime = computeOvertimeHours({
@@ -744,7 +745,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
         overtimeStartTime: selectedShift.overtime_start_time || fallbackShift.overtime_start_time,
         breakInGraceMinutes: selectedShift.grace_period_minutes || 0,
         breakDurationMinutes: getBreakDurationMinutes(employee, selectedShift),
-        paidBreakTime: Boolean(selectedShift.paid_break_time),
+        paidBreakTime: enabledBooleanSetting(selectedShift.paid_break_time),
       });
       const attendanceMetrics = {
         ...log,
@@ -762,7 +763,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
       updates.night_diff_hours = computeNightDifferentialHours(attendanceMetrics, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
         breakDurationMinutes: getBreakDurationMinutes(employee, selectedShift),
-        paidBreakTime: Boolean(selectedShift.paid_break_time),
+        paidBreakTime: enabledBooleanSetting(selectedShift.paid_break_time),
       });
       updates.late_minutes = computeLateMinutes(attendanceMetrics, {
         shiftStartTime: selectedShift.shift_start_time || fallbackShift.shift_start_time,
@@ -1379,7 +1380,7 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
     shiftEndTime: requestAttendance?.shift_end_time || fallbackShift.shift_end_time,
     overtimeStartTime: requestAttendance?.shift_overtime_start_time || fallbackShift.overtime_start_time,
     breakDurationMinutes: DEFAULT_BREAK_DURATION_MINUTES,
-    paidBreakTime: Boolean(requestAttendance?.shift_paid_break_time),
+    paidBreakTime: enabledBooleanSetting(requestAttendance?.shift_paid_break_time),
   };
   const recomputedHoursWorked = effectiveAttendance?.time_in && effectiveAttendance?.time_out
     ? computeCreditedHoursWorked(effectiveAttendance, computationOptions)
@@ -1699,6 +1700,21 @@ export default function Attendance() {
   });
   const logs = attendanceData.logs || [];
 
+  const { data: attendanceEditAudits = [] } = useQuery({
+    queryKey: ['attendanceEditAudits', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId],
+    queryFn: async () => {
+      const records = await entities.filter('PasscodeAuditLog', { company_profile_id: activeCompanyId }, '-occurred_at');
+      return records.filter(record =>
+        record.source_entity === 'AttendanceLog' &&
+        (
+          String(record.employee_record_id || '') === String(selectedEmployee?.id || '') ||
+          normalizeAttendanceKey(record.employee_id) === normalizeAttendanceKey(selectedEmployee?.employee_id)
+        )
+      );
+    },
+    enabled: !!selectedEmployee && !!activeCompanyId,
+  });
+
   const { data: payrollPeriods = [] } = useQuery({
     queryKey: ['payrollPeriods', activeCompanyId],
     queryFn: () => entities.filter('PayrollPeriod', { company_profile_id: activeCompanyId }, '-start_date', 100),
@@ -1753,7 +1769,7 @@ export default function Attendance() {
       shiftEndTime: attendance?.shift_end_time || fallbackShift.shift_end_time,
       overtimeStartTime: attendance?.shift_overtime_start_time || fallbackShift.overtime_start_time,
       breakDurationMinutes: DEFAULT_BREAK_DURATION_MINUTES,
-      paidBreakTime: Boolean(attendance?.shift_paid_break_time),
+      paidBreakTime: enabledBooleanSetting(attendance?.shift_paid_break_time),
     };
     const hoursWorked = effectiveAttendance?.time_in && effectiveAttendance?.time_out
       ? computeCreditedHoursWorked(effectiveAttendance, computationOptions)
@@ -1782,14 +1798,6 @@ export default function Attendance() {
     )
     : [];
 
-  const approveMutation = useMutation({
-    mutationFn: ({ id, status, updates = {} }) => entities.update('AttendanceLog', id, { status, ...updates }),
-    onSuccess: () => Promise.all([
-      qc.invalidateQueries({ queryKey: ['attendance'] }),
-      qc.invalidateQueries({ queryKey: ['attendanceSummary'] }),
-    ]),
-  });
-
   const updateDayType = useMutation({
     mutationFn: ({ id, day_type }) => entities.update('AttendanceLog', id, { day_type }),
     onSuccess: () => Promise.all([
@@ -1799,8 +1807,19 @@ export default function Attendance() {
   });
 
   const updateLog = async (id, updates) => {
+    const previousLog = logs.find(log => log.id === id);
     await entities.update('AttendanceLog', id, updates);
     if (updates.passcode_audit_action) {
+      const punchLabels = {
+        time_in: 'Time In(1)',
+        break_time_out: 'Time Out(1)',
+        break_time_in: 'Time In(2)',
+        time_out: 'Time Out(2)',
+        hours_worked: 'Hours',
+      };
+      const changes = Object.entries(punchLabels)
+        .filter(([field]) => field in updates && String(previousLog?.[field] ?? '') !== String(updates[field] ?? ''))
+        .map(([field, label]) => ({ field, label, before: previousLog?.[field] ?? null, after: updates[field] ?? null }));
       await entities.create('PasscodeAuditLog', {
         company_profile_id: activeCompanyId,
         source_entity: 'AttendanceLog',
@@ -1811,13 +1830,16 @@ export default function Attendance() {
         reason: updates.passcode_audit_reason,
         summary: updates.passcode_audit_summary,
         employee_id: selectedEmployee?.employee_id,
+        employee_record_id: selectedEmployee?.id,
         employee_name: employeeFullName(selectedEmployee),
         record_date: updates.date || logs.find(log => log.id === id)?.date,
+        changes,
       });
     }
     await Promise.all([
       qc.invalidateQueries({ queryKey: ['attendance'] }),
       qc.invalidateQueries({ queryKey: ['attendanceSummary'] }),
+      qc.invalidateQueries({ queryKey: ['attendanceEditAudits'] }),
     ]);
   };
 
@@ -2035,7 +2057,7 @@ export default function Attendance() {
       lateGraceMinutes: shift.grace_period_minutes || 0,
       breakInGraceMinutes: shift.grace_period_minutes || 0,
       breakDurationMinutes: getBreakDurationMinutes(employee, shift),
-      paidBreakTime: Boolean(shift.paid_break_time),
+      paidBreakTime: enabledBooleanSetting(shift.paid_break_time),
     };
   };
   const defaultShiftValue = getDefaultShiftValue();
@@ -2094,7 +2116,7 @@ export default function Attendance() {
     };
   };
 
-  const handleApproveLog = (log) => {
+  const handleApproveLog = async (log) => {
     const logShiftValue = getLogShiftValue(log);
     const logShift = getLogShift(log);
     const logEmployee = { ...selectedEmployee, work_schedule: logShiftValue };
@@ -2114,7 +2136,16 @@ export default function Attendance() {
         }
       : {};
 
-    approveMutation.mutate({ id: log.id, status: 'approved', updates });
+    const approvedAt = new Date().toISOString();
+    await updateLog(log.id, {
+      ...updates,
+      status: 'approved',
+      passcode_audit_action: 'attendance_approved',
+      passcode_audit_at: approvedAt,
+      passcode_audit_by: currentUser?.full_name || currentUser?.email || 'unknown',
+      passcode_audit_reason: 'Attendance reviewed and approved',
+      passcode_audit_summary: `Attendance approved for ${log.date}`,
+    });
   };
 
   useEffect(() => {
@@ -3628,6 +3659,17 @@ export default function Attendance() {
 	                    const displayedNightDiffHours = displayLog.time_in && displayLog.time_out
 	                      ? Number(computeNightDifferentialHours(displayLog, computationOptions).toFixed(2))
 	                      : Number(log.night_diff_hours) || 0;
+	                    const logAudits = attendanceEditAudits.filter(audit => String(audit.source_record_id || '') === String(log.id));
+	                    const editAudits = logAudits.filter(audit => ['attendance_correction', 'attendance_manual_edit'].includes(audit.action));
+	                    const approvalAudit = logAudits.find(audit => audit.action === 'attendance_approved');
+	                    const editedFields = new Set(editAudits.flatMap(audit =>
+	                      Array.isArray(audit.changes) && audit.changes.length > 0
+	                        ? audit.changes.map(change => change.field)
+	                        : ['time_in', 'break_time_out', 'break_time_in', 'time_out', 'hours_worked']
+	                    ));
+	                    const editedTimeClass = (field, normalClass) => editedFields.has(field)
+	                      ? 'rounded bg-red-100 px-1 font-black text-red-700 ring-1 ring-red-500'
+	                      : normalClass;
 	                    return (
                       <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                         <td className="px-2.5 py-3 text-muted-foreground text-xs">{log.date}</td>
@@ -3639,7 +3681,7 @@ export default function Attendance() {
                         <td className="px-2.5 py-3">
                           <div className="inline-flex items-center gap-1.5">
                             {displayLog.time_in
-                              ? <span className="text-green-600 text-xs">{formatManilaTime(displayLog.time_in)}</span>
+                              ? <span className={editedTimeClass('time_in', 'text-green-600 text-xs')}>{formatManilaTime(displayLog.time_in)}</span>
                               : <span className="text-amber-500 font-medium text-xs">Missing</span>}
                             <InlinePhotoButton photoItem={timeInPhoto} log={log} onView={setPhotoLog} />
                             <InlineVerificationMethodIcon photoItem={timeInPhoto} />
@@ -3652,7 +3694,7 @@ export default function Attendance() {
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
                             {displayLog.break_time_out
-                              ? <span className="text-orange-500 text-xs">{formatManilaTime(displayLog.break_time_out)}</span>
+                              ? <span className={editedTimeClass('break_time_out', 'text-orange-500 text-xs')}>{formatManilaTime(displayLog.break_time_out)}</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
                             <InlinePhotoButton photoItem={breakOutPhoto} log={log} onView={setPhotoLog} />
                             <InlineVerificationMethodIcon photoItem={breakOutPhoto} />
@@ -3662,7 +3704,7 @@ export default function Attendance() {
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
                             {displayLog.break_time_in
-                              ? <span className="text-teal-600 text-xs">{formatManilaTime(displayLog.break_time_in)}</span>
+                              ? <span className={editedTimeClass('break_time_in', 'text-teal-600 text-xs')}>{formatManilaTime(displayLog.break_time_in)}</span>
                               : breakTimeInMissing
                                 ? <span className="text-amber-500 font-medium text-xs">Missing</span>
                               : <span className="text-muted-foreground text-xs">—</span>}
@@ -3674,7 +3716,7 @@ export default function Attendance() {
 	                        <td className="px-2.5 py-3">
 	                          <div className="inline-flex items-center gap-1.5">
 	                            {log.time_out
-	                              ? <span className="text-blue-600 text-xs">{formatManilaTime(log.time_out)}</span>
+	                              ? <span className={editedTimeClass('time_out', 'text-blue-600 text-xs')}>{formatManilaTime(log.time_out)}</span>
 	                              : finalTimeOutMissing
 	                                ? <span className="text-amber-500 font-medium text-xs">Missing</span>
 	                                : <span className="text-muted-foreground text-xs">—</span>}
@@ -3686,7 +3728,20 @@ export default function Attendance() {
                         <td className="px-2.5 py-3 text-xs text-muted-foreground">
                           {actualTimeOut ? formatManilaTime(actualTimeOut) : '—'}
                         </td>
-                        <td className="px-2.5 py-3 text-xs">{log.hours_worked || '—'}</td>
+                        <td className="px-2.5 py-3 text-xs">
+                          <div className="flex flex-col items-start gap-1">
+                            <span className={editAudits.length > 0 ? 'font-black text-red-700' : ''}>{log.hours_worked || '—'}</span>
+                            {editAudits.length > 0 && (
+                              <Badge
+                                variant="outline"
+                                className="border-red-500 bg-red-100 px-1 py-0 text-[9px] font-bold text-red-700"
+                                title={`Edited by: ${[...new Set(editAudits.map(audit => audit.authorized_by).filter(Boolean))].join(', ') || 'Unknown'}${approvalAudit ? `; approved by ${approvalAudit.authorized_by}` : ''}`}
+                              >
+                                {editAudits.length} edit{editAudits.length === 1 ? '' : 's'} · {approvalAudit || log.status === 'approved' ? 'approved' : 'review'}
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-2.5 py-3 text-xs hidden md:table-cell">
                           {actualOvertimeHours > 0 || creditedOvertimeHours > 0 ? (
                             <span

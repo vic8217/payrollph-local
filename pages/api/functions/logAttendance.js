@@ -314,6 +314,23 @@ function isActiveOvernightLog(log, employee, shiftSettings, date, nowDate) {
   );
 }
 
+function isRecentCompletedOvernightLog(log, employee, shiftSettings, date, nowDate) {
+  if (!log?.time_out || log.date !== addDays(date, -1)) return false;
+
+  const shiftOptions = resolveEmployeeShiftOptions(
+    { ...employee, work_schedule: log.work_schedule || employee.work_schedule },
+    shiftSettings,
+    log.date,
+    log,
+  );
+  if (!shiftOptions.isOvernightShift) return false;
+
+  const timeOut = new Date(log.time_out);
+  return Number.isFinite(timeOut.getTime()) &&
+    nowDate.getTime() >= timeOut.getTime() &&
+    nowDate.getTime() - timeOut.getTime() < DUPLICATE_SCAN_WINDOW_MS;
+}
+
 function rejectRapidScan(res, log, action, message = "Scan already recorded. Please wait before scanning again.") {
   return res.status(200).json({
     action,
@@ -377,6 +394,21 @@ export default async function handler(req, res) {
   const overnightLog = employeeLogs.find((log) =>
     isActiveOvernightLog(log, employee, shiftSettings, date, nowDate)
   );
+  const completedOvernightLog = employeeLogs.find((log) =>
+    isRecentCompletedOvernightLog(log, employee, shiftSettings, date, nowDate)
+  );
+
+  // A repeated final scan must stay attached to the completed overnight shift.
+  // Without this guard, the completed log is no longer "active" and the scan
+  // is incorrectly created as Time In (1) for the same prior-day shift date.
+  if (!todayLog && !overnightLog && completedOvernightLog) {
+    return rejectRapidScan(
+      res,
+      completedOvernightLog,
+      "time_out",
+      "Time Out (2) was already recorded. This duplicate scan was ignored.",
+    );
+  }
   const lastLog = todayLog || overnightLog;
   let attendanceDate = lastLog?.date || date;
 

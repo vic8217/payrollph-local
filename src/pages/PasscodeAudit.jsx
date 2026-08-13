@@ -23,10 +23,12 @@ const entityLabels = {
 
 const actionLabels = {
   attendance_punch_recorded: 'Attendance Punch Recorded',
+  attendance_punch_attempted: 'Attendance Punch Attempted',
   attendance_punch_failed: 'Attendance Punch Failed',
   attendance_correction: 'Attendance Corrected',
   attendance_manual_edit: 'Attendance Edited',
   attendance_rejected: 'Attendance Rejected',
+  attendance_approved: 'Attendance Approved',
   overtime_approved: 'OT Approved',
   overtime_reduced: 'OT Reduced',
   overtime_denied: 'OT Denied',
@@ -53,8 +55,10 @@ const actionLabels = {
 
 const actionStyles = {
   attendance_punch_recorded: 'bg-emerald-100 text-emerald-700',
+  attendance_punch_attempted: 'bg-amber-100 text-amber-800',
   attendance_punch_failed: 'bg-red-100 text-red-700',
   attendance_rejected: 'bg-red-100 text-red-700',
+  attendance_approved: 'bg-green-100 text-green-700',
   overtime_denied: 'bg-red-100 text-red-700',
   overtime_request_denied: 'bg-red-100 text-red-700',
   leave_declined: 'bg-red-100 text-red-700',

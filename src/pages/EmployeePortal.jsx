@@ -535,6 +535,13 @@ export default function EmployeePortal() {
               key={scanKey}
               companyProfileId={activeCompanyId}
               onEmployeeScanned={(employee) => {
+                appApi.functions.invoke('recordAttendanceAttempt', {
+                  employee_id: employee.employee_id,
+                  employee_record_id: employee.id,
+                  company_profile_id: employee.company_profile_id || activeCompanyId,
+                }).catch(() => {
+                  // Attempt auditing is best-effort and must not block attendance.
+                });
                 setScanConfirm({
                   employee,
                   name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),

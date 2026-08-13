@@ -258,6 +258,28 @@ function toValidDate(value) {
 	return minutePrecisionDate;
 }
 
+function punchActualValue(log, action) {
+	const location = log?.[`${action}_location`];
+	let locationCapturedAt = null;
+	if (typeof location === 'string') {
+		try { locationCapturedAt = JSON.parse(location)?.captured_at; } catch { /* invalid legacy location */ }
+	} else {
+		locationCapturedAt = location?.captured_at;
+	}
+	return log?.[`${action}_photo_captured_at`] ||
+		log?.[`${action}_actual_punch_at`] ||
+		locationCapturedAt ||
+		null;
+}
+
+// Early punches remain credited at the scheduled/credited value. A later
+// actual punch always wins so default shift times cannot create unworked time.
+function creditedOrLateActualPunch(log, action) {
+	const credited = toValidDate(log?.[action]);
+	const actual = toValidDate(punchActualValue(log, action));
+	return actual && credited && actual.getTime() > credited.getTime() ? actual : credited;
+}
+
 /**
  * @param {string | undefined} logDate
  * @param {string | undefined} time
@@ -329,7 +351,9 @@ export function normalizeOvernightBreakPunches(
 	const timeIn = toValidDate(log.time_in);
 	const recordedTimeOut = toValidDate(log.time_out);
 	let timeOut = recordedTimeOut;
-	const lastStart = toValidDate(log.break_time_in) || timeIn;
+	const lastStart = creditedOrLateActualPunch(log, 'break_time_in') ||
+		creditedOrLateActualPunch(log, 'time_in') ||
+		timeIn;
 
 	// A manual time-only correction can leave a daytime timeout on tomorrow's
 	// date. Attendance shifts cannot span more than 24 hours, so move such a
@@ -377,24 +401,16 @@ export function computeCreditedHoursWorked(
 	/** @type {HoursComputationOptions} */
 	{
 		shiftStartTime = '08:00',
-		timeInAllowanceMinutes = 0,
 		breakInGraceMinutes = 0,
 		breakDurationMinutes = 60,
 		paidBreakTime = false,
 	} = {},
 ) {
-	const creditedTimeIn = toValidDate(log.time_in);
-	const actualTimeIn = toValidDate(log.time_in_actual_punch_at);
-	// Early arrivals can be credited at the scheduled shift start, but a captured
-	// actual punch later than the credited value must not create unworked hours.
-	const timeIn = actualTimeIn && creditedTimeIn && actualTimeIn.getTime() > creditedTimeIn.getTime()
-		? actualTimeIn
-		: creditedTimeIn;
+	const timeIn = creditedOrLateActualPunch(log, 'time_in');
 	const normalizedLog = normalizeOvernightBreakPunches(log, { shiftStartTime }).log;
 	const timeOut = toValidDate(normalizedLog.time_out);
 	if (!timeIn || !timeOut) return Number(log.hours_worked) || 0;
 
-	const allowance = Math.max(0, Number(timeInAllowanceMinutes) || 0);
 	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
 	let effectiveTimeIn = timeIn;
 
@@ -402,16 +418,10 @@ export function computeCreditedHoursWorked(
 		if (timeIn.getTime() < scheduledStart.getTime()) {
 			effectiveTimeIn = scheduledStart;
 		}
-
-		const minutesAfterStart =
-			(timeIn.getTime() - scheduledStart.getTime()) / 60000;
-		if (minutesAfterStart > 0 && minutesAfterStart <= allowance) {
-			effectiveTimeIn = scheduledStart;
-		}
 	}
 
 	const breakOut = toValidDate(normalizedLog.break_time_out);
-	const recordedBreakIn = toValidDate(normalizedLog.break_time_in);
+	const recordedBreakIn = creditedOrLateActualPunch(normalizedLog, 'break_time_in');
 	let effectiveBreakIn = recordedBreakIn;
 	if (paidBreakTime) {
 		return parseFloat(
@@ -486,7 +496,12 @@ function resolveBreakInterval(log, breakDurationMinutes = 60, workStart = null, 
 	if (!breakOut) return { breakOut: null, breakIn: null };
 
 	const timeOut = workEnd || toValidDate(log.time_out);
-	let breakIn = normalizePunchWithinWorkInterval(log, log.break_time_in, workStart, workEnd);
+	let breakIn = normalizePunchWithinWorkInterval(
+		log,
+		creditedOrLateActualPunch(log, 'break_time_in'),
+		workStart,
+		workEnd,
+	);
 	if (!breakIn) {
 		breakIn = new Date(breakOut);
 		breakIn.setMinutes(
@@ -511,7 +526,7 @@ export function computeLateMinutes(
 		timeInAllowanceMinutes = 0,
 	} = {},
 ) {
-	const timeIn = toValidDate(log.time_in);
+	const timeIn = creditedOrLateActualPunch(log, 'time_in');
 	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
 	if (!timeIn || !scheduledStart) return Number(log.late_minutes) || 0;
 
@@ -531,8 +546,9 @@ export function computeNightDifferentialHours(
 	/** @type {HoursComputationOptions} */
 	{ shiftStartTime, breakDurationMinutes = 60, paidBreakTime = false } = {},
 ) {
-	const timeIn = toValidDate(log.time_in);
-	const timeOut = toValidDate(log.time_out);
+	const normalizedLog = normalizeOvernightBreakPunches(log, { shiftStartTime }).log;
+	const timeIn = creditedOrLateActualPunch(normalizedLog, 'time_in');
+	const timeOut = toValidDate(normalizedLog.time_out);
 	if (!timeIn || !timeOut || timeOut.getTime() <= timeIn.getTime()) {
 		return Number(log.night_diff_hours) || 0;
 	}
@@ -545,7 +561,7 @@ export function computeNightDifferentialHours(
 
 	const { breakOut, breakIn } = paidBreakTime
 		? { breakOut: null, breakIn: null }
-		: resolveBreakInterval(log, breakDurationMinutes, effectiveTimeIn, timeOut);
+		: resolveBreakInterval(normalizedLog, breakDurationMinutes, effectiveTimeIn, timeOut);
 	const workIntervals = breakOut && breakIn
 		? [[effectiveTimeIn, breakOut], [breakIn, timeOut]]
 		: [[effectiveTimeIn, timeOut]];
@@ -584,7 +600,8 @@ export function computeOvertimeHours(
 		return parseFloat(Math.max(0, (Number(hoursWorked) || 0) - 8).toFixed(2));
 	}
 
-	const timeOut = toValidDate(log.time_out);
+	const normalizedLog = normalizeOvernightBreakPunches(log, { shiftStartTime }).log;
+	const timeOut = toValidDate(normalizedLog.time_out);
 	if (!timeOut) return Number(log.overtime_hours) || 0;
 
 	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
@@ -600,7 +617,7 @@ export function computeOvertimeHours(
 	const overtimeWindowStart = new Date(
 		Math.max(
 			overtimeStart.getTime(),
-			toValidDate(log.time_in)?.getTime() || overtimeStart.getTime(),
+			creditedOrLateActualPunch(normalizedLog, 'time_in')?.getTime() || overtimeStart.getTime(),
 		),
 	);
 	let overtimeHours = Math.max(
@@ -608,9 +625,10 @@ export function computeOvertimeHours(
 		(timeOut.getTime() - overtimeWindowStart.getTime()) / 36e5,
 	);
 
-	const workStart = toValidDate(log.time_in) || overtimeWindowStart;
-	const breakOut = paidBreakTime ? null : normalizePunchWithinWorkInterval(log, log.break_time_out, workStart, timeOut);
-	const recordedBreakIn = normalizePunchWithinWorkInterval(log, log.break_time_in, workStart, timeOut);
+	const workStart = creditedOrLateActualPunch(normalizedLog, 'time_in') || overtimeWindowStart;
+	const breakOut = paidBreakTime ? null : normalizePunchWithinWorkInterval(normalizedLog, normalizedLog.break_time_out, workStart, timeOut);
+	const recordedBreakInValue = creditedOrLateActualPunch(normalizedLog, 'break_time_in');
+	const recordedBreakIn = normalizePunchWithinWorkInterval(normalizedLog, recordedBreakInValue, workStart, timeOut);
 	let effectiveBreakIn = recordedBreakIn;
 	if (breakOut && recordedBreakIn) {
 		const expectedBreakIn = new Date(breakOut);
