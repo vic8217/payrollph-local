@@ -746,6 +746,7 @@ export default function Payroll() {
     if (weekStart > new Date()) return;
     const existingTargetPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
     if (existingTargetPeriod?.status === 'released') return;
+    if (!existingTargetPeriod && previousPeriodReleaseBlock) return;
     setGenerating(true);
     setIncompleteLogsError(null);
     setPendingAttendanceError(null);
@@ -1151,6 +1152,13 @@ export default function Payroll() {
 
   const targetPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
   const currentPeriodConfig = getPayrollPeriodForDate(baseWeek, activeCompany, 0);
+  const previousPeriodConfig = getPayrollPeriodForDate(baseWeek, activeCompany, weekOffset - 1);
+  const previousPeriod = periods.find(period =>
+    period.start_date === previousPeriodConfig.start_date &&
+    period.end_date === previousPeriodConfig.end_date
+  );
+  const hasAnyEarlierPayroll = periods.some(period => period.end_date < startStr);
+  const previousPeriodReleaseBlock = !targetPeriod && hasAnyEarlierPayroll && previousPeriod?.status !== 'released';
   const savedPeriodsByRange = new Map(periods.map(period => [`${period.start_date}:${period.end_date}`, period]));
   const summaryPeriods = Array.from({ length: 8 }, (_, index) => {
     const configuredPeriod = getPayrollPeriodForDate(baseWeek, activeCompany, -index);
@@ -1179,9 +1187,12 @@ export default function Payroll() {
   const targetPeriodLabel = selectedSummaryPeriod?.period_name?.replace(/^Payroll Period:\s*/, '') || activePeriodConfig.label;
   const targetPeriodIsComplete = selectedSummaryPeriod?.generation_status === 'complete';
   const generateDisabled = generating ||
-    targetPeriod?.status === 'released';
+    targetPeriod?.status === 'released' ||
+    previousPeriodReleaseBlock;
   const generateTitle = targetPeriod?.status === 'released'
     ? 'Released payroll periods cannot be regenerated'
+    : previousPeriodReleaseBlock
+      ? `Release the previous payroll period (${previousPeriodConfig.start_date} to ${previousPeriodConfig.end_date}) before generating this period`
     : targetPeriodIsComplete
       ? 'Regenerate this payroll period using the latest attendance and payroll rules'
       : undefined;
@@ -1266,6 +1277,19 @@ export default function Payroll() {
           </Button>
         </div>
       </div>
+
+      {previousPeriodReleaseBlock && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+          <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold">Previous payroll period must be released first</p>
+            <p className="mt-0.5 text-xs">
+              Release {previousPeriod?.period_name || `${previousPeriodConfig.start_date} to ${previousPeriodConfig.end_date}`} before generating {targetPeriodLabel}.
+              {!previousPeriod && ' The previous payroll period has not been generated yet.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       <PayrollCard className="border border-border shadow-sm">
         <div className="p-4 space-y-4">

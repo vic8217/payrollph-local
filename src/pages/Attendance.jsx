@@ -3857,12 +3857,12 @@ export default function Attendance() {
                               onClick={() => setEditingLog(log)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                            <Button size="sm" variant="outline" className="h-7 gap-1 border-blue-200 px-2 text-[10px] text-blue-700 hover:bg-blue-50"
                               title="Review immutable Time In (1)"
                               disabled={!log.time_in}
                               onClick={() => setReviewingTimeInLog(log)}>
                               <Eye className="w-3.5 h-3.5" />
-                              <span className="sr-only">Review Time In (1)</span>
+                              Time In Review
                             </Button>
                             <Button size="icon" variant="ghost"
                               className={`h-7 w-7 ${approvalBlocked ? 'text-muted-foreground opacity-50 cursor-not-allowed' : 'text-green-600 hover:bg-green-50'}`}
