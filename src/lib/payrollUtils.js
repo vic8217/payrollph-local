@@ -280,7 +280,6 @@ function creditedOrLateActualPunch(log, action) {
 	// the audit fields, but do not let it override the approved adjustment.
 	if (
 		action === 'time_in' &&
-		log?.time_in_review_status === 'adjusted' &&
 		log?.time_in_adjusted_at
 	) {
 		return credited;
