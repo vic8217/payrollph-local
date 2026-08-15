@@ -168,11 +168,10 @@ const REGULAR_HOLIDAY_TYPES = new Set([
  * @param {string[]} holidayTypes
  */
 function resolvePayDayType(log, holidayTypes = []) {
-	const logDate = new Date(log.date || '');
-	const isSunday = logDate.getDay() === 0;
 	const rawDayType = log.day_type || 'regular';
-	// Company default work week: Monday-Saturday work days, Sunday scheduled rest day.
-	const isRestDay = isSunday || rawDayType === 'rest_day';
+	// Rest days are employee-specific and must come from the attendance day type.
+	// A Sunday can be a normal scheduled work day for an employee.
+	const isRestDay = rawDayType === 'rest_day';
 
 	const explicitRegularHoliday = rawDayType === 'regular_holiday' ? 1 : 0;
 	const calendarRegularHolidays = holidayTypes.filter(
@@ -755,6 +754,7 @@ export function computeWeeklyPayroll(
 	const weeklyPagIbig = applyStatutoryDeductions ? parseFloat((pagIbig.employee / 4.33).toFixed(2)) : 0;
 
 	let basicPay = 0;
+	let restDayPay = 0;
 	let overtimePay = 0;
 	let holidayPay = 0;
 	let nightDiffPay = 0;
@@ -844,7 +844,7 @@ export function computeWeeklyPayroll(
 		} else if (dayType === 'rest_day') {
 			workedDays++;
 			restDayWorked++;
-			basicPay += effectivePay;
+			restDayPay += effectivePay;
 		} else if (
 			dayType === 'regular_holiday' ||
 			dayType === 'regular_holiday_rest_day' ||
@@ -904,7 +904,7 @@ export function computeWeeklyPayroll(
 		}
 	}
 
-	const grossPay = basicPay + overtimePay + holidayPay + nightDiffPay;
+	const grossPay = basicPay + restDayPay + overtimePay + holidayPay + nightDiffPay;
 	const withholdingTax = 0;
 
 	// Compute agency fee (percentage of basic pay only for agency employees)
@@ -931,6 +931,7 @@ export function computeWeeklyPayroll(
 		monthly_rate: parseFloat(monthlyRate.toFixed(2)),
 		statutory_base_pay: parseFloat(statutoryBasePay.toFixed(2)),
 		basic_pay: parseFloat(basicPay.toFixed(2)),
+		rest_day_pay: parseFloat(restDayPay.toFixed(2)),
 		overtime_pay: parseFloat(overtimePay.toFixed(2)),
 		holiday_pay: parseFloat(holidayPay.toFixed(2)),
 		night_diff_pay: parseFloat(nightDiffPay.toFixed(2)),
