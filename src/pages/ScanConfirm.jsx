@@ -129,6 +129,15 @@ function scheduledShiftStart(logDate, shiftOptions) {
   return Number.isFinite(start.getTime()) ? start : null;
 }
 
+function scheduledShiftEnd(logDate, shiftOptions) {
+  if (!logDate || !shiftOptions?.shiftStartTime || !shiftOptions?.shiftEndTime) return null;
+  const start = new Date(`${logDate}T${shiftOptions.shiftStartTime}:00+08:00`);
+  const end = new Date(`${logDate}T${shiftOptions.shiftEndTime}:00+08:00`);
+  if (![start, end].every(value => Number.isFinite(value.getTime()))) return null;
+  if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
+  return end;
+}
+
 function getBreakDurationMinutes(employee) {
   const minutes = Number(employee?.break_duration_minutes);
   return [30, 60].includes(minutes) ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
@@ -347,8 +356,14 @@ export default function ScanConfirm() {
     const nowDate = new Date(now);
     if (action === 'time_in') {
       const shiftStart = scheduledShiftStart(today, shiftOptions);
+      const shiftEnd = scheduledShiftEnd(today, shiftOptions);
       if (shiftStart && nowDate.getTime() < shiftStart.getTime() - MAX_EARLY_TIME_IN_MS) {
         setPhotoError(`Time In (1) is allowed only within 1 hour before the ${shiftOptions.shiftStartTime} shift start. This scan was not recorded.`);
+        setConfirming(false);
+        return;
+      }
+      if (shiftEnd && nowDate.getTime() >= shiftEnd.getTime()) {
+        setPhotoError(`The ${shiftOptions.shiftEndTime} shift has already ended. This scan cannot be recorded as Time In (1).`);
         setConfirming(false);
         return;
       }

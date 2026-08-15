@@ -240,17 +240,18 @@ function scheduledBreakIn(employee, date, shiftOptions = {}) {
 function classifyFirstPunchDuringBreak(employee, date, nowDate, shiftOptions = {}) {
   const breakOutValue = scheduledBreak(employee, date, shiftOptions)?.break_time_out;
   const breakInValue = scheduledBreakIn(employee, date, shiftOptions);
-  if (!breakOutValue || !breakInValue) return null;
+  const shiftEndValue = scheduledShiftEnd(date, shiftOptions);
+  if (!breakOutValue || !breakInValue || !shiftEndValue) return null;
 
   const breakOut = new Date(breakOutValue);
   const breakIn = new Date(breakInValue);
-  const windowEnd = new Date(breakOut.getTime() + BREAK_TIME_IN_MISSING_AFTER_MS);
-  if (![breakOut, breakIn, windowEnd].every(value => Number.isFinite(value.getTime()))) return null;
+  const shiftEnd = new Date(shiftEndValue);
+  if (![breakOut, breakIn, shiftEnd].every(value => Number.isFinite(value.getTime()))) return null;
 
-  if (nowDate.getTime() >= breakOut.getTime() && nowDate.getTime() < breakIn.getTime()) {
-    return "break_time_in";
-  }
-  if (nowDate.getTime() >= breakIn.getTime() && nowDate.getTime() < windowEnd.getTime()) {
+  // When the employee's first successful scan is after the scheduled break has
+  // started, Time In (1) was missed. Keep classifying it as Time In (2) through
+  // the remainder of the shift instead of falling back to a false Time In (1).
+  if (nowDate.getTime() >= breakOut.getTime() && nowDate.getTime() < shiftEnd.getTime()) {
     return "break_time_in";
   }
   return null;
@@ -447,10 +448,17 @@ export default async function handler(req, res) {
 
   if (!lastLog) {
     const shiftStart = scheduledShiftStart(attendanceDate, currentShiftOptions);
+    const shiftEnd = scheduledShiftEnd(attendanceDate, currentShiftOptions);
     if (shiftStart && nowDate.getTime() < shiftStart.getTime() - MAX_EARLY_TIME_IN_MS) {
       return res.status(409).json({
         error: `Time In (1) is allowed only within 1 hour before the ${currentShiftOptions.shiftStartTime} shift start. This scan was not recorded.`,
         code: "TIME_IN_TOO_EARLY",
+      });
+    }
+    if (shiftEnd && nowDate.getTime() >= shiftEnd.getTime()) {
+      return res.status(409).json({
+        error: `The ${currentShiftOptions.shiftEndTime} shift has already ended. This scan cannot be recorded as Time In (1).`,
+        code: "TIME_IN_AFTER_SHIFT_END",
       });
     }
     const isEarlyTimeIn = Boolean(

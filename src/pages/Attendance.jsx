@@ -948,7 +948,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
                 <label className="text-sm font-medium text-foreground">Time In(1)</label>
                 <Input type="time" value={timeIn} onChange={e => setTimeIn(e.target.value)}
                   disabled={!canEditTimeIn} className={`mt-1 ${!canEditTimeIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                <p className="text-xs text-muted-foreground mt-0.5">Immutable actual employee scan — use Review Time In (1) to document an issue.</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{log.time_in ? 'Immutable actual employee scan' : 'Missing and locked'} — use Review Time In (1) to request an authorized adjustment.</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time Out(1)</label>
@@ -3858,8 +3858,7 @@ export default function Attendance() {
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
                             <Button size="sm" variant="outline" className="h-7 gap-1 border-blue-200 px-2 text-[10px] text-blue-700 hover:bg-blue-50"
-                              title="Review immutable Time In (1)"
-                              disabled={!log.time_in}
+                              title={log.time_in ? 'Review immutable Time In (1)' : 'Request adjustment for missing Time In (1)'}
                               onClick={() => setReviewingTimeInLog(log)}>
                               <Eye className="w-3.5 h-3.5" />
                               Time In Review

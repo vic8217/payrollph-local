@@ -71,6 +71,18 @@ export default function Layout() {
   const visibleNavItems = navItems.filter(item => item.roles.includes(userRole));
   const canSeeBreakAlerts = canReceiveBreakTimeAlerts(user);
   const activeCompanyId = activeCompany?.id;
+  const timeInReviewBadgeStatus = userRole === 'super_admin' ? 'pending' : 'approved';
+
+  const { data: timeInReviewItems = [] } = useQuery({
+    queryKey: ['time-in-reviews', activeCompanyId, 'badge', timeInReviewBadgeStatus],
+    queryFn: () => appApi.entities.AttendanceLog.filter({
+      company_profile_id: activeCompanyId,
+      time_in_review_status: timeInReviewBadgeStatus,
+    }, '-time_in_review_requested_at', 5000),
+    enabled: Boolean(activeCompanyId),
+    refetchInterval: 30 * 1000,
+  });
+  const timeInReviewCount = timeInReviewItems.length;
 
   const { data: employees = [] } = useQuery({
     queryKey: ['employees', activeCompanyId, 'break-time-alerts'],
@@ -183,7 +195,9 @@ export default function Layout() {
       <nav className="flex-1 py-4 space-y-0.5 px-2 overflow-y-auto">
 	        {visibleNavItems.map((item) => {
             const showBreakBadge = item.path === '/work-schedule' && missingBreakTimeCount > 0;
-            const badgeLabel = missingBreakTimeCount > 99 ? '99+' : String(missingBreakTimeCount);
+            const showTimeInReviewBadge = item.path === '/attendance/time-in-reviews' && timeInReviewCount > 0;
+            const itemBadgeCount = showTimeInReviewBadge ? timeInReviewCount : missingBreakTimeCount;
+            const badgeLabel = itemBadgeCount > 99 ? '99+' : String(itemBadgeCount);
 
             return (
 	          item.external ? (
@@ -206,7 +220,7 @@ export default function Layout() {
 	            <NavLink
               key={item.path}
               to={item.path}
-              end={item.path === '/'}
+              end
               onClick={() => setMobileOpen(false)}
               className={({ isActive }) => cn(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
@@ -223,6 +237,16 @@ export default function Layout() {
                     variant="destructive"
                     className={cn(
                       "h-5 min-w-5 px-1.5 justify-center rounded-full text-[10px] leading-none",
+                      effectiveCollapsed && "absolute -right-1 -top-1"
+                    )}
+                  >
+                    {badgeLabel}
+                  </Badge>
+                )}
+                {showTimeInReviewBadge && (
+                  <Badge
+                    className={cn(
+                      "h-5 min-w-5 justify-center rounded-full bg-amber-500 px-1.5 text-[10px] leading-none text-white hover:bg-amber-500",
                       effectiveCollapsed && "absolute -right-1 -top-1"
                     )}
                   >
