@@ -275,6 +275,16 @@ function punchActualValue(log, action) {
 // actual punch always wins so default shift times cannot create unworked time.
 function creditedOrLateActualPunch(log, action) {
 	const credited = toValidDate(log?.[action]);
+	// A completed Super Admin + HR/Admin review explicitly authorizes the
+	// adjusted Time In for payroll computation. Preserve the original scan in
+	// the audit fields, but do not let it override the approved adjustment.
+	if (
+		action === 'time_in' &&
+		log?.time_in_review_status === 'adjusted' &&
+		log?.time_in_adjusted_at
+	) {
+		return credited;
+	}
 	const actual = toValidDate(punchActualValue(log, action));
 	return actual && credited && actual.getTime() > credited.getTime() ? actual : credited;
 }
