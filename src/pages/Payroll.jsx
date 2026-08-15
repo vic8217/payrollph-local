@@ -1179,12 +1179,11 @@ export default function Payroll() {
   const targetPeriodLabel = selectedSummaryPeriod?.period_name?.replace(/^Payroll Period:\s*/, '') || activePeriodConfig.label;
   const targetPeriodIsComplete = selectedSummaryPeriod?.generation_status === 'complete';
   const generateDisabled = generating ||
-    targetPeriod?.status === 'released' ||
-    (!!targetPeriod && targetPeriodIsComplete && targetPeriod.status !== 'approved');
+    targetPeriod?.status === 'released';
   const generateTitle = targetPeriod?.status === 'released'
     ? 'Released payroll periods cannot be regenerated'
-    : targetPeriod?.status === 'processing' && targetPeriodIsComplete
-      ? 'Approve this payroll period before regenerating'
+    : targetPeriodIsComplete
+      ? 'Regenerate this payroll period using the latest attendance and payroll rules'
       : undefined;
   const knownEmployeeIds = new Set(employees
     .filter(employee => !employee.special_rate_enabled)
