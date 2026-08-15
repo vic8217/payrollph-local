@@ -613,6 +613,13 @@ export function computeOvertimeHours(
 	if (!timeOut) return Number(log.overtime_hours) || 0;
 
 	const scheduledStart = resolveScheduledTime(log.date, shiftStartTime);
+	const reviewedTimeIn = creditedOrLateActualPunch(normalizedLog, 'time_in');
+	// Ordinary early scans remain credited at the scheduled start. A protected
+	// Time In adjustment, however, confirms that the employee actually worked
+	// before the shift, so expose that interval as supportable pre-shift OT.
+	const preShiftOvertimeHours = normalizedLog.time_in_adjusted_at && scheduledStart && reviewedTimeIn
+		? Math.max(0, (scheduledStart.getTime() - reviewedTimeIn.getTime()) / 36e5)
+		: 0;
 	let overtimeStart = resolveScheduledTime(log.date, overtimeStartTime);
 	if (!overtimeStart) {
 		return parseFloat(Math.max(0, (Number(hoursWorked) || 0) - 8).toFixed(2));
@@ -625,7 +632,7 @@ export function computeOvertimeHours(
 	const overtimeWindowStart = new Date(
 		Math.max(
 			overtimeStart.getTime(),
-			creditedOrLateActualPunch(normalizedLog, 'time_in')?.getTime() || overtimeStart.getTime(),
+			reviewedTimeIn?.getTime() || overtimeStart.getTime(),
 		),
 	);
 	let overtimeHours = Math.max(
@@ -633,7 +640,7 @@ export function computeOvertimeHours(
 		(timeOut.getTime() - overtimeWindowStart.getTime()) / 36e5,
 	);
 
-	const workStart = creditedOrLateActualPunch(normalizedLog, 'time_in') || overtimeWindowStart;
+	const workStart = reviewedTimeIn || overtimeWindowStart;
 	const breakOut = paidBreakTime ? null : normalizePunchWithinWorkInterval(normalizedLog, normalizedLog.break_time_out, workStart, timeOut);
 	const recordedBreakInValue = creditedOrLateActualPunch(normalizedLog, 'break_time_in');
 	const recordedBreakIn = normalizePunchWithinWorkInterval(normalizedLog, recordedBreakInValue, workStart, timeOut);
@@ -669,7 +676,7 @@ export function computeOvertimeHours(
 		effectiveBreakIn,
 	);
 
-	return parseFloat(Math.max(0, overtimeHours).toFixed(2));
+	return parseFloat(Math.max(0, overtimeHours + preShiftOvertimeHours).toFixed(2));
 }
 
 export function computeRequestExemptOvertimeHours(
