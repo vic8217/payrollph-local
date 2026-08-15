@@ -457,7 +457,9 @@ export default async function handler(req, res) {
       shiftStart &&
       nowDate.getTime() < shiftStart.getTime()
     );
-    const effectiveTimeIn = isEarlyTimeIn ? shiftStart.toISOString() : now;
+    // Preserve the actual successful scan as the immutable Time In (1).
+    // Payroll computation already caps early work at the scheduled shift start.
+    const effectiveTimeIn = now;
 
     const firstBreakPunch = isEarlyTimeIn
       ? null
@@ -514,10 +516,8 @@ export default async function handler(req, res) {
       employee_name: employeeName,
       date: attendanceDate,
       time_in: effectiveTimeIn,
-      ...(isEarlyTimeIn ? {
-        time_in_actual_punch_at: now,
-        time_in_classification: "early_scan_clamped_to_shift_start",
-      } : {}),
+      time_in_actual_punch_at: now,
+      ...(isEarlyTimeIn ? { time_in_classification: "early_scan" } : {}),
       work_schedule: effectiveWorkSchedule,
       shift_start_time: currentShiftOptions.shiftStartTime,
       shift_end_time: currentShiftOptions.shiftEndTime,

@@ -39,6 +39,18 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   "date",
   "time_in",
   "time_in_actual_punch_at",
+  "time_in_original_value",
+  "time_in_review_status",
+  "time_in_review_category",
+  "time_in_review_note",
+  "time_in_review_requested_at",
+  "time_in_review_requested_by",
+  "time_in_review_decision_note",
+  "time_in_review_decided_at",
+  "time_in_review_decided_by",
+  "time_in_adjustment_note",
+  "time_in_adjusted_at",
+  "time_in_adjusted_by",
   "break_time_out",
   "break_time_out_actual_punch_at",
   "break_time_in",
@@ -254,6 +266,11 @@ export default async function handler(req, res) {
         await requireCompletedAttendanceForOvertimeApproval(req.body.id, req.body.data || {});
       }
       const updateData = { ...(req.body.data || {}) };
+      if (entity === "AttendanceLog" && Object.prototype.hasOwnProperty.call(updateData, "time_in")) {
+        return res.status(403).json({
+          error: "Time In (1) is an immutable employee scan. Use the attendance review workflow to document an issue.",
+        });
+      }
       delete updateData.hr_confirmation_passcode;
       delete updateData.admin_confirmation_passcode;
       const record = await updateRecord(entity, req.body.id, updateData);

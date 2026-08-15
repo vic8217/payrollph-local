@@ -1,13 +1,14 @@
 // @ts-nocheck
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Save, Scale } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ClipboardList, Save, Scale } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { appApi } from '@/lib/appApi';
 import { useAuth } from '@/lib/AuthContext';
 import { useCompany } from '@/lib/CompanyContext';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -76,6 +77,7 @@ const deriveManualSummary = (values = {}, record = {}) => {
 };
 
 function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
+  const [showDifferenceReasons, setShowDifferenceReasons] = useState(false);
   const latestByEmployee = new Map();
   reconciliations.forEach(item => {
     const key = String(item.employee_id || '');
@@ -86,7 +88,16 @@ function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
     const system = record;
     const manualValues = deriveManualSummary(reconciliation?.manual_values || system, record);
     const variance = CONSOLIDATED_FIELDS.filter(([key]) => Math.abs(num(system[key]) - num(manualValues[key])) > .005).length;
-    return { record, reconciliation, system, manualValues, variance };
+    const differences = CONSOLIDATED_FIELDS
+      .map(([key, label]) => ({
+        key,
+        label,
+        system: num(system[key]),
+        manual: num(manualValues[key]),
+        difference: num(system[key]) - num(manualValues[key]),
+      }))
+      .filter(item => Math.abs(item.difference) > .005);
+    return { record, reconciliation, system, manualValues, variance, differences };
   });
   const reviewed = rows.filter(row => row.reconciliation).length;
   const unresolved = rows.filter(row => row.reconciliation && row.variance > 0).length;
@@ -105,7 +116,12 @@ function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
       <Card className="p-4"><p className="text-xs text-muted-foreground">System Net Payroll</p><p className="mt-1 text-2xl font-bold">{money(totals.find(item => item.key === 'net_pay')?.system)}</p></Card>
     </div>
     <Card className="overflow-hidden">
-      <div className="border-b px-4 py-3"><h2 className="font-semibold">Consolidated Payroll Totals</h2><p className="text-xs text-muted-foreground">System / Manual / Difference across all employees in this payroll period.</p></div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+        <div><h2 className="font-semibold">Consolidated Payroll Totals</h2><p className="text-xs text-muted-foreground">System / Manual / Difference across all employees in this payroll period.</p></div>
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowDifferenceReasons(true)} disabled={!rows.some(row => row.variance > 0)}>
+          <ClipboardList className="h-4 w-4" /> View Difference Reasons
+        </Button>
+      </div>
       <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-xs"><thead className="bg-muted/70"><tr><th className="px-3 py-2 text-left">Source</th>{totals.map(item => <th key={item.key} className="px-3 py-2 text-right">{item.label}</th>)}</tr></thead><tbody>
         <tr className="border-t"><td className="px-3 py-2 font-bold text-red-600">System</td>{totals.map(item => <td key={item.key} className="px-3 py-2 text-right font-mono">{item.key === 'overtime_hours' ? display(item.system, 'number') : money(item.system)}</td>)}</tr>
         <tr className="border-t"><td className="px-3 py-2 font-bold text-blue-600">Manual</td>{totals.map(item => <td key={item.key} className="px-3 py-2 text-right font-mono">{item.key === 'overtime_hours' ? display(item.manual, 'number') : money(item.manual)}</td>)}</tr>
@@ -118,6 +134,36 @@ function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
         {rows.map(row => <tr key={row.record.id} className="border-t"><td className="px-3 py-2 font-medium">{row.record.employee_name}<br/><span className="text-muted-foreground">{row.record.employee_id}</span></td><td className="px-3 py-2">{row.record.department || '—'}</td><td className="px-3 py-2 font-mono">{display(row.system.overtime_hours, 'number')}</td><td className="px-3 py-2 font-mono">{money(row.system.overtime_pay)}</td><td className="px-3 py-2 font-mono">{money(row.system.gross_pay)}</td><td className="px-3 py-2 font-mono">{money(row.system.total_deductions)}</td><td className="px-3 py-2 font-mono font-semibold">{money(row.system.net_pay)}</td><td className="px-3 py-2"><span className={`rounded-full px-2 py-1 font-medium ${row.reconciliation ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{row.reconciliation ? 'Reconciled' : 'Pending'}</span></td><td className={`px-3 py-2 font-semibold ${row.variance > 0 ? 'text-red-600' : 'text-emerald-700'}`}>{row.variance > 0 ? `${row.variance} field${row.variance === 1 ? '' : 's'}` : 'None'}</td><td className="px-3 py-2"><Button size="sm" variant="outline" onClick={() => onEmployee(String(row.record.employee_id))}>Review</Button></td></tr>)}
       </tbody></table></div>
     </Card>
+    <Dialog open={showDifferenceReasons} onOpenChange={setShowDifferenceReasons}>
+      <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
+        <DialogHeader><DialogTitle>Payroll Difference Reasons</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">Employees with differences between system payroll and the saved manual reconciliation.</p>
+        <div className="space-y-3">
+          {rows.filter(row => row.variance > 0).map(row => (
+            <div key={row.record.id} className="rounded-lg border border-border p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div><p className="font-semibold">{row.record.employee_name}</p><p className="text-xs text-muted-foreground">{row.record.employee_id} · {row.record.department || 'Unassigned'}</p></div>
+                <Button size="sm" variant="outline" onClick={() => { setShowDifferenceReasons(false); onEmployee(String(row.record.employee_id)); }}>Review Employee</Button>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[620px] text-xs">
+                  <thead className="bg-muted/70"><tr><th className="px-3 py-2 text-left">Field</th><th className="px-3 py-2 text-right">System</th><th className="px-3 py-2 text-right">Manual</th><th className="px-3 py-2 text-right">Difference</th></tr></thead>
+                  <tbody>{row.differences.map(item => {
+                    const formatter = item.key === 'overtime_hours' ? value => display(value, 'number') : money;
+                    return <tr key={item.key} className="border-t"><td className="px-3 py-2 font-medium">{item.label}</td><td className="px-3 py-2 text-right font-mono">{formatter(item.system)}</td><td className="px-3 py-2 text-right font-mono">{formatter(item.manual)}</td><td className="px-3 py-2 text-right font-mono font-semibold text-red-600">{formatter(item.difference)}</td></tr>;
+                  })}</tbody>
+                </table>
+              </div>
+              <div className={`mt-3 rounded-md p-3 text-sm ${row.reconciliation?.variance_note?.trim() ? 'bg-blue-50 text-blue-900' : 'bg-amber-50 text-amber-800'}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide">Reason</p>
+                <p className="mt-1 whitespace-pre-wrap">{row.reconciliation?.variance_note?.trim() || 'No variance reason has been entered.'}</p>
+                {row.reconciliation && <p className="mt-2 text-xs opacity-75">Reviewed by {row.reconciliation.reviewed_by || 'Unknown officer'}{row.reconciliation.reviewed_at ? ` · ${new Date(row.reconciliation.reviewed_at).toLocaleString('en-PH')}` : ''}</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   </div>;
 }
 

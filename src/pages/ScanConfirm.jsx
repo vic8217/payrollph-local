@@ -372,30 +372,22 @@ export default function ScanConfirm() {
     }
 
     if (action === 'time_in') {
-      // Lunch window rule: snap time_in to 1:00pm, no overtime
-      let effectiveTimeIn = now;
+      // Store the successful scan itself as immutable Time In (1). Any payroll
+      // crediting rule must not replace the source attendance timestamp.
+      const effectiveTimeIn = now;
       const shiftStart = scheduledShiftStart(today, shiftOptions);
       const isEarlyTimeIn = Boolean(
         shiftStart &&
         new Date(now).getTime() < shiftStart.getTime()
       );
-      if (isEarlyTimeIn) {
-        effectiveTimeIn = shiftStart.toISOString();
-      } else if (isLunchWindow) {
-        const snapped = new Date();
-        snapped.setHours(13, 0, 0, 0);
-        effectiveTimeIn = snapped.toISOString();
-      }
       await appApi.entities.AttendanceLog.create({
         company_profile_id: employee.company_profile_id,
         employee_id: employee.employee_id,
         employee_name: `${employee.first_name} ${employee.last_name}`,
         date: today,
         time_in: effectiveTimeIn,
-        ...(isEarlyTimeIn ? {
-          time_in_actual_punch_at: now,
-          time_in_classification: 'early_scan_clamped_to_shift_start',
-        } : {}),
+        time_in_actual_punch_at: now,
+        ...(isEarlyTimeIn ? { time_in_classification: 'early_scan' } : {}),
         work_schedule: effectiveWorkSchedule,
         shift_start_time: shiftOptions.shiftStartTime,
         shift_end_time: shiftOptions.shiftEndTime,
@@ -411,9 +403,9 @@ export default function ScanConfirm() {
         face_verification_confidence: faceResult?.confidenceScore ?? null,
         face_verification_log_id: faceResult?.log?.id || null,
         notes: isEarlyTimeIn
-          ? `Early Time In scanned at ${formatManilaTime(now)} and credited at the ${shiftOptions.shiftStartTime} shift start.`
+          ? `Early Time In recorded at the actual scan time ${formatManilaTime(now)}; payroll credit begins at the ${shiftOptions.shiftStartTime} shift start.`
           : isLunchWindow
-            ? 'Time-in snapped to 1:00 PM (lunch window rule). No overtime credited.'
+            ? 'Actual Time In recorded during the lunch window.'
             : (capturedPhoto ? 'Photo captured on time-in' : ''),
       });
       setDone({ action: 'time_in', employee, lunchSnapped: isLunchWindow });
@@ -581,7 +573,7 @@ export default function ScanConfirm() {
                 <p className="text-sm text-muted-foreground mt-0.5">{done.hoursWorked.toFixed(1)} hours worked</p>
               )}
               {done.lunchSnapped && (
-                <p className="text-xs text-amber-600 mt-1 font-medium">⚠ Time In set to 1:00 PM · No overtime credited</p>
+                <p className="text-xs text-amber-600 mt-1 font-medium">⚠ Actual lunch-window Time In recorded</p>
               )}
               <p className="text-sm text-muted-foreground mt-1">{format(new Date(), 'hh:mm:ss a · MMM d, yyyy')}</p>
             </div>
@@ -667,7 +659,7 @@ export default function ScanConfirm() {
             <div>
               <p className="text-sm font-semibold text-amber-800">Lunch Break Window Detected</p>
               <p className="text-xs text-amber-700 mt-0.5">
-                Time In is being recorded between 12:00 PM – 12:59 PM. <strong>Time In(1) will be set to 1:00 PM</strong> and <strong>no overtime hours</strong> will be credited for this record.
+                Time In is being recorded between 12:00 PM – 12:59 PM. The <strong>actual scan time will be preserved</strong> as Time In (1).
               </p>
             </div>
           </div>

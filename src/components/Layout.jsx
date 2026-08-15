@@ -30,6 +30,7 @@ const navItems = [
   { label: 'Dashboard',       icon: LayoutDashboard,  path: '/',                  roles: ['super_admin', 'admin', 'user'] },
   { label: 'Employees',       icon: Users,             path: '/employees',          roles: ['super_admin', 'admin', 'user'] },
   { label: 'Attendance',      icon: Clock,             path: '/attendance',         roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Time In Reviews', icon: ShieldCheck,       path: '/attendance/time-in-reviews', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Work Schedule',   icon: CalendarClock,     path: '/work-schedule',      roles: ['super_admin', 'admin', 'user'] },
   { label: 'Payroll',         icon: FileText,          path: '/payroll',            roles: ['super_admin', 'admin', 'user'] },
   { label: 'Management Reports', icon: BarChart3,      path: '/management-reports', roles: ['super_admin', 'admin', 'user'] },

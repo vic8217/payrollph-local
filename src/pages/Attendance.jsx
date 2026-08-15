@@ -79,6 +79,18 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   'date',
   'time_in',
   'time_in_actual_punch_at',
+  'time_in_original_value',
+  'time_in_review_status',
+  'time_in_review_category',
+  'time_in_review_note',
+  'time_in_review_requested_at',
+  'time_in_review_requested_by',
+  'time_in_review_decision_note',
+  'time_in_review_decided_at',
+  'time_in_review_decided_by',
+  'time_in_adjustment_note',
+  'time_in_adjusted_at',
+  'time_in_adjusted_by',
   'break_time_out',
   'break_time_out_actual_punch_at',
   'break_time_in',
@@ -425,8 +437,8 @@ function hasMaterialPunchTimeMismatch(item) {
 function actualTimeForPunch(log, action) {
   const punch = punchPhotoFields.find(item => item.action === action);
   if (!punch || !log) return null;
-  return log[`${action}_photo_captured_at`]
-    || log[`${action}_actual_punch_at`]
+  return log[`${action}_actual_punch_at`]
+    || log[`${action}_photo_captured_at`]
     || log[punch.locationField]?.captured_at
     || log[punch.timeField]
     || null;
@@ -574,7 +586,9 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
   // (with the daily passcode) may only fill in missing punches, and only while
   // the log is still pending — once HR approves it, non-admins are locked out.
   const isApprovedLog = log.status === 'approved';
-  const canEditTimeIn = canCorrectAttendance || (!isApprovedLog && !log.time_in);
+  // Time In (1) is the immutable employee scan timestamp. Corrections are
+  // documented through the review workflow instead of rewriting the punch.
+  const canEditTimeIn = false;
   const canEditBreakOut = canCorrectAttendance || (!isApprovedLog && !log.break_time_out);
   const canEditBreakIn = canCorrectAttendance || (!isApprovedLog && !log.break_time_in);
   const canEditTimeOut = canCorrectAttendance || (!isApprovedLog && !log.time_out);
@@ -934,8 +948,7 @@ function EditAttendanceModal({ log, employee, defaultWorkSchedule, shiftOptions,
                 <label className="text-sm font-medium text-foreground">Time In(1)</label>
                 <Input type="time" value={timeIn} onChange={e => setTimeIn(e.target.value)}
                   disabled={!canEditTimeIn} className={`mt-1 ${!canEditTimeIn ? 'opacity-50 cursor-not-allowed' : ''}`} />
-                {!canEditTimeIn ? <p className="text-xs text-muted-foreground mt-0.5">{log.time_in ? 'Already recorded' : 'Locked — approved by HR'}</p>
-                  : (canCorrectAttendance && log.time_in && <p className="text-xs text-amber-600 mt-0.5">Recorded — editable</p>)}
+                <p className="text-xs text-muted-foreground mt-0.5">Immutable actual employee scan — use Review Time In (1) to document an issue.</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Time Out(1)</label>
@@ -1172,6 +1185,56 @@ function RejectAttendanceModal({ log, currentUser, activeCompanyId, onClose, onC
       </DialogContent>
     </Dialog>
   );
+}
+
+function TimeInReviewModal({ log, currentUser, onClose, onConfirm }) {
+  const [category, setCategory] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submitReview = async () => {
+    if (!category) { setError('Please select a review reason.'); return; }
+    if (!note.trim()) { setError('Please enter a review note.'); return; }
+    setSaving(true);
+    setError('');
+    const reviewedAt = new Date().toISOString();
+    const reviewer = currentUser?.full_name || currentUser?.name || currentUser?.email || 'unknown';
+    try {
+      await onConfirm({
+        time_in_review_status: 'pending',
+        time_in_review_requested_at: reviewedAt,
+        time_in_review_requested_by: reviewer,
+        time_in_original_value: log.time_in_actual_punch_at || log.time_in,
+        time_in_review_category: category,
+        time_in_review_note: note.trim(),
+        time_in_reviewed_at: reviewedAt,
+        time_in_reviewed_by: reviewer,
+        passcode_audit_action: 'time_in_reviewed',
+        passcode_audit_at: reviewedAt,
+        passcode_audit_by: reviewer,
+        passcode_audit_reason: `${category}: ${note.trim()}`,
+        passcode_audit_summary: `Immutable Time In (1) reviewed for ${log.date}`,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <Dialog open onOpenChange={open => !open && onClose()}>
+    <DialogContent className="max-w-md">
+      <DialogHeader><DialogTitle>Review Time In (1)</DialogTitle></DialogHeader>
+      <div className="space-y-4">
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+          Recorded actual Time In (1): <strong>{log.time_in ? formatManilaTime(log.time_in) : 'Missing'}</strong>. This timestamp is immutable and will not be changed by this review.
+        </div>
+        <div><label className="text-sm font-medium">Reason for review</label><Select value={category} onValueChange={setCategory}><SelectTrigger className="mt-1"><SelectValue placeholder="Select a reason" /></SelectTrigger><SelectContent><SelectItem value="system_error">System Error</SelectItem><SelectItem value="employee_error">Employee Error</SelectItem><SelectItem value="others">Others</SelectItem></SelectContent></Select></div>
+        <div><label className="text-sm font-medium">Reason or note</label><Textarea className="mt-1" rows={4} value={note} onChange={event => setNote(event.target.value)} placeholder="Describe what happened and what should be reviewed." /></div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2"><Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button><Button onClick={submitReview} disabled={saving}>{saving ? 'Saving…' : 'Save Review'}</Button></div>
+      </div>
+    </DialogContent>
+  </Dialog>;
 }
 
 function OvertimeReviewModal({ log, currentUser, activeCompanyId, onClose, onConfirm }) {
@@ -1631,6 +1694,7 @@ export default function Attendance() {
   const [processingOtBatch, setProcessingOtBatch] = useState(false);
   const [openOtDate, setOpenOtDate] = useState('');
   const [rejectingLog, setRejectingLog] = useState(null);
+  const [reviewingTimeInLog, setReviewingTimeInLog] = useState(null);
   const [photoLog, setPhotoLog] = useState(null);
   const [locationLog, setLocationLog] = useState(null);
   const [downloading, setDownloading] = useState(false);
@@ -3793,6 +3857,13 @@ export default function Attendance() {
                               onClick={() => setEditingLog(log)}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                              title="Review immutable Time In (1)"
+                              disabled={!log.time_in}
+                              onClick={() => setReviewingTimeInLog(log)}>
+                              <Eye className="w-3.5 h-3.5" />
+                              <span className="sr-only">Review Time In (1)</span>
+                            </Button>
                             <Button size="icon" variant="ghost"
                               className={`h-7 w-7 ${approvalBlocked ? 'text-muted-foreground opacity-50 cursor-not-allowed' : 'text-green-600 hover:bg-green-50'}`}
                               title={approvalBlocked ? `Cannot approve while ${missingFields.join(', ')} is Missing` : 'Approve attendance'}
@@ -3845,6 +3916,18 @@ export default function Attendance() {
           onConfirm={async (updates) => {
             await updateLog(rejectingLog.id, updates);
             setRejectingLog(null);
+          }}
+        />
+      )}
+
+      {reviewingTimeInLog && (
+        <TimeInReviewModal
+          log={reviewingTimeInLog}
+          currentUser={currentUser}
+          onClose={() => setReviewingTimeInLog(null)}
+          onConfirm={async updates => {
+            await updateLog(reviewingTimeInLog.id, updates);
+            setReviewingTimeInLog(null);
           }}
         />
       )}
