@@ -1454,6 +1454,10 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
   const hasFinalTimeOut = Boolean(effectiveAttendance?.time_out);
   const originalTimeOutInput = originalTimeOut ? formatManilaTime(originalTimeOut, { hour12: false }) : '';
   const timeOutChanged = Boolean(correctedTimeOutIso && originalTimeOut && correctedTimeOut !== originalTimeOutInput);
+  const computedAttendanceChanged = Boolean(requestAttendance) && (
+    Math.abs((Number(requestAttendance.hours_worked) || 0) - recomputedHoursWorked) > 0.005 ||
+    Math.abs((Number(requestAttendance.ot_actual_hours ?? requestAttendance.overtime_hours) || 0) - actualOvertimeHours) > 0.005
+  );
 
   const verifyCodes = async () => {
     const records = await entities.filter('DailyPasscode', {
@@ -1509,12 +1513,14 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
       await verifyCodes();
       const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
       const reviewedAt = new Date().toISOString();
-      if (timeOutChanged) {
+      // An approved Time In review invalidates the previously stored attendance
+      // totals. Persist the live recalculation before the OT API validates it.
+      if (decision === 'approved' && requestAttendance && (timeOutChanged || computedAttendanceChanged)) {
         await onCorrectAttendance(requestAttendance.id, {
-          time_out: correctedTimeOutIso,
+          ...(timeOutChanged ? { time_out: correctedTimeOutIso } : {}),
           hours_worked: Number(recomputedHoursWorked.toFixed(2)),
           ot_actual_hours: Number(actualOvertimeHours.toFixed(2)),
-          notes: `${requestAttendance.notes ? `${requestAttendance.notes}\n` : ''}Final Time Out corrected for callback OT by ${reviewer} on ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
+          notes: `${requestAttendance.notes ? `${requestAttendance.notes}\n` : ''}${timeOutChanged ? 'Final Time Out corrected and attendance' : 'Attendance'} totals recalculated for OT review by ${reviewer} on ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
         }, request);
       }
       await onConfirm({
@@ -1910,16 +1916,19 @@ export default function Attendance() {
   const correctAttendanceForOvertime = async (id, updates, request) => {
     const correctedAt = new Date().toISOString();
     const reviewer = currentUser?.full_name || currentUser?.email || 'unknown';
+    const finalTimeOutChanged = Object.prototype.hasOwnProperty.call(updates, 'time_out');
     await entities.update('AttendanceLog', id, updates);
     await entities.create('PasscodeAuditLog', {
       company_profile_id: activeCompanyId,
       source_entity: 'AttendanceLog',
       source_record_id: id,
-      action: 'attendance_correction',
+      action: finalTimeOutChanged ? 'attendance_correction' : 'attendance_recalculation',
       occurred_at: correctedAt,
       authorized_by: reviewer,
-      reason: 'Final Time Out corrected for callback overtime review',
-      summary: `Final Time Out corrected during OT review for ${request.employee_name || request.employee_id} on ${request.date}`,
+      reason: finalTimeOutChanged
+        ? 'Final Time Out corrected for callback overtime review'
+        : 'Attendance totals recalculated after an approved attendance adjustment',
+      summary: `${finalTimeOutChanged ? 'Final Time Out corrected' : 'Attendance totals recalculated'} during OT review for ${request.employee_name || request.employee_id} on ${request.date}`,
       employee_id: request.employee_id,
       employee_name: request.employee_name,
       record_date: request.date,
@@ -2051,12 +2060,16 @@ export default function Attendance() {
         const review = otBatchReviews[request.id];
         const approved = review.decision === 'approved';
         const approvedHours = approved ? Number(review.approvedHours) : 0;
-        if (timeOutChanged) {
+        const attendanceTotalsChanged = Boolean(attendance) && (
+          Math.abs((Number(attendance.hours_worked) || 0) - hoursWorked) > 0.005 ||
+          Math.abs((Number(attendance.ot_actual_hours ?? attendance.overtime_hours) || 0) - actualOvertimeHours) > 0.005
+        );
+        if (approved && attendance && (timeOutChanged || attendanceTotalsChanged)) {
           await correctAttendanceForOvertime(attendance.id, {
-            time_out: correctedTimeOutIso,
+            ...(timeOutChanged ? { time_out: correctedTimeOutIso } : {}),
             hours_worked: Number(hoursWorked.toFixed(2)),
             ot_actual_hours: Number(actualOvertimeHours.toFixed(2)),
-            notes: `${attendance.notes ? `${attendance.notes}\n` : ''}Final Time Out corrected for callback OT during batch review`,
+            notes: `${attendance.notes ? `${attendance.notes}\n` : ''}${timeOutChanged ? 'Final Time Out corrected and attendance' : 'Attendance'} totals recalculated during batch OT review`,
           }, request);
         }
         await updateOvertimeRequest(request.id, {
