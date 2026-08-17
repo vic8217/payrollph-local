@@ -25,6 +25,8 @@ const EDITABLE_FIELDS = [
   "user_email",
   "employment_type",
   "agency_fee_percentage",
+  "is_agency_employee",
+  "payroll_disbursement_method",
   "status",
   "photo_url",
   "qr_code",
@@ -60,6 +62,10 @@ export default async function handler(req, res) {
   if (!employeeRecordId || !companyProfileId) {
     return res.status(400).json({ error: "Employee and company are required." });
   }
+  const assignedCompanyIds = session.user.company_profile_ids || (session.user.company_profile_id ? [session.user.company_profile_id] : []);
+  if (session.user.role !== "super_admin" && !assignedCompanyIds.includes(companyProfileId)) {
+    return res.status(403).json({ error: "You cannot modify employees for this company." });
+  }
   if (!hrPasscode || !adminPasscode) {
     return res.status(400).json({ error: "Both HR Officer and Admin passcodes are required." });
   }
@@ -72,6 +78,11 @@ export default async function handler(req, res) {
     limit: 1,
   });
   if (!employee) return res.status(404).json({ error: "Employee not found." });
+  if (!String(employee.employee_id || "").trim()) {
+    return res.status(400).json({
+      error: "Employee ID is required. Assign an Employee ID before saving this employee profile.",
+    });
+  }
 
   const [todayCode] = await listRecords("DailyPasscode", {
     filter: { company_profile_id: companyProfileId, date: manilaDateString() },

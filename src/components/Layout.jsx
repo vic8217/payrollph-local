@@ -29,6 +29,7 @@ import { manilaDateString } from '@/lib/dateUtils';
 const navItems = [
   { label: 'Dashboard',       icon: LayoutDashboard,  path: '/',                  roles: ['super_admin', 'admin', 'user'] },
   { label: 'Employees',       icon: Users,             path: '/employees',          roles: ['super_admin', 'admin', 'user'] },
+  { label: 'Agency',          icon: Building2,          path: '/agency',             roles: ['super_admin', 'admin', 'user'], agencyOnly: true },
   { label: 'Attendance',      icon: Clock,             path: '/attendance',         roles: ['super_admin', 'admin', 'user'] },
   { label: 'Time In Reviews', icon: ShieldCheck,       path: '/attendance/time-in-reviews', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Work Schedule',   icon: CalendarClock,     path: '/work-schedule',      roles: ['super_admin', 'admin', 'user'] },
@@ -68,7 +69,7 @@ export default function Layout() {
   const handleLogout = () => appApi.auth.logout('/landing');
 
   const userRole = ['super_admin', 'admin', 'user'].includes(user?.role) ? user.role : 'user';
-  const visibleNavItems = navItems.filter(item => item.roles.includes(userRole));
+  const visibleNavItems = navItems.filter(item => item.roles.includes(userRole) && (!item.agencyOnly || activeCompany?.uses_employee_agency === true));
   const canSeeBreakAlerts = canReceiveBreakTimeAlerts(user);
   const activeCompanyId = activeCompany?.id;
   const timeInReviewBadgeStatus = userRole === 'super_admin' ? 'pending' : 'approved';

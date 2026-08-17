@@ -33,6 +33,8 @@ export default function EmployeeAttendance({ employee }) {
       return records.filter(log => !log.company_profile_id || log.company_profile_id === employee.company_profile_id);
     },
     enabled: !!employee?.employee_id,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
 
   if (!employee) {

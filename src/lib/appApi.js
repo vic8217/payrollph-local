@@ -25,6 +25,8 @@ export async function requestJson(path, options = {}) {
     }
     const error = new Error(message);
     error.status = response.status;
+    error.code = data?.code;
+    error.details = data;
     throw error;
   }
 

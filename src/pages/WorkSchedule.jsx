@@ -7,6 +7,7 @@ import { getPayrollPeriodForDate } from '@/lib/payrollPeriod';
 import {
   effectiveShiftSetting,
   nextEmployeeShiftAssignment,
+  resolveEffectiveEmployeeShift,
   resolveEmployeeWorkSchedule,
   sortedShiftAssignments,
 } from '@/lib/shiftSettings';
@@ -90,6 +91,7 @@ export default function WorkSchedule() {
   const [filterShift, setFilterShift] = useState('all');
   const [savingId, setSavingId] = useState(null);
   const [effectiveDate, setEffectiveDate] = useState(defaultEffectiveDate);
+  const [summaryDate, setSummaryDate] = useState(manilaDateString);
   const [pendingShiftChange, setPendingShiftChange] = useState(null);
   const [hrPasscode, setHrPasscode] = useState('');
   const [adminPasscode, setAdminPasscode] = useState('');
@@ -193,7 +195,7 @@ export default function WorkSchedule() {
 
 
   const effectiveShiftSettings = shiftSettings
-    .map(shift => effectiveShiftSetting(shift, manilaDateString()))
+    .map(shift => effectiveShiftSetting(shift, summaryDate))
     .filter(shift => shift?.is_active !== false);
   const sortedShiftSettings = [...effectiveShiftSettings].sort((a, b) => {
     const startCompare = (a.shift_start_time || '').localeCompare(b.shift_start_time || '');
@@ -221,6 +223,7 @@ export default function WorkSchedule() {
 
   const defaultShiftValue = settingOptions.find(shift => shift.is_default)?.value || settingOptions[0]?.value || 'day_shift';
   const getCurrentShiftValue = (emp, date = manilaDateString()) => resolveEmployeeWorkSchedule(emp, date, defaultShiftValue);
+  const getSummaryShift = emp => resolveEffectiveEmployeeShift(emp, shiftSettings, summaryDate);
   const nextPayrollPeriod = getPayrollPeriodForDate(new Date(), activeCompany, 1);
 
   const getShiftOption = (value) => {
@@ -231,13 +234,17 @@ export default function WorkSchedule() {
   };
 
   const filtered = employees
-    .filter(e => `${e.first_name} ${e.last_name} ${e.employee_id} ${e.department}`.toLowerCase().includes(search.toLowerCase()))
-    .filter(e => filterShift === 'all' || getCurrentShiftValue(e) === filterShift);
+    .filter(e => {
+      const shift = getSummaryShift(e);
+      return `${e.first_name} ${e.middle_name || ''} ${e.last_name} ${e.employee_id} ${e.department || ''} ${shift?.setting_name || ''}`
+        .toLowerCase().includes(search.trim().toLowerCase());
+    })
+    .filter(e => filterShift === 'all' || getSummaryShift(e)?.id === filterShift);
 
   const summaryShifts = shiftOptions.length > 0 ? shiftOptions : Object.entries(shiftConfig).map(([value, config]) => ({ value, label: config.label }));
   const summaryCounts = summaryShifts.map(shift => ({
     ...shift,
-    count: employees.filter(e => getCurrentShiftValue(e) === shift.value).length,
+    count: employees.filter(e => getSummaryShift(e)?.id === shift.value).length,
   }));
   const unassignedCount = employees.filter(e => e.work_schedule && !shiftOptions.some(option => option.value === e.work_schedule)).length;
   const loading = isLoading || isLoadingShifts;
@@ -287,10 +294,20 @@ export default function WorkSchedule() {
       </div>
 
       {/* Filters */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">Shift Schedule Summary</h2>
+          <p className="text-xs text-muted-foreground">Effective employee assignments for the selected work date</p>
+        </div>
+        <div className="flex items-center gap-2 border border-border rounded-md px-2 h-9 bg-background">
+          <CalendarDays className="w-4 h-4 text-muted-foreground" />
+          <Input type="date" aria-label="Summary work date" value={summaryDate} onChange={e => setSummaryDate(e.target.value || manilaDateString())} className="h-7 w-36 border-0 p-0 text-xs focus-visible:ring-0" />
+        </div>
+      </div>
       <div className="flex gap-3 flex-wrap">
         <div className="relative flex-1 min-w-52">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search employees..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder="Search employee, department, employee no., or shift..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
         <div className="flex items-center gap-2 border border-border rounded-md px-2 h-9 bg-background">
           <CalendarDays className="w-4 h-4 text-muted-foreground" />
@@ -332,16 +349,20 @@ export default function WorkSchedule() {
               <tr className="bg-muted/50 border-b border-border">
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Employee</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs hidden sm:table-cell">Department</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Current Shift</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Shift</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Work Date</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time In</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs hidden lg:table-cell">Time Out</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs hidden md:table-cell">Rest Day</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Assign Shift</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={4} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
+                <tr><td colSpan={8} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
               ) : (
                 filtered.map(emp => {
-                  const currentShiftValue = getCurrentShiftValue(emp);
+                  const summaryShift = getSummaryShift(emp);
                   const assignmentShiftValue = getCurrentShiftValue(emp, effectiveDate);
                   const pendingAssignment = nextEmployeeShiftAssignment(emp);
                   const pendingShift = pendingAssignment ? getShiftOption(pendingAssignment.work_schedule) : null;
@@ -363,7 +384,7 @@ export default function WorkSchedule() {
                     <td className="px-4 py-3 text-xs text-muted-foreground hidden sm:table-cell">{emp.department || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="space-y-1">
-                        <ShiftBadge shift={getShiftOption(currentShiftValue)} />
+                        {summaryShift ? <ShiftBadge shift={{ ...summaryShift, value: summaryShift.id, label: summaryShift.setting_name || 'Work Shift' }} /> : <Badge variant="outline">No schedule</Badge>}
                         {pendingAssignment && (
                           <div className="flex flex-wrap items-center gap-1.5">
                             <p className="text-[10px] text-muted-foreground">
@@ -383,6 +404,10 @@ export default function WorkSchedule() {
                         )}
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell">{summaryDate}</td>
+                    <td className="px-4 py-3 text-xs hidden lg:table-cell">{summaryShift?.is_rest_day ? '—' : formatShiftTime(summaryShift?.shift_start_time) || '—'}</td>
+                    <td className="px-4 py-3 text-xs hidden lg:table-cell">{summaryShift?.is_rest_day ? '—' : formatShiftTime(summaryShift?.shift_end_time) || '—'}</td>
+                    <td className="px-4 py-3 text-xs hidden md:table-cell">{summaryShift?.is_rest_day ? 'Yes' : 'No'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Select

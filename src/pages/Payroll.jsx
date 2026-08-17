@@ -14,7 +14,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
-import { computeWeeklyPayroll } from '@/lib/payrollUtils';
+import { computePagIbig, computePhilHealth, computeSSS, computeWeeklyPayroll } from '@/lib/payrollUtils';
+import { agencyFeeForPeriod, normalizePayrollMethod, payrollAllocation } from '@/lib/agencyPayroll';
 import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
 import { capCashAdvanceDeductions } from '@/lib/cashAdvanceDeduction';
@@ -184,8 +185,8 @@ function attendancePhotoCleanupDateLabel(period) {
 }
 
 function legacyShiftTimes(value) {
-  if (value === 'night_shift') return { shift_start_time: '20:00', overtime_start_time: '05:30' };
-  return { shift_start_time: '08:00', overtime_start_time: '17:30' };
+  if (value === 'night_shift') return { shift_start_time: '20:00', shift_end_time: '05:00', overtime_start_time: '05:30' };
+  return { shift_start_time: '08:00', shift_end_time: '17:00', overtime_start_time: '17:30' };
 }
 
 function resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift) {
@@ -198,6 +199,7 @@ function resolveShiftOptionsForLog(log, employee, shiftSettings, defaultShift) {
 
   return {
     shiftStartTime: shift.shift_start_time || fallbackShift.shift_start_time,
+    shiftEndTime: shift.shift_end_time || fallbackShift.shift_end_time,
     overtimeStartTime: shift.overtime_start_time || fallbackShift.overtime_start_time,
     timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
     lateGraceMinutes: Number(shift.grace_period_minutes) || 0,
@@ -424,6 +426,11 @@ export default function Payroll() {
     enabled: !!selectedPeriod && !!activeCompanyId,
   });
   const records = /** @type {PayrollEntity[]} */ (recordsQuery.data || []);
+  const allocationQuery = useQuery({
+    queryKey: ['payrollAllocation', selectedPeriod?.id, activeCompanyId, recordsQuery.dataUpdatedAt],
+    queryFn: () => appApi.functions.invoke('getPayrollAllocation', { company_profile_id: activeCompanyId, payroll_period_id: selectedPeriod.id }),
+    enabled: !!selectedPeriod?.id && !!activeCompanyId && recordsQuery.isSuccess,
+  });
 
   const employeesQuery = useQuery({ queryKey: ['employees', activeCompanyId], queryFn: () => entities.Employee.filter({ company_profile_id: activeCompanyId }, '-created_date', 200), enabled: !!activeCompanyId });
   const employees = /** @type {EmployeeEntity[]} */ (employeesQuery.data || []);
@@ -636,6 +643,7 @@ export default function Payroll() {
         gracePeriodMinutes,
         {
           shiftStartTime: defaultShift.shift_start_time || '08:00',
+          shiftEndTime: defaultShift.shift_end_time || '17:00',
           overtimeStartTime: defaultShift.overtime_start_time || '17:30',
           timeInAllowanceMinutes: Number(defaultShift.time_in_allowance_minutes) || 0,
           lateGraceMinutes: gracePeriodMinutes,
@@ -1061,6 +1069,12 @@ export default function Payroll() {
         cash_advance_release_details: cashAdvanceReleaseDetails,
       };
       computedWithIncentives.total_deductions = money(computedWithIncentives.total_deductions + manualGovernmentTotal);
+      const sssShares = computeSSS(Number(computedWithIncentives.statutory_base_pay) || Number(emp.monthly_rate) || 0);
+      const philhealthShares = computePhilHealth(Number(computedWithIncentives.statutory_base_pay) || Number(emp.monthly_rate) || 0);
+      const pagibigShares = computePagIbig(Number(computedWithIncentives.statutory_base_pay) || Number(emp.monthly_rate) || 0);
+      const agencyFeeAtPayroll = activeCompany?.uses_employee_agency === true && emp.is_agency_employee === true
+        ? agencyFeeForPeriod(activeCompany.agency_fee_per_employee || 0, activeCompany.agency_fee_frequency || 'PER_PAYROLL', period.end_date)
+        : 0;
 
       // Upsert payroll record
       const recordStatus = period.status === 'released'
@@ -1074,6 +1088,15 @@ export default function Payroll() {
         employee_id: emp.employee_id,
         employee_name: `${emp.first_name} ${emp.last_name}`,
         department: emp.department,
+        employee_record_id: emp.id,
+        payroll_method_at_payroll: existingRecord?.status !== 'draft' ? normalizePayrollMethod(existingRecord.payroll_method_at_payroll) : normalizePayrollMethod(emp.payroll_disbursement_method),
+        is_agency_employee_at_payroll: existingRecord?.status !== 'draft' ? existingRecord.is_agency_employee_at_payroll === true : emp.is_agency_employee === true,
+        agency_fee_per_employee_at_payroll: existingRecord?.status !== 'draft' ? Number(existingRecord.agency_fee_per_employee_at_payroll || 0) : Number(activeCompany?.agency_fee_per_employee || 0),
+        agency_fee_frequency_at_payroll: existingRecord?.status !== 'draft' ? existingRecord.agency_fee_frequency_at_payroll : activeCompany?.agency_fee_frequency || 'PER_PAYROLL',
+        agency_fee_amount: existingRecord?.status !== 'draft' ? Number(existingRecord.agency_fee_amount || 0) : agencyFeeAtPayroll,
+        sss_employer_contribution: money((Number(sssShares.employer) || 0) / 4.33),
+        philhealth_employer_contribution: money((Number(philhealthShares.employer) || 0) / 4.33),
+        pagibig_employer_contribution: money((Number(pagibigShares.employer) || 0) / 4.33),
         status: recordStatus,
         company_profile_id: activeCompanyId,
         incentive_settings: emp.incentive_settings || {},
@@ -1227,6 +1250,7 @@ export default function Payroll() {
   }), { gross: 0, cashAdvance: 0, deductions: 0, net: 0 });
   const selectedPeriodGross = eligibleRecords.length ? payrollRecordTotals.gross : (selectedPeriod?.total_gross || 0);
   const selectedPeriodNet = eligibleRecords.length ? payrollRecordTotals.net : (selectedPeriod?.total_net || 0);
+  const allocation = allocationQuery.data || payrollAllocation(eligibleRecords);
   const canSuspendCashAdvanceDeduction = user?.role === 'super_admin' && selectedPeriod && selectedPeriod.status !== 'released';
   const canSuspendCashAdvancePeriodDeduction = user?.role === 'super_admin';
 
@@ -1721,6 +1745,19 @@ export default function Payroll() {
                   )}
                 </div>
               </div>
+
+              <PayrollCard className="border border-border shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b bg-card"><p className="text-sm font-semibold">Payroll Allocation Summary</p><p className="text-xs text-muted-foreground">Uses snapshotted classifications for this payroll period</p></div>
+                <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {[['ATM', allocation.groups.ATM], ['Non-ATM', allocation.groups.NON_ATM], ['Unassigned', allocation.groups.UNASSIGNED]].map(([label, group]) => <div key={label} className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="text-lg font-bold">₱{group.netPayroll.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p><p className="text-xs">{group.employeeCount} employees</p></div>)}
+                  <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Total Net Payroll</p><p className="text-lg font-bold">₱{allocation.totalNetPayroll.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p></div>
+                </div>
+                {allocation.groups.UNASSIGNED.employeeCount > 0 && <p className="mx-4 mb-4 rounded-md bg-amber-50 p-3 text-xs font-medium text-amber-800">{allocation.groups.UNASSIGNED.employeeCount} employee(s) need payroll method assignment. Their net pay remains included under Unassigned.</p>}
+                <div className="grid gap-4 border-t p-4 lg:grid-cols-2">
+                  <div><p className="mb-2 text-sm font-semibold">Government Contributions</p><table className="w-full text-xs"><thead><tr><th className="text-left">Contribution</th><th className="text-right">Employee</th><th className="text-right">Employer</th></tr></thead><tbody>{[['SSS', allocation.contributions.sssEmployee, allocation.contributions.sssEmployer], ['PhilHealth', allocation.contributions.philhealthEmployee, allocation.contributions.philhealthEmployer], ['Pag-IBIG', allocation.contributions.pagibigEmployee, allocation.contributions.pagibigEmployer]].map(([label, employee, employer]) => <tr key={label}><td className="py-1">{label}</td><td className="text-right">₱{employee.toLocaleString()}</td><td className="text-right">₱{employer.toLocaleString()}</td></tr>)}</tbody><tfoot><tr className="border-t font-semibold"><td className="pt-2">Total Remittance</td><td className="pt-2 text-right" colSpan={2}>₱{allocation.totalGovernmentRemittance.toLocaleString()}</td></tr></tfoot></table></div>
+                  <div className="space-y-2"><p className="text-sm font-semibold">Employer Obligations</p><div className="flex justify-between text-xs"><span>Employer government share</span><span>₱{allocation.totalEmployerContribution.toLocaleString()}</span></div>{activeCompany?.uses_employee_agency && <div className="flex justify-between text-xs"><span>Agency fees</span><span>₱{allocation.agencyFees.toLocaleString()}</span></div>}<div className="flex justify-between border-t pt-2 font-semibold"><span>Total funding requirement</span><span>₱{allocation.totalEmployerFundingRequirement.toLocaleString()}</span></div><p className="text-[11px] text-muted-foreground">Net payroll, employer government share, and agency fees are shown separately to avoid double-counting employee deductions.</p></div>
+                </div>
+              </PayrollCard>
 
               <PayrollCard className="border border-border shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card flex-wrap">

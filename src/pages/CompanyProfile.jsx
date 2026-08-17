@@ -142,6 +142,10 @@ export default function CompanyProfile() {
   };
 
   const handleSave = () => {
+    if (form.uses_employee_agency && !/^\d+(?:\.\d{1,2})?$/.test(String(form.agency_fee_per_employee ?? '').trim())) {
+      toast({ title: 'Invalid agency fee', description: 'Enter a non-negative amount with no more than two decimal places.', variant: 'destructive' });
+      return;
+    }
     saveMutation.mutate({
       ...form,
       payroll_period_start_day: Number(form.payroll_period_start_day ?? DEFAULT_PAYROLL_START_DAY),
@@ -200,6 +204,32 @@ export default function CompanyProfile() {
                   {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
                 </div>
               ))}
+            </div>
+
+            <div className="rounded-lg border border-border p-4 space-y-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Employment / Agency Settings</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Agency fees are company expenses and are never added to or deducted from employee pay.</p>
+              </div>
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={form.uses_employee_agency === true} onChange={e => setForm({ ...form, uses_employee_agency: e.target.checked })} />
+                Company pays an agency for some employees
+              </label>
+              {form.uses_employee_agency === true && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="agency_fee_per_employee">Agency Fee per Employee (₱)</Label>
+                    <Input id="agency_fee_per_employee" type="number" min="0" step="0.01" value={form.agency_fee_per_employee ?? ''} onChange={e => setForm({ ...form, agency_fee_per_employee: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Agency Fee Frequency</Label>
+                    <Select value={form.agency_fee_frequency || 'PER_PAYROLL'} onValueChange={value => setForm({ ...form, agency_fee_frequency: value })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="PER_PAYROLL">Per Payroll</SelectItem><SelectItem value="MONTHLY">Monthly</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1">

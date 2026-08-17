@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { listRecords } from "@/server/entityStore";
+import { manilaDateString } from "@/lib/dateUtils";
+import { resolveEffectiveEmployeeShift, scheduleDateTimes } from "@/lib/shiftSettings";
 
 function normalizeCode(value) {
   return String(value || "")
@@ -110,12 +112,16 @@ export default async function handler(req, res) {
   const employees = await listRecords("Employee", { limit: 2000 });
   const activeEmployees = employees.filter(isActiveEmployee);
 
+  const requestedCompanies = [...new Set(scannedMetadata.companyProfileIds.filter(Boolean))];
+  const belongsToRequestedCompany = emp => requestedCompanies.length === 0 ||
+    requestedCompanies.includes(String(emp.company_profile_id || ""));
   const recordMatchedEmployee = scannedMetadata.employeeRecordIds.length
-    ? activeEmployees.find((emp) => scannedMetadata.employeeRecordIds.includes(String(emp.id || "")))
+    ? activeEmployees.find((emp) =>
+      scannedMetadata.employeeRecordIds.includes(String(emp.id || "")) && belongsToRequestedCompany(emp))
     : null;
 
   if (recordMatchedEmployee) {
-    return res.status(200).json({ employee: recordMatchedEmployee });
+    return res.status(200).json({ employee: await withCurrentShift(recordMatchedEmployee) });
   }
 
   const employeeMatches = employees.filter((emp) => {
@@ -129,13 +135,52 @@ export default async function handler(req, res) {
     ];
     return scannedCandidates.some((candidate) => employeeCandidates.includes(candidate));
   });
-  const employee = scannedMetadata.companyProfileIds.length
-    ? employeeMatches.find((emp) => scannedMetadata.companyProfileIds.includes(String(emp.company_profile_id || ""))) || employeeMatches[0]
+  const employee = requestedCompanies.length
+    ? employeeMatches.find(belongsToRequestedCompany)
     : employeeMatches[0];
 
   if (employee) {
-    return res.status(200).json({ employee });
+    return res.status(200).json({ employee: await withCurrentShift(employee) });
   }
 
   return res.status(404).json({ error: "Employee not found" });
+}
+
+async function withCurrentShift(employee) {
+  const date = manilaDateString();
+  const [settings, logs] = await Promise.all([
+    listRecords("Settings", { filter: { company_profile_id: employee.company_profile_id }, limit: 1000 }),
+    listRecords("AttendanceLog", {
+      filter: { company_profile_id: employee.company_profile_id, employee_record_id: employee.id },
+      sort: "-created_date",
+      limit: 10,
+    }),
+  ]);
+  const shift = resolveEffectiveEmployeeShift(employee, settings, date);
+  const times = scheduleDateTimes(date, shift);
+  const log = logs.find(item => item.status !== "rejected" && item.date === date);
+  const attendanceStatus = !log
+    ? "Not Yet Timed In"
+    : log.time_out ? "Timed Out"
+      : log.break_time_out && !log.break_time_in ? "On Break"
+        : log.time_in ? "Timed In" : "Not Yet Timed In";
+  return {
+    ...employee,
+    effective_schedule: shift ? {
+      date,
+      id: shift.id,
+      name: shift.setting_name || "Work Shift",
+      startTime: shift.shift_start_time,
+      endTime: shift.shift_end_time,
+      breakStartTime: shift.break_start_time || employee.break_time || null,
+      breakEndTime: shift.break_end_time || null,
+      breakDurationMinutes: Number(shift.break_duration_minutes || employee.break_duration_minutes) || null,
+      startDateTime: times?.start.toISOString() || null,
+      endDateTime: times?.end.toISOString() || null,
+      earliestAllowedTimeIn: times?.earliestTimeIn.toISOString() || null,
+      isOvernight: Boolean(times?.isOvernight),
+      isRestDay: Boolean(shift.is_rest_day),
+      attendanceStatus,
+    } : { date, isRestDay: false, attendanceStatus, noSchedule: true },
+  };
 }

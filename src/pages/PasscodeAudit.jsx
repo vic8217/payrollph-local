@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Activity, Search, ShieldCheck } from 'lucide-react';
 import { appApi } from '@/lib/appApi';
+import { formatManilaTime } from '@/lib/dateUtils';
 import { useAuth } from '@/lib/AuthContext';
 import { useCompany } from '@/lib/CompanyContext';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +26,7 @@ const actionLabels = {
   attendance_punch_recorded: 'Attendance Punch Recorded',
   attendance_punch_attempted: 'Attendance Punch Attempted',
   attendance_punch_failed: 'Attendance Punch Failed',
+  early_time_in_attempt: 'Early Time-In Attempt',
   attendance_correction: 'Attendance Corrected',
   attendance_manual_edit: 'Attendance Edited',
   attendance_rejected: 'Attendance Rejected',
@@ -57,6 +59,7 @@ const actionStyles = {
   attendance_punch_recorded: 'bg-emerald-100 text-emerald-700',
   attendance_punch_attempted: 'bg-amber-100 text-amber-800',
   attendance_punch_failed: 'bg-red-100 text-red-700',
+  early_time_in_attempt: 'bg-amber-100 text-amber-800',
   attendance_rejected: 'bg-red-100 text-red-700',
   attendance_approved: 'bg-green-100 text-green-700',
   overtime_denied: 'bg-red-100 text-red-700',
@@ -78,6 +81,8 @@ const actionStyles = {
   special_rate_attendance_saved: 'bg-blue-100 text-blue-700',
   special_rate_payroll_generated: 'bg-violet-100 text-violet-700',
 };
+
+const formatManilaAuditTime = value => value ? formatManilaTime(value, { includeSeconds: true }) : '—';
 
 function subjectFor(entity, record) {
   if (record.employee_name || record.employee_id) {
@@ -334,6 +339,14 @@ export default function PasscodeAudit() {
                     <td className="px-4 py-3 max-w-md">
                       <p className="text-xs text-foreground">{entry.reason || entry.summary || 'No reason supplied'}</p>
                       {entry.reason && entry.summary && <p className="mt-1 text-[11px] text-muted-foreground">{entry.summary}</p>}
+                      {entry.action === 'early_time_in_attempt' && (
+                        <div className="mt-2 grid gap-0.5 text-[11px] text-muted-foreground">
+                          <span>Attempted: {formatManilaAuditTime(entry.record.attempted_at)}</span>
+                          <span>Scheduled: {formatManilaAuditTime(entry.record.scheduled_start)}</span>
+                          <span>Allowed from: {formatManilaAuditTime(entry.record.earliest_allowed_time_in)}</span>
+                          <span className="font-medium text-amber-800">Official attendance: Not accepted</span>
+                        </div>
+                      )}
                       {Array.isArray(entry.record.changes) && entry.record.changes.length > 0 && (
                         <ul className="mt-2 space-y-1 text-[11px] text-muted-foreground">
                           {entry.record.changes.map(change => (

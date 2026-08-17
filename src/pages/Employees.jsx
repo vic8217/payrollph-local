@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import EmployeeForm from '@/components/employees/EmployeeForm';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { normalizePayrollMethod } from '@/lib/agencyPayroll';
 
 import Employee201File from '@/components/employees/Employee201File';
 
@@ -177,6 +179,8 @@ function RenumberEmployeeDialog({ employee, open, onClose, onSuccess }) {
 
 export default function Employees() {
   const [search, setSearch] = useState('');
+  const [payrollMethodFilter, setPayrollMethodFilter] = useState('all');
+  const [agencyTypeFilter, setAgencyTypeFilter] = useState('all');
   const [showForm, setShowForm] = useState(false);
   const [editEmployee, setEditEmployee] = useState(null);
   const [idEmployee, setIdEmployee] = useState(null);
@@ -274,6 +278,10 @@ export default function Employees() {
           headers.forEach((h, idx) => {
             emp[h] = values[idx] || undefined;
           });
+
+          if (!String(emp.employee_id || '').trim()) {
+            throw new Error(`Row ${i + 1}: employee_id is required. Employee profiles without an ID cannot be imported.`);
+          }
 
           if (emp.employee_id) {
             const normalizedEmployeeId = normalizeEmployeeId(emp.employee_id);
@@ -411,8 +419,17 @@ export default function Employees() {
   const filtered = employees.filter(e =>
     (statusFilter === 'all' ||
       (statusFilter === 'current' ? normalizeEmployeeStatus(e.status) !== 'archived' : normalizeEmployeeStatus(e.status) === statusFilter)) &&
-    `${employeeFullName(e)} ${e.employee_id} ${e.department}`.toLowerCase().includes(search.toLowerCase())
+    `${employeeFullName(e)} ${e.employee_id} ${e.department}`.toLowerCase().includes(search.toLowerCase()) &&
+    (payrollMethodFilter === 'all' || normalizePayrollMethod(e.payroll_disbursement_method) === payrollMethodFilter) &&
+    (agencyTypeFilter === 'all' || (agencyTypeFilter === 'agency') === (e.is_agency_employee === true))
   );
+  const activeSummaryEmployees = employees.filter(employee => normalizeEmployeeStatus(employee.status) === 'active');
+  const payrollMethodCounts = activeSummaryEmployees.reduce((counts, employee) => {
+    const method = normalizePayrollMethod(employee.payroll_disbursement_method);
+    counts[method] += 1;
+    return counts;
+  }, { ATM: 0, NON_ATM: 0, UNASSIGNED: 0 });
+  const agencyEmployeeCount = activeSummaryEmployees.filter(employee => employee.is_agency_employee === true).length;
 
   /** Keep 201 File in sync after employee record updates (e.g. cash advance agreement) while dialog stays open. */
   const employeesWithCashAdvanceBalances = useMemo(() => {
@@ -595,6 +612,16 @@ export default function Employees() {
         </div>
       </div>
 
+      <div className={`grid gap-3 ${activeCompany?.uses_employee_agency ? 'sm:grid-cols-3 lg:grid-cols-6' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+        {[
+          ['Total Employees', activeSummaryEmployees.length],
+          ['ATM Payroll', payrollMethodCounts.ATM],
+          ['Non-ATM Payroll', payrollMethodCounts.NON_ATM],
+          ['Unassigned', payrollMethodCounts.UNASSIGNED],
+          ...(activeCompany?.uses_employee_agency ? [['Agency Employees', agencyEmployeeCount], ['Direct Employees', activeSummaryEmployees.length - agencyEmployeeCount]] : []),
+        ].map(([label, count]) => <Card key={label}><CardContent className="p-4"><p className="text-2xl font-bold">{count}</p><p className="text-xs text-muted-foreground">{label}</p></CardContent></Card>)}
+      </div>
+
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
@@ -604,6 +631,16 @@ export default function Employees() {
           className="pl-9"
         />
       </div>
+
+      <div className="flex flex-wrap gap-3">
+        <Select value={payrollMethodFilter} onValueChange={setPayrollMethodFilter}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Payroll Methods</SelectItem><SelectItem value="ATM">ATM</SelectItem><SelectItem value="NON_ATM">Non-ATM</SelectItem><SelectItem value="UNASSIGNED">Unassigned</SelectItem></SelectContent></Select>
+        {activeCompany?.uses_employee_agency && <Select value={agencyTypeFilter} onValueChange={setAgencyTypeFilter}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Employee Types</SelectItem><SelectItem value="agency">Agency</SelectItem><SelectItem value="direct">Direct</SelectItem></SelectContent></Select>}
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="border-b px-4 py-3"><p className="font-semibold">Employee Summary</p></div>
+        <div className="overflow-x-auto max-h-80"><table className="w-full text-sm"><thead className="bg-muted/50 sticky top-0"><tr><th className="p-3 text-left">Employee</th><th className="p-3 text-left">Employee No.</th><th className="p-3 text-left">Department</th><th className="p-3 text-left">Status</th>{activeCompany?.uses_employee_agency && <th className="p-3 text-left">Employee Type</th>}<th className="p-3 text-left">Payroll Method</th></tr></thead><tbody>{filtered.map(employee => <tr key={`summary-${employee.id}`} className="border-t"><td className="p-3 font-medium">{employeeFullName(employee)}</td><td className="p-3">{employee.employee_id}</td><td className="p-3">{employee.department || '—'}</td><td className="p-3 capitalize">{normalizeEmployeeStatus(employee.status)}</td>{activeCompany?.uses_employee_agency && <td className="p-3">{employee.is_agency_employee ? 'Agency' : 'Direct'}</td>}<td className="p-3">{normalizePayrollMethod(employee.payroll_disbursement_method).replace('_', '-')}</td></tr>)}</tbody></table></div>
+      </Card>
 
       <div className="flex flex-wrap gap-2">
         {filters.map(filter => (
@@ -691,7 +728,13 @@ export default function Employees() {
                    </Button>
 
                    {status !== 'archived' && (
-                     <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => setIdEmployee(emp)}>
+                     <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => {
+                       if (!String(emp.employee_id || '').trim()) {
+                         window.alert('Employee ID is required before an ID card and QR code can be generated. Assign an Employee ID first.');
+                         return;
+                       }
+                       setIdEmployee(emp);
+                     }}>
                        <CreditCard className="w-3.5 h-3.5" /> ID
                      </Button>
                    )}

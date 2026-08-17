@@ -40,10 +40,10 @@ const PHOTO_TYPES = new Set(['image/png', 'image/jpeg']);
 const PHOTO_EXTENSIONS = /\.(png|jpe?g)$/i;
 
 export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated }) {
-  const { activeCompanyId } = useCompany();
+  const { activeCompanyId, activeCompany } = useCompany();
   const isEditing = !!employee?.id;
   const [form, setForm] = useState(employee || {
-    status: 'active', employment_type: 'regular'
+    status: 'active', employment_type: 'regular', payroll_disbursement_method: 'UNASSIGNED', is_agency_employee: false
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -270,10 +270,17 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!String(form.employee_id || '').trim()) {
+      const message = 'Employee ID is required. The profile cannot be saved without an Employee ID.';
+      setSaveError(message);
+      window.alert(message);
+      return;
+    }
     setSaving(true);
     setSaveError('');
     try {
       const data = { ...form };
+      data.employee_id = String(data.employee_id).trim();
       if (data.daily_rate) data.daily_rate = parseFloat(data.daily_rate);
       if (data.monthly_rate) data.monthly_rate = parseFloat(data.monthly_rate);
       if (data.max_cash_advance) data.max_cash_advance = parseFloat(data.max_cash_advance);
@@ -448,6 +455,25 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
             </SelectContent>
           </Select>
         </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs font-medium">Payroll Payment Method</Label>
+          <Select value={form.payroll_disbursement_method || 'UNASSIGNED'} onValueChange={v => set('payroll_disbursement_method', v)}>
+            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="UNASSIGNED">Unassigned</SelectItem>
+              <SelectItem value="ATM">ATM</SelectItem>
+              <SelectItem value="NON_ATM">Non-ATM</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {activeCompany?.uses_employee_agency === true && (
+          <label className="flex items-center gap-2 self-end rounded-md border border-border px-3 h-8 text-xs font-medium">
+            <input type="checkbox" checked={form.is_agency_employee === true} onChange={e => set('is_agency_employee', e.target.checked)} />
+            Agency Employee
+          </label>
+        )}
 
         <div className="space-y-1">
           <Label className="text-xs font-medium">Status</Label>

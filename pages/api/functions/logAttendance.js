@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { createRecord, listRecords, updateRecord } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
-import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot } from "@/lib/shiftSettings";
+import { effectiveShiftSetting, resolveEffectiveEmployeeShift, resolveEmployeeWorkSchedule, scheduleDateTimes, shiftFromAttendanceSnapshot, timeInWindowStatus } from "@/lib/shiftSettings";
 import {
   computeCreditedHoursWorked,
   computeLateMinutes,
@@ -23,6 +23,7 @@ const DUPLICATE_SCAN_WINDOW_MS = 2 * 60 * 1000;
 const MIN_STEP_INTERVAL_MS = 5 * 60 * 1000;
 const OVERNIGHT_LOG_GRACE_MS = 6 * 60 * 60 * 1000;
 const MAX_EARLY_TIME_IN_MS = 60 * 60 * 1000;
+const EARLY_ATTEMPT_DEBOUNCE_MS = 10 * 1000;
 // Mirrors the Attendance UI's "Time In(2) missing" rule: once this much time has
 // passed since the scheduled break-out without a break-in, the break-in window
 // is considered lapsed and the next scan is treated as the final Time Out.
@@ -206,6 +207,66 @@ function resolveEmployeeShiftOptions(employee, shiftSettings, date, log = null) 
   };
 }
 
+async function recordEarlyTimeInAttempt(res, { employee, shift, workDate, scheduledStart, earliestAllowed, attemptedAt, location, req }) {
+  let receipt = null;
+  let duplicate = false;
+  try {
+    const recentAudits = await listRecords("PasscodeAuditLog", {
+      filter: { company_profile_id: employee.company_profile_id, employee_record_id: employee.id },
+      sort: "-occurred_at",
+      limit: 10,
+    });
+    receipt = recentAudits.find(record =>
+      record.action === "early_time_in_attempt" &&
+      Number.isFinite(new Date(record.attempted_at || record.occurred_at).getTime()) &&
+      attemptedAt.getTime() - new Date(record.attempted_at || record.occurred_at).getTime() < EARLY_ATTEMPT_DEBOUNCE_MS
+    ) || null;
+    duplicate = Boolean(receipt);
+    if (!receipt) receipt = await createRecord("PasscodeAuditLog", {
+      company_profile_id: employee.company_profile_id,
+      source_entity: "AttendanceLog",
+      source_record_id: null,
+      action: "early_time_in_attempt",
+      punch_action: "time_in",
+      status: "EARLY_ATTEMPT",
+      result: "RECORDED_NOT_OFFICIAL",
+      classification: "EARLY_TIME_IN_ATTEMPT",
+      reason: "BEFORE_ALLOWED_TIME_IN_WINDOW",
+      employee_record_id: employee.id,
+      employee_id: employee.employee_id,
+      employee_name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(" "),
+      shift_id: shift?.id || null,
+      schedule_id: shift?.scheduleId || shift?.id || null,
+      record_date: workDate,
+      work_date: workDate,
+      scheduled_start: scheduledStart.toISOString(),
+      earliest_allowed_time_in: earliestAllowed.toISOString(),
+      attempted_at: attemptedAt.toISOString(),
+      occurred_at: attemptedAt.toISOString(),
+      location: sanitizeLocation(location),
+      source_ip: truncate(req.headers["x-forwarded-for"] || req.socket?.remoteAddress, 80),
+      user_agent: truncate(req.headers["user-agent"], 240),
+      authorized_by: "Employee Portal",
+      summary: "Early Time In (1) attempt recorded for audit only; official attendance was not created.",
+    });
+  } catch {
+    return res.status(500).json({
+      code: "EARLY_TIME_IN_AUDIT_FAILED",
+      error: "Your early attempt could not be recorded. Please try again.",
+    });
+  }
+  return res.status(200).json({
+    code: "EARLY_TIME_IN_RECORDED",
+    message: "Your early Time In attempt was recorded. You must punch again when official Time In becomes available.",
+    attemptedAt: attemptedAt.toISOString(),
+    scheduledStart: scheduledStart.toISOString(),
+    earliestAllowedTimeIn: earliestAllowed.toISOString(),
+    officialTimeInCreated: false,
+    duplicateSuppressed: duplicate,
+    receiptId: receipt?.id || null,
+  });
+}
+
 function getBreakDurationMinutes(employee, shiftOptions = {}) {
   const minutes = Number(shiftOptions.breakDurationMinutes || employee?.break_duration_minutes);
   return minutes > 0 ? minutes : DEFAULT_BREAK_DURATION_MINUTES;
@@ -287,7 +348,7 @@ function scheduledShiftEnd(logDate, shiftOptions) {
   const start = new Date(`${logDate}T${shiftOptions.shiftStartTime}:00+08:00`);
   const end = new Date(`${logDate}T${shiftOptions.shiftEndTime}:00+08:00`);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null;
-  if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
+  if (end.getTime() <= start.getTime()) end.setTime(end.getTime() + 24 * 60 * 60 * 1000);
   return end;
 }
 
@@ -447,12 +508,27 @@ export default async function handler(req, res) {
   );
 
   if (!lastLog) {
-    const shiftStart = scheduledShiftStart(attendanceDate, currentShiftOptions);
+    const effectiveShift = resolveEffectiveEmployeeShift(employee, shiftSettings, attendanceDate);
+    const scheduleTimes = scheduleDateTimes(attendanceDate, effectiveShift || {
+      shift_start_time: currentShiftOptions.shiftStartTime,
+      shift_end_time: currentShiftOptions.shiftEndTime,
+    });
+    const shiftStart = scheduleTimes?.start || scheduledShiftStart(attendanceDate, currentShiftOptions);
     const shiftEnd = scheduledShiftEnd(attendanceDate, currentShiftOptions);
-    if (shiftStart && nowDate.getTime() < shiftStart.getTime() - MAX_EARLY_TIME_IN_MS) {
-      return res.status(409).json({
-        error: `Time In (1) is allowed only within 1 hour before the ${currentShiftOptions.shiftStartTime} shift start. This scan was not recorded.`,
-        code: "TIME_IN_TOO_EARLY",
+    const timeInWindow = timeInWindowStatus(nowDate, scheduleTimes || (shiftStart ? {
+      start: shiftStart,
+      earliestTimeIn: new Date(shiftStart.getTime() - MAX_EARLY_TIME_IN_MS),
+    } : null));
+    if (timeInWindow.isEarlyAttempt) {
+      return recordEarlyTimeInAttempt(res, {
+        employee,
+        shift: effectiveShift,
+        workDate: attendanceDate,
+        scheduledStart: shiftStart,
+        earliestAllowed: scheduleTimes?.earliestTimeIn || new Date(shiftStart.getTime() - MAX_EARLY_TIME_IN_MS),
+        attemptedAt: nowDate,
+        location,
+        req,
       });
     }
     if (shiftEnd && nowDate.getTime() >= shiftEnd.getTime()) {

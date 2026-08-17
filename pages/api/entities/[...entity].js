@@ -8,6 +8,29 @@ import {
   updateRecord,
 } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
+import { moneyToCents, normalizePayrollMethod } from "@/lib/agencyPayroll";
+
+function validateCompanyAgencySettings(data = {}) {
+  if (data.uses_employee_agency !== true) return data;
+  const cents = moneyToCents(data.agency_fee_per_employee);
+  if (cents == null) {
+    const error = new Error("Agency fee must be a valid non-negative amount with no more than two decimal places.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return { ...data, agency_fee_per_employee: cents / 100, agency_fee_frequency: data.agency_fee_frequency === "MONTHLY" ? "MONTHLY" : "PER_PAYROLL" };
+}
+
+function validateEmployeeClassifications(data = {}) {
+  const result = { ...data };
+  if (Object.prototype.hasOwnProperty.call(result, "payroll_disbursement_method")) {
+    result.payroll_disbursement_method = normalizePayrollMethod(result.payroll_disbursement_method);
+  }
+  if (Object.prototype.hasOwnProperty.call(result, "is_agency_employee")) {
+    result.is_agency_employee = result.is_agency_employee === true;
+  }
+  return result;
+}
 
 function sendError(res, error) {
   if (error.code === "P1000") {
@@ -227,12 +250,22 @@ export default async function handler(req, res) {
         });
       }
       let data = req.body;
+      if (entity === "Employee") {
+        const session = await getServerSession(req, res, authOptions);
+        const companyId = String(data?.company_profile_id || "");
+        const assigned = session?.user?.company_profile_ids || (session?.user?.company_profile_id ? [session.user.company_profile_id] : []);
+        if (!session?.user || !["super_admin", "admin", "user"].includes(session.user.role)) return res.status(403).json({ error: "HR or administrator access is required." });
+        if (session.user.role !== "super_admin" && !assigned.includes(companyId)) return res.status(403).json({ error: "You cannot create employees for this company." });
+      }
+      if (entity === "Employee" && !String(data?.employee_id || "").trim()) {
+        return res.status(400).json({ error: "Employee ID is required. The employee profile was not saved." });
+      }
       if (entity === "OvertimeRequest") {
         await requireTimeInForOvertimeRequest(data);
       }
       if (entity === "CompanyProfile") {
         const session = await getServerSession(req, res, authOptions);
-        data = {
+        data = validateCompanyAgencySettings({
           ...(req.body || {}),
           ...(session?.user?.id
             ? {
@@ -241,8 +274,9 @@ export default async function handler(req, res) {
                 created_by_user_name: req.body?.created_by_user_name || session.user.name || null,
               }
             : {}),
-        };
+        });
       }
+      if (entity === "Employee") data = validateEmployeeClassifications(data);
       const record = await createRecord(entity, data);
       return res.status(201).json(record);
     }
@@ -265,7 +299,16 @@ export default async function handler(req, res) {
       if (entity === "OvertimeRequest") {
         await requireCompletedAttendanceForOvertimeApproval(req.body.id, req.body.data || {});
       }
-      const updateData = { ...(req.body.data || {}) };
+      let updateData = { ...(req.body.data || {}) };
+      if (entity === "CompanyProfile") {
+        const session = await getServerSession(req, res, authOptions);
+        const [company] = await listRecords("CompanyProfile", { filter: { id: req.body.id }, limit: 1 });
+        const assigned = session?.user?.company_profile_ids || (session?.user?.company_profile_id ? [session.user.company_profile_id] : []);
+        const ownsCompany = company && (assigned.includes(company.id) || company.created_by_user_id === session?.user?.id);
+        if (!session?.user || (session.user.role !== "super_admin" && !ownsCompany)) return res.status(403).json({ error: "You cannot update this company." });
+      }
+      if (entity === "CompanyProfile") updateData = validateCompanyAgencySettings(updateData);
+      if (entity === "Employee") updateData = validateEmployeeClassifications(updateData);
       if (entity === "AttendanceLog" && Object.prototype.hasOwnProperty.call(updateData, "time_in")) {
         return res.status(403).json({
           error: "Time In (1) is an immutable employee scan. Use the attendance review workflow to document an issue.",

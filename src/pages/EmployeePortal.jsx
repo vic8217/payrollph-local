@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { appApi } from '@/lib/appApi';
 import { QrCode, CreditCard, User, LogOut, Building2, Scan, CheckCircle2, Camera, BookOpen, Car, Palmtree, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,7 @@ import EmployeeVehicleTripReport from '@/components/employee/EmployeeVehicleTrip
 import EmployeePersonalLeave from '@/components/employee/EmployeePersonalLeave';
 import EmployeeOvertimeRequest from '@/components/employee/EmployeeOvertimeRequest';
 import { useCompany } from '@/lib/CompanyContext';
-import { formatManilaTime } from '@/lib/dateUtils';
+import { formatManilaDateTime, formatManilaTime } from '@/lib/dateUtils';
 import FaceCapture from '@/components/face/FaceCapture';
 
 const tabs = [
@@ -72,6 +73,27 @@ function employeeInitials(employee) {
     .slice(0, 2)
     .map(part => part[0]?.toUpperCase())
     .join('') || '?';
+}
+
+function EmployeeShiftCard({ employee }) {
+  const schedule = employee?.effective_schedule;
+  if (!schedule) return null;
+  if (schedule.noSchedule) {
+    return <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-semibold">No Work Schedule</p><p>Please contact HR for your schedule.</p></div>;
+  }
+  return (
+    <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-left space-y-1">
+      <p className="text-xs font-semibold uppercase tracking-wide text-primary">Today&apos;s Shift</p>
+      <p className="font-semibold text-foreground">{schedule.name}</p>
+      <p className="text-sm text-muted-foreground">{formatManilaDateTime(schedule.startDateTime, { month: 'long' }).split(',').slice(0, 2).join(',')}</p>
+      <p className="text-sm font-medium">
+        {formatManilaTime(schedule.startDateTime)} – {schedule.isOvernight ? `${formatManilaDateTime(schedule.endDateTime)}` : formatManilaTime(schedule.endDateTime)}
+      </p>
+      {schedule.breakStartTime && <p className="text-xs text-muted-foreground">Break: {schedule.breakStartTime}{schedule.breakEndTime ? ` – ${schedule.breakEndTime}` : schedule.breakDurationMinutes ? ` (${schedule.breakDurationMinutes} minutes)` : ''}</p>}
+      <p className="text-xs"><span className="text-muted-foreground">Status:</span> {schedule.isRestDay ? 'Rest Day' : schedule.attendanceStatus}</p>
+      {!schedule.isRestDay && schedule.earliestAllowedTimeIn && <p className="text-xs text-muted-foreground">Time In (1) available from {formatManilaTime(schedule.earliestAllowedTimeIn)}</p>}
+    </div>
+  );
 }
 
 function captureAttendanceLocation() {
@@ -247,6 +269,7 @@ function PortalAccessGate({ activeCompanyId, tabId, tabLabel, onAuthorized }) {
 }
 
 export default function EmployeePortal() {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('scan');
   const [user, setUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(false);
@@ -574,17 +597,28 @@ export default function EmployeePortal() {
       {scanConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-card rounded-2xl shadow-2xl p-6 max-w-md w-full space-y-4 max-h-[90vh] overflow-y-auto">
-            {/* Success */}
+            {/* Punch result */}
             <div className="text-center space-y-2">
-              <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-8 h-8 text-green-600" />
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto ${scanConfirm.earlyAttempt ? 'bg-amber-100' : 'bg-green-100'}`}>
+                <CheckCircle2 className={`w-8 h-8 ${scanConfirm.earlyAttempt ? 'text-amber-600' : 'text-green-600'}`} />
               </div>
               <h2 className="text-xl font-bold text-foreground">
-                {scanConfirm.action ? `${scanConfirm.action} Recorded` : 'Complete Live Photo to Record Attendance'}
+                {scanConfirm.earlyAttempt ? 'Early Time In Recorded' : scanConfirm.action ? `${scanConfirm.action} Recorded` : 'Complete Live Photo to Record Attendance'}
               </h2>
               <p className="text-lg font-medium text-primary">{scanConfirm.name}</p>
               {scanConfirm.time && <p className="text-muted-foreground text-sm">{scanConfirm.time}</p>}
             </div>
+
+            <EmployeeShiftCard employee={scanConfirm.employee} />
+
+            {scanConfirm.earlyAttempt && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-xs text-amber-900 space-y-1">
+                <p>Your attempt at <strong>{formatManilaTime(scanConfirm.earlyAttempt.attemptedAt)}</strong> was recorded for HR audit purposes.</p>
+                <p>Official Time In (1) is available from <strong>{formatManilaTime(scanConfirm.earlyAttempt.earliestAllowedTimeIn)}</strong> for your {formatManilaTime(scanConfirm.earlyAttempt.scheduledStart)} shift.</p>
+                <p className="font-semibold">You are not yet timed in. Please punch again when the allowed window begins.</p>
+                {scanConfirm.earlyAttempt.receiptId && <p className="break-all font-mono text-[11px]">Audit receipt: {scanConfirm.earlyAttempt.receiptId}</p>}
+              </div>
+            )}
 
             {attendanceSaved && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left">
@@ -593,6 +627,9 @@ export default function EmployeePortal() {
                   This punch is recorded in the attendance audit history and can be reviewed later by an administrator.
                 </p>
                 <p className="mt-2 break-all font-mono text-[11px] text-emerald-700">Receipt: {scanConfirm.receiptId}</p>
+                {scanConfirm.photoWarning && (
+                  <p className="mt-2 text-xs font-medium text-amber-700">{scanConfirm.photoWarning}</p>
+                )}
               </div>
             )}
 
@@ -629,7 +666,7 @@ export default function EmployeePortal() {
             </div>
 
             {/* Live photo capture */}
-            {!attendanceSaved && <div className="space-y-2">
+            {!attendanceSaved && !scanConfirm.earlyAttempt && <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Identity Photo</p>
               <div className="rounded-xl border border-border p-2">
                 <FaceCapture
@@ -688,7 +725,7 @@ export default function EmployeePortal() {
               )}
             </div>}
 
-            {!attendanceSaved ? <Button
+            {scanConfirm.earlyAttempt ? <Button className="w-full" onClick={closeAttendanceLogger}>I Understand — Try Again Later</Button> : !attendanceSaved ? <Button
               className="w-full"
               disabled={photoStatus === 'uploading' || !photoDataUrl || !photoCaptureMetadata || !livenessConfirmed || Boolean(photoCaptureError)}
               onClick={async () => {
@@ -722,6 +759,35 @@ export default function EmployeePortal() {
                     company_profile_id: employee.company_profile_id || activeCompanyId,
                     location,
                   });
+                  if (logRes.code === 'EARLY_TIME_IN_RECORDED') {
+                    if (logRes.receiptId && photoDataUrl) {
+                      try {
+                        const blob = await fetch(photoDataUrl).then(r => r.blob());
+                        const file = new File([blob], 'early_time_in_attempt_photo.jpg', { type: 'image/jpeg' });
+                        const { file_url } = await appApi.integrations.Core.UploadFile({ file });
+                        await appApi.entities.PasscodeAuditLog.update(logRes.receiptId, {
+                          photo_url: file_url,
+                          photo_captured_at: new Date().toISOString(),
+                          verification_method: 'qr_photo_liveness',
+                          liveness_confirmed: true,
+                        });
+                        queryClient.invalidateQueries({ queryKey: ['passcodeAudit'] });
+                      } catch {
+                        // The server-side event and location remain authoritative if photo attachment fails.
+                      }
+                    }
+                    setScanConfirm(current => ({
+                      ...current,
+                      earlyAttempt: {
+                        attemptedAt: logRes.attemptedAt,
+                        scheduledStart: logRes.scheduledStart,
+                        earliestAllowedTimeIn: logRes.earliestAllowedTimeIn,
+                        receiptId: logRes.receiptId,
+                      },
+                    }));
+                    setPhotoStatus('done');
+                    return;
+                  }
                   if (logRes.duplicate) {
                     await recordFailedAttendance({
                       employee,
@@ -735,20 +801,7 @@ export default function EmployeePortal() {
                     return;
                   }
 
-                  const blob = await fetch(photoDataUrl).then(r => r.blob());
                   const action = logRes.action;
-                  const photoField = attendancePhotoFields[action];
-                  const file = new File([blob], `${action || 'attendance'}_photo.jpg`, { type: 'image/jpeg' });
-                  const { file_url } = await appApi.integrations.Core.UploadFile({ file });
-                  await appApi.entities.AttendanceLog.update(logRes.log.id, {
-                    ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
-                    ...(action ? { [`${action}_photo_captured_at`]: new Date().toISOString() } : {}),
-                    ...(action ? { [`${action}_verification_method`]: 'qr_photo_liveness' } : {}),
-                    photo_url: file_url,
-                    face_verification_result: 'disabled',
-                    face_verification_confidence: null,
-                    face_verification_log_id: null,
-                  });
                   const actionLabels = {
                     time_in: 'Time In',
                     break_time_out: 'Break Out',
@@ -761,12 +814,50 @@ export default function EmployeePortal() {
                     break_time_in: 'break_time_in',
                     time_out: 'time_out',
                   }[action];
-                  setScanConfirm({
+                  const savedConfirmation = {
                     ...scanConfirm,
                     action: actionLabels[action] || 'Attendance',
                     time: timeField && logRes.log?.[timeField] ? formatManilaTime(logRes.log[timeField]) : '',
                     receiptId: logRes.receipt?.id || logRes.log?.id,
+                  };
+
+                  // The punch is already committed at this point. Publish its
+                  // receipt immediately so a later photo failure cannot be
+                  // mistaken for a missing punch or encourage a second scan.
+                  setScanConfirm(savedConfirmation);
+                  queryClient.invalidateQueries({
+                    queryKey: ['employee-attendance', employee.employee_id],
                   });
+
+                  try {
+                    const blob = await fetch(photoDataUrl).then(r => r.blob());
+                    const photoField = attendancePhotoFields[action];
+                    const file = new File([blob], `${action || 'attendance'}_photo.jpg`, { type: 'image/jpeg' });
+                    const { file_url } = await appApi.integrations.Core.UploadFile({ file });
+                    await appApi.entities.AttendanceLog.update(logRes.log.id, {
+                      ...(photoField ? { [photoField]: file_url, photo_action: action } : {}),
+                      ...(action ? { [`${action}_photo_captured_at`]: new Date().toISOString() } : {}),
+                      ...(action ? { [`${action}_verification_method`]: 'qr_photo_liveness' } : {}),
+                      photo_url: file_url,
+                      face_verification_result: 'disabled',
+                      face_verification_confidence: null,
+                      face_verification_log_id: null,
+                    });
+                  } catch (photoError) {
+                    const photoMessage = photoError?.message || 'The verification photo could not be attached.';
+                    await recordFailedAttendance({
+                      employee,
+                      stage: 'photo_attachment',
+                      reason: photoMessage,
+                      location,
+                      attendanceLogId: logRes.log?.id,
+                      punchAction: action,
+                    });
+                    setScanConfirm({
+                      ...savedConfirmation,
+                      photoWarning: 'The punch was saved, but its verification photo needs administrator review.',
+                    });
+                  }
                 } catch (error) {
                   const errorMessage = error?.message || 'Live photo or attendance logging failed. Please retake the photo and try again.';
                   await recordFailedAttendance({

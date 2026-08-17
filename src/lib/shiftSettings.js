@@ -97,6 +97,69 @@ export function resolveEmployeeWorkSchedule(employee, date = manilaDateString(),
   return assignments.at(-1)?.work_schedule || employee?.work_schedule || fallbackValue;
 }
 
+export function legacyShiftSetting(value) {
+  if (value === 'night_shift') {
+    return {
+      id: value,
+      setting_name: 'Night Shift',
+      shift_start_time: '20:00',
+      shift_end_time: '05:00',
+      overtime_start_time: '05:30',
+    };
+  }
+  if (value === 'day_shift') {
+    return {
+      id: value,
+      setting_name: 'Day Shift',
+      shift_start_time: '08:00',
+      shift_end_time: '17:00',
+      overtime_start_time: '17:30',
+    };
+  }
+  return null;
+}
+
+/** Resolve an employee's assignment and the date-effective version of its shift. */
+export function resolveEffectiveEmployeeShift(employee, shifts = [], date = manilaDateString()) {
+  const effectiveShifts = shifts
+    .map(shift => effectiveShiftSetting(shift, date))
+    .filter(shift => shift?.is_active !== false);
+  const defaultShift = effectiveShifts.find(shift => shift.is_default) || effectiveShifts[0] || null;
+  const scheduleId = resolveEmployeeWorkSchedule(employee, date, defaultShift?.id || null);
+  const configured = shifts.find(shift => String(shift.id) === String(scheduleId));
+  const shift = effectiveShiftSetting(configured, date) || legacyShiftSetting(scheduleId);
+  return shift ? { ...shift, id: scheduleId || shift.id, scheduleId } : null;
+}
+
+export function scheduleDateTimes(date, shift) {
+  if (!date || !shift?.shift_start_time || !shift?.shift_end_time) return null;
+  const start = new Date(`${date}T${shift.shift_start_time}:00+08:00`);
+  const end = new Date(`${date}T${shift.shift_end_time}:00+08:00`);
+  if (![start, end].every(value => Number.isFinite(value.getTime()))) return null;
+  const isOvernight = shift.shift_end_time <= shift.shift_start_time;
+  if (isOvernight) end.setTime(end.getTime() + 24 * 60 * 60 * 1000);
+  return {
+    start,
+    end,
+    earliestTimeIn: new Date(start.getTime() - 60 * 60 * 1000),
+    isOvernight,
+  };
+}
+
+export function timeInWindowStatus(attemptedAt, scheduleTimes) {
+  const attempted = attemptedAt instanceof Date ? attemptedAt : new Date(attemptedAt);
+  if (!scheduleTimes?.start || !scheduleTimes?.earliestTimeIn || !Number.isFinite(attempted.getTime())) {
+    return { hasSchedule: false, isEarlyAttempt: false };
+  }
+  return {
+    hasSchedule: true,
+    isEarlyAttempt: attempted.getTime() < scheduleTimes.earliestTimeIn.getTime(),
+    attemptedAt: attempted,
+    scheduledStart: scheduleTimes.start,
+    earliestAllowedTimeIn: scheduleTimes.earliestTimeIn,
+  };
+}
+
 export function nextEmployeeShiftAssignment(employee, date = manilaDateString()) {
   return sortedShiftAssignments(employee)
     .find(assignment => assignment.effective_date > date) || null;

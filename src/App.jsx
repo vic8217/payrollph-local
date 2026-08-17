@@ -41,6 +41,7 @@ import MandatoryDeductions from '@/pages/MandatoryDeductions';
 import ManagementReports from '@/pages/ManagementReports';
 import PayrollReconciliation from '@/pages/PayrollReconciliation';
 import TimeInReviews from '@/pages/TimeInReviews';
+import Agency from '@/pages/Agency';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
@@ -88,6 +89,7 @@ const AuthenticatedApp = () => {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/employees" element={<Employees />} />
+        <Route path="/agency" element={<Agency />} />
         <Route path="/scan" element={<QRScanner />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/attendance/time-in-reviews" element={<TimeInReviews />} />

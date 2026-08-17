@@ -39,6 +39,7 @@
 /**
  * @typedef {object} HoursComputationOptions
  * @property {string=} shiftStartTime
+ * @property {string=} shiftEndTime
  * @property {number=} timeInAllowanceMinutes
  * @property {number=} lateGraceMinutes
  * @property {number=} breakInGraceMinutes
@@ -598,6 +599,7 @@ export function computeOvertimeHours(
 	/** @type {HoursComputationOptions} */
 	{
 		shiftStartTime = '08:00',
+		shiftEndTime,
 		overtimeStartTime,
 		breakInGraceMinutes = 0,
 		breakDurationMinutes = 60,
@@ -628,17 +630,31 @@ export function computeOvertimeHours(
 	if (scheduledStart && overtimeStart.getTime() <= scheduledStart.getTime()) {
 		overtimeStart = addDays(overtimeStart, 1);
 	}
+	let scheduledEnd = resolveScheduledTime(log.date, shiftEndTime || normalizedLog.shift_end_time);
+	if (scheduledEnd && scheduledStart && scheduledEnd.getTime() <= scheduledStart.getTime()) {
+		scheduledEnd = addDays(scheduledEnd, 1);
+	}
+
+	// For ordinary post-shift OT, the configured OT start is the minimum
+	// eligibility threshold. Once reached, credit the full time worked after the
+	// scheduled shift end (for example: 5:45 out with a 5:30 threshold and 5:00
+	// shift end credits 45 minutes). Extended shifts whose OT begins before their
+	// scheduled end retain the existing OT-from-configured-start behavior.
+	const postShiftEligibilityMet = timeOut.getTime() >= overtimeStart.getTime();
+	const overtimeCreditStart = scheduledEnd && overtimeStart.getTime() >= scheduledEnd.getTime()
+		? scheduledEnd
+		: overtimeStart;
 
 	const overtimeWindowStart = new Date(
 		Math.max(
-			overtimeStart.getTime(),
-			reviewedTimeIn?.getTime() || overtimeStart.getTime(),
+			overtimeCreditStart.getTime(),
+			reviewedTimeIn?.getTime() || overtimeCreditStart.getTime(),
 		),
 	);
-	let overtimeHours = Math.max(
+	let overtimeHours = postShiftEligibilityMet ? Math.max(
 		0,
 		(timeOut.getTime() - overtimeWindowStart.getTime()) / 36e5,
-	);
+	) : 0;
 
 	const workStart = reviewedTimeIn || overtimeWindowStart;
 	const breakOut = paidBreakTime ? null : normalizePunchWithinWorkInterval(normalizedLog, normalizedLog.break_time_out, workStart, timeOut);
@@ -669,7 +685,7 @@ export function computeOvertimeHours(
 			effectiveBreakIn = timeOut;
 		}
 	}
-	overtimeHours -= overlapHours(
+	if (postShiftEligibilityMet) overtimeHours -= overlapHours(
 		overtimeWindowStart,
 		timeOut,
 		breakOut,
