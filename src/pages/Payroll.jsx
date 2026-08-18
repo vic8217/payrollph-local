@@ -450,8 +450,10 @@ export default function Payroll() {
       if (!periodForLogs?.start_date || !periodForLogs?.end_date) return [];
       const periodStart = periodForLogs.start_date;
       const periodEnd = periodForLogs.end_date;
-      const all = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.filter({ company_profile_id: activeCompanyId }, '-date', 1000));
-      return all.filter(log => log.date >= periodStart && log.date <= periodEnd);
+      return /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.allPages({
+        company_profile_id: activeCompanyId,
+        date: { $gte: periodStart, $lte: periodEnd },
+      }, '-date', { pageSize: 200 }));
     },
     enabled: !!selectedPeriod && !!activeCompanyId,
   });
@@ -596,13 +598,12 @@ export default function Payroll() {
 
     setPreviewing(true);
     try {
-      const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.filter({
+      const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.allPages({
         company_profile_id: activeCompanyId,
         employee_id: employee.employee_id,
-      }, '-date', 1000));
+        date: { $gte: previewStartDate, $lte: previewEndDate },
+      }, '-date', { pageSize: 200 }));
       const rangeLogs = allLogs.filter(log =>
-        log.date >= previewStartDate &&
-        log.date <= previewEndDate &&
         (log.status === 'approved' || log.status === 'pending')
       );
       const incompleteDates = rangeLogs
@@ -770,7 +771,10 @@ export default function Payroll() {
 
     // Pre-check: every worked regular shift must have all required punches.
     // Half-day and absent records do not require the configured break pair.
-    const allLogsForCheck = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.list('-date', 1000));
+    const allLogsForCheck = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.allPages({
+      company_profile_id: activeCompanyId,
+      date: { $gte: startStr, $lte: endStr },
+    }, '-date', { pageSize: 200 }));
     const activeEmployeesForCheck = currentEmployees.filter(e => e.status === 'active');
     /** @type {Array<{ employeeName: string, date: string }>} */
     const incomplete = [];
@@ -865,7 +869,10 @@ export default function Payroll() {
       company_profile_id: activeCompanyId,
     }));
     const activeEmployees = currentEmployees.filter(e => e.status === 'active' && !e.special_rate_enabled);
-    const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.list('-date', 1000));
+    const allLogs = /** @type {AttendanceLogEntity[]} */ (await entities.AttendanceLog.allPages({
+      company_profile_id: activeCompanyId,
+      date: { $gte: startStr, $lte: endStr },
+    }, '-date', { pageSize: 200 }));
     const existingLedger = /** @type {CashAdvanceLedgerEntity[]} */ (await entities.CashAdvanceLedger.filter({
       company_profile_id: activeCompanyId,
       payroll_period_id: period.id,

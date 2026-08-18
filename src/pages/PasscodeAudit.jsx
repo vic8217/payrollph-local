@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Activity, Search, ShieldCheck } from 'lucide-react';
+import { Activity, ChevronLeft, ChevronRight, Search, ShieldCheck } from 'lucide-react';
 import { appApi } from '@/lib/appApi';
 import { formatManilaTime } from '@/lib/dateUtils';
 import { useAuth } from '@/lib/AuthContext';
 import { useCompany } from '@/lib/CompanyContext';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -168,16 +169,53 @@ export default function PasscodeAudit() {
   const [entityFilter, setEntityFilter] = useState('all');
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const canView = ['super_admin', 'admin'].includes(user?.role);
+  const pageSize = 50;
+  const sourcePageSize = pageSize / 2;
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeCompanyId, dateFilter, employeeFilter, entityFilter, search]);
+
+  const employeesQuery = useQuery({
+    queryKey: ['passcodeAuditEmployees', activeCompanyId],
+    queryFn: () => appApi.entities.Employee.filter({ company_profile_id: activeCompanyId }, 'first_name', 2000),
+    enabled: canView && !!activeCompanyId,
+  });
 
   const auditQuery = useQuery({
-    queryKey: ['passcodeAudit', activeCompanyId],
+    queryKey: ['passcodeAudit', activeCompanyId, page, dateFilter, employeeFilter, entityFilter, search],
     queryFn: async () => {
-      const [auditLogs, attendanceLogs, shiftSettings] = await Promise.all([
-        appApi.entities.PasscodeAuditLog.filter({ company_profile_id: activeCompanyId }, '-occurred_at'),
-        appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId }, '-updated_date'),
+      const normalizedEmployeeId = employeeFilter.startsWith('id:') ? employeeFilter.slice(3) : null;
+      const selectedEmployee = normalizedEmployeeId
+        ? (employeesQuery.data || []).find(employee =>
+          String(employee.employee_id || '').trim().toLowerCase() === normalizedEmployeeId)
+        : null;
+      const employeeId = selectedEmployee?.employee_id || normalizedEmployeeId;
+      const dateStart = dateFilter !== 'all' ? `${dateFilter}T00:00:00+08:00` : null;
+      const dateEnd = dateFilter !== 'all' ? `${dateFilter}T23:59:59.999+08:00` : null;
+      const auditFilter = {
+        company_profile_id: activeCompanyId,
+        ...(entityFilter !== 'all' ? { source_entity: entityFilter } : {}),
+        ...(employeeId ? { employee_id: employeeId } : {}),
+        ...(dateStart ? { occurred_at: { $gte: new Date(dateStart).toISOString(), $lte: new Date(dateEnd).toISOString() } } : {}),
+      };
+      const attendanceFilter = {
+        company_profile_id: activeCompanyId,
+        ...(employeeId ? { employee_id: employeeId } : {}),
+        ...(dateStart ? { updated_date: { $gte: new Date(dateStart).toISOString(), $lte: new Date(dateEnd).toISOString() } } : {}),
+      };
+      const includeLegacyAttendance = entityFilter === 'all' || entityFilter === 'AttendanceLog';
+      const [auditPage, attendancePage, shiftSettings] = await Promise.all([
+        appApi.entities.PasscodeAuditLog.page(auditFilter, '-occurred_at', page, sourcePageSize, { search }),
+        includeLegacyAttendance
+          ? appApi.entities.AttendanceLog.page(attendanceFilter, '-updated_date', page, sourcePageSize, { legacyAttendanceAudit: true, search })
+          : Promise.resolve({ data: [], pagination: { total: 0, totalPages: 0 } }),
         appApi.entities.Settings.filter({ company_profile_id: activeCompanyId }),
       ]);
+      const auditLogs = auditPage.data || [];
+      const attendanceLogs = attendancePage.data || [];
       const shiftNames = new Map(shiftSettings.map(shift => [String(shift.id), shift.setting_name]));
       const structured = auditLogs.map(rawRecord => {
         const record = rawRecord.source_entity === 'Settings' && !rawRecord.subject_name
@@ -200,37 +238,37 @@ export default function PasscodeAudit() {
           return audit ? { entity: 'AttendanceLog', record, ...audit } : null;
         })
         .filter(Boolean);
-      return [...structured, ...legacy].sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+      return {
+        entries: [...structured, ...legacy].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))),
+        pagination: {
+          page,
+          pageSize,
+          total: Number(auditPage.pagination?.total || 0) + Number(attendancePage.pagination?.total || 0),
+          totalPages: Math.max(Number(auditPage.pagination?.totalPages || 0), Number(attendancePage.pagination?.totalPages || 0)),
+        },
+      };
     },
-    enabled: canView && !!activeCompanyId,
+    enabled: canView && !!activeCompanyId && (employeeFilter === 'all' || employeesQuery.isSuccess),
   });
 
   const employeeOptions = useMemo(() => {
     const options = new Map();
-    (auditQuery.data || []).forEach(entry => {
-      const value = employeeFilterValue(entry.record);
-      const label = employeeFilterLabel(entry.record);
+    (employeesQuery.data || []).forEach(employee => {
+      const value = employeeFilterValue(employee);
+      const label = employeeFilterLabel({
+        ...employee,
+        employee_name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),
+      });
       if (value && label && !options.has(value)) options.set(value, label);
     });
     return [...options.entries()]
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [auditQuery.data]);
-
-  const dateOptions = useMemo(() => {
-    const dates = new Set();
-    (auditQuery.data || []).forEach(entry => {
-      const auditDate = entry.at ? new Date(entry.at) : null;
-      if (auditDate && Number.isFinite(auditDate.getTime())) {
-        dates.add(format(auditDate, 'yyyy-MM-dd'));
-      }
-    });
-    return [...dates].sort((a, b) => b.localeCompare(a));
-  }, [auditQuery.data]);
+  }, [employeesQuery.data]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return (auditQuery.data || []).filter(entry => {
+    return (auditQuery.data?.entries || []).filter(entry => {
       if (entityFilter !== 'all' && entry.entity !== entityFilter) return false;
       if (employeeFilter !== 'all' && employeeFilterValue(entry.record) !== employeeFilter) return false;
       if (dateFilter !== 'all') {
@@ -249,7 +287,7 @@ export default function PasscodeAudit() {
         JSON.stringify(entry.record.changes || []),
       ].some(value => String(value || '').toLowerCase().includes(term));
     });
-  }, [auditQuery.data, dateFilter, employeeFilter, entityFilter, search]);
+  }, [auditQuery.data?.entries, dateFilter, employeeFilter, entityFilter, search]);
 
   if (!canView) {
     return (
@@ -283,17 +321,12 @@ export default function PasscodeAudit() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={dateFilter} onValueChange={setDateFilter}>
-          <SelectTrigger aria-label="Filter by audit date"><SelectValue placeholder="All Dates" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Dates</SelectItem>
-            {dateOptions.map(date => (
-              <SelectItem key={date} value={date}>
-                {format(new Date(`${date}T12:00:00`), 'MMM d, yyyy')}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Input
+          type="date"
+          aria-label="Filter by audit date"
+          value={dateFilter === 'all' ? '' : dateFilter}
+          onChange={event => setDateFilter(event.target.value || 'all')}
+        />
         <Select value={entityFilter} onValueChange={setEntityFilter}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -368,6 +401,32 @@ export default function PasscodeAudit() {
           </table>
         </div>
       </Card>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">
+          Page {page} of {Math.max(1, auditQuery.data?.pagination?.totalPages || 0)} · {auditQuery.data?.pagination?.total || 0} stored audit record{auditQuery.data?.pagination?.total === 1 ? '' : 's'}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page <= 1 || auditQuery.isFetching}
+            onClick={() => setPage(current => Math.max(1, current - 1))}
+          >
+            <ChevronLeft className="mr-1 h-4 w-4" /> Previous
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page >= Number(auditQuery.data?.pagination?.totalPages || 0) || auditQuery.isFetching}
+            onClick={() => setPage(current => current + 1)}
+          >
+            Next <ChevronRight className="ml-1 h-4 w-4" />
+          </Button>
+        </div>
+      </div>
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Activity className="h-3.5 w-3.5" />

@@ -5,6 +5,7 @@ import {
   createRecord,
   deleteRecord,
   listRecords,
+  listRecordsPage,
   updateRecord,
 } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
@@ -265,6 +266,19 @@ export default async function handler(req, res) {
     }
     if (req.method === "GET") {
       const filter = req.query.filter ? JSON.parse(req.query.filter) : {};
+      const paginationRequested = req.query.page !== undefined || req.query.pageSize !== undefined;
+      if (paginationRequested && ["AttendanceLog", "PasscodeAuditLog"].includes(entity)) {
+        const result = await listRecordsPage(entity, {
+          filter,
+          sort: req.query.sort,
+          page: req.query.page,
+          pageSize: req.query.pageSize,
+          fields: fieldsForListRequest(entity, { ...req.query, limit: req.query.pageSize }),
+          legacyAttendanceAudit: req.query.legacyAttendanceAudit === "true",
+          search: req.query.search,
+        });
+        return res.status(200).json(result);
+      }
       const records = await listRecords(entity, {
         filter,
         sort: req.query.sort,

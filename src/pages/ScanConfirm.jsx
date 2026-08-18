@@ -323,8 +323,8 @@ export default function ScanConfirm() {
       .catch(() => setLoadError('Failed to load employee.'));
 
     if (logId) {
-      appApi.entities.AttendanceLog.filter({ id: logId })
-        .then(results => { if (results.length > 0) setTodayLog(results[0]); })
+      appApi.entities.AttendanceLog.page({ id: logId }, '-updated_date', 1, 1)
+        .then(response => { if (response.data?.length > 0) setTodayLog(response.data[0]); })
         .catch(() => {});
     }
   }, [empId, action, logId]);

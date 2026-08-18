@@ -29,8 +29,14 @@ export default function EmployeeAttendance({ employee }) {
   const { data: logs = [], isLoading } = useQuery({
     queryKey: ['employee-attendance', employee?.employee_id, employee?.company_profile_id, month],
     queryFn: async () => {
-      const records = await appApi.entities.AttendanceLog.filter({ employee_id: employee.employee_id });
-      return records.filter(log => !log.company_profile_id || log.company_profile_id === employee.company_profile_id);
+      const [year, selectedMonth] = month.split('-').map(Number);
+      const monthEnd = new Date(Date.UTC(year, selectedMonth, 0)).getUTCDate();
+      const response = await appApi.entities.AttendanceLog.page({
+        company_profile_id: employee.company_profile_id,
+        employee_id: employee.employee_id,
+        date: { $gte: `${month}-01`, $lte: `${month}-${String(monthEnd).padStart(2, '0')}` },
+      }, '-date', 1, 50);
+      return response.data || [];
     },
     enabled: !!employee?.employee_id,
     refetchOnMount: 'always',
@@ -41,7 +47,7 @@ export default function EmployeeAttendance({ employee }) {
     return <div className="p-6 text-center text-muted-foreground">No employee data.</div>;
   }
 
-  // Filter by selected month
+  // The API query is already scoped to the selected month.
   const filteredLogs = logs
     .filter(log => log.date?.startsWith(month))
     .sort((a, b) => b.date.localeCompare(a.date));

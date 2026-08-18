@@ -151,8 +151,12 @@ export default function EmployeeCashAdvance({ employee }) {
   const { data: periodAttendance = [], isLoading: loadingAttendance } = useQuery({
     queryKey: ['workedDayAttendance', employee?.employee_id, periodStart],
     queryFn: async () => {
-      const logs = await appApi.entities.AttendanceLog.filter({ employee_id: employee.employee_id });
-      return logs.filter(log => log.date >= periodStart && log.date <= periodEnd && !log.is_absent);
+      const logs = await appApi.entities.AttendanceLog.allPages({
+        company_profile_id: employee.company_profile_id,
+        employee_id: employee.employee_id,
+        date: { $gte: periodStart, $lte: periodEnd },
+      }, 'date', { pageSize: 50, maximum: 200 });
+      return logs.filter(log => !log.is_absent);
     },
     enabled: !!employee,
   });

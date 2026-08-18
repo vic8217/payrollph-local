@@ -152,7 +152,7 @@ export default function ManagementReports() {
   const trendPeriods = sortedPeriods.slice(Math.max(0, selectedIndex - 6), selectedIndex + 1);
 
   const recordsQuery = useQuery({ queryKey: ['management-dashboard-records', companyId], queryFn: () => appApi.entities.PayrollRecord.filter({ company_profile_id: companyId }, '-created_date', 10000), enabled: Boolean(companyId) });
-  const logsQuery = useQuery({ queryKey: ['management-dashboard-attendance', companyId, selectedPeriod.start_date, selectedPeriod.end_date], queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: companyId, date: { $gte: selectedPeriod.start_date, $lte: selectedPeriod.end_date } }, 'date', 10000), enabled: Boolean(companyId && selectedPeriod.start_date) });
+  const logsQuery = useQuery({ queryKey: ['management-dashboard-attendance', companyId, selectedPeriod.start_date, selectedPeriod.end_date], queryFn: () => appApi.entities.AttendanceLog.allPages({ company_profile_id: companyId, date: { $gte: selectedPeriod.start_date, $lte: selectedPeriod.end_date } }, 'date', { pageSize: 200 }), enabled: Boolean(companyId && selectedPeriod.start_date) });
   const requestsQuery = useQuery({ queryKey: ['management-dashboard-ot', companyId, selectedPeriod.start_date, selectedPeriod.end_date], queryFn: () => appApi.entities.OvertimeRequest.filter({ company_profile_id: companyId, date: { $gte: selectedPeriod.start_date, $lte: selectedPeriod.end_date } }, 'date', 10000), enabled: Boolean(companyId && selectedPeriod.start_date) });
   const refresh = () => { periodsQuery.refetch(); employeesQuery.refetch(); recordsQuery.refetch(); logsQuery.refetch(); requestsQuery.refetch(); };
 

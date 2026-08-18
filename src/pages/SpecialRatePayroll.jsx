@@ -59,7 +59,11 @@ export default function SpecialRatePayroll() {
   );
   const { data: attendanceLogs = [] } = useQuery({
     queryKey: ['specialRateAttendanceLogs', activeCompanyId, attendanceDate],
-    queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId, date: attendanceDate }, 'date', 10000),
+    queryFn: () => appApi.entities.AttendanceLog.allPages(
+      { company_profile_id: activeCompanyId, date: attendanceDate },
+      'date',
+      { pageSize: 200 },
+    ),
     enabled: !!activeCompanyId,
   });
   const { data: periods = [] } = useQuery({

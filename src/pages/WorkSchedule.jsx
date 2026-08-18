@@ -114,10 +114,11 @@ export default function WorkSchedule() {
 
   const { data: scheduleAuditLogs = [] } = useQuery({
     queryKey: ['passcodeAudit', activeCompanyId, 'work-schedule-latest'],
-    queryFn: () => appApi.entities.PasscodeAuditLog.filter(
-      { company_profile_id: activeCompanyId },
-      '-occurred_at',
-    ),
+    queryFn: async () => {
+      const response = await appApi.entities.PasscodeAuditLog.page(
+        { company_profile_id: activeCompanyId }, '-occurred_at', 1, 200);
+      return response.data || [];
+    },
     enabled: !!activeCompanyId,
   });
 

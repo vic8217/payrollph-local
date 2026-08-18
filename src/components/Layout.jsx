@@ -74,16 +74,16 @@ export default function Layout() {
   const activeCompanyId = activeCompany?.id;
   const timeInReviewBadgeStatus = userRole === 'super_admin' ? 'pending' : 'approved';
 
-  const { data: timeInReviewItems = [] } = useQuery({
+  const { data: timeInReviewPage } = useQuery({
     queryKey: ['time-in-reviews', activeCompanyId, 'badge', timeInReviewBadgeStatus],
-    queryFn: () => appApi.entities.AttendanceLog.filter({
+    queryFn: () => appApi.entities.AttendanceLog.page({
       company_profile_id: activeCompanyId,
       time_in_review_status: timeInReviewBadgeStatus,
-    }, '-time_in_review_requested_at', 5000),
+    }, '-time_in_review_requested_at', 1, 1),
     enabled: Boolean(activeCompanyId),
     refetchInterval: 30 * 1000,
   });
-  const timeInReviewCount = timeInReviewItems.length;
+  const timeInReviewCount = Number(timeInReviewPage?.pagination?.total || 0);
 
   const { data: employees = [] } = useQuery({
     queryKey: ['employees', activeCompanyId, 'break-time-alerts'],

@@ -68,6 +68,18 @@ function entityClient(entity) {
     filter(filter = {}, sort, limit, options = {}) {
       return requestJson(entityUrl(entity, { filter, sort, limit, ...options }));
     },
+    page(filter = {}, sort, page = 1, pageSize = 50, options = {}) {
+      return requestJson(entityUrl(entity, { filter, sort, page, pageSize, ...options }));
+    },
+    async allPages(filter = {}, sort, { pageSize = 200, maximum = Number.POSITIVE_INFINITY, ...options } = {}) {
+      const records = [];
+      for (let page = 1; records.length < maximum; page += 1) {
+        const response = await requestJson(entityUrl(entity, { filter, sort, page, pageSize, ...options }));
+        records.push(...(response.data || []));
+        if (!response.pagination?.hasNextPage) break;
+      }
+      return records.slice(0, maximum);
+    },
     create(data) {
       return requestJson(entityUrl(entity), {
         method: "POST",

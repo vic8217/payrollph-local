@@ -49,7 +49,11 @@ export default function Dashboard() {
   });
   const { data: todayAttendance = [] } = useQuery({
     queryKey: ['todayAttendance', activeCompanyId],
-    queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId, date: manilaDateString() }),
+    queryFn: () => appApi.entities.AttendanceLog.allPages(
+      { company_profile_id: activeCompanyId, date: manilaDateString() },
+      'date',
+      { pageSize: 200 },
+    ),
     enabled: !!activeCompanyId,
   });
 

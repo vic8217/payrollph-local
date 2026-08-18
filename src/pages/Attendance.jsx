@@ -508,6 +508,9 @@ const entities = {
   filter(entity, filter = {}, sort, limit, options = {}) {
     return requestJson(entityUrl(entity, { filter, sort, limit, ...options }));
   },
+  page(entity, filter = {}, sort, page = 1, pageSize = 50, options = {}) {
+    return requestJson(entityUrl(entity, { filter, sort, page, pageSize, ...options }));
+  },
   create(entity, data) {
     return requestJson(entityUrl(entity), {
       method: 'POST',
@@ -522,18 +525,17 @@ const entities = {
   },
 };
 
-const ATTENDANCE_PAGE_SIZE = 500;
+const ATTENDANCE_PAGE_SIZE = 50;
 async function fetchAttendanceLogs(filter, sort = '-date', maximum = 5000) {
   const records = [];
-  for (let offset = 0; offset < maximum; offset += ATTENDANCE_PAGE_SIZE) {
-    const page = await entities.filter('AttendanceLog', filter, sort, ATTENDANCE_PAGE_SIZE, {
-      offset,
+  for (let pageNumber = 1; records.length < maximum; pageNumber += 1) {
+    const response = await entities.page('AttendanceLog', filter, sort, pageNumber, ATTENDANCE_PAGE_SIZE, {
       fields: ATTENDANCE_LOG_LIST_FIELDS,
     });
-    records.push(...page);
-    if (page.length < ATTENDANCE_PAGE_SIZE) break;
+    records.push(...(response.data || []));
+    if (!response.pagination?.hasNextPage) break;
   }
-  return records;
+  return records.slice(0, maximum);
 }
 
 function invokeFunction(name, data) {
@@ -1418,10 +1420,16 @@ function OvertimeRequestReviewModal({ request, currentUser, activeCompanyId, onC
   const [correctedTimeOut, setCorrectedTimeOut] = useState('');
   const { data: requestAttendanceLogs = [], isLoading: loadingAttendance } = useQuery({
     queryKey: ['ot-review-attendance', activeCompanyId, request.employee_id, request.date],
-    queryFn: () => entities.filter('AttendanceLog', {
-      company_profile_id: activeCompanyId,
-      date: request.date,
-    }),
+    queryFn: async () => {
+      const baseFilter = { company_profile_id: activeCompanyId, date: request.date };
+      const [byRecord, byEmployee] = await Promise.all([
+        entities.page('AttendanceLog', { ...baseFilter, employee_record_id: request.employee_record_id }, '-updated_date', 1, 20),
+        entities.page('AttendanceLog', { ...baseFilter, employee_id: request.employee_id }, '-updated_date', 1, 20),
+      ]);
+      return [...new Map(
+        [...(byRecord.data || []), ...(byEmployee.data || [])].map(log => [log.id, log])
+      ).values()];
+    },
     enabled: !!activeCompanyId && !!request.date,
   });
   const requestAttendance = requestAttendanceLogs.find(log =>
@@ -1744,10 +1752,15 @@ export default function Attendance() {
   const { data: attendanceData = { logs: [], periodLogs: [] }, isLoading: loadingLogs } = useQuery({
     queryKey: ['attendance', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId, startStr, endStr],
     queryFn: async () => {
-      const all = await fetchAttendanceLogs({
+      const baseFilter = {
         company_profile_id: activeCompanyId,
         date: { $gte: startStr, $lte: endStr },
-      });
+      };
+      const [byRecord, byEmployee] = await Promise.all([
+        fetchAttendanceLogs({ ...baseFilter, employee_record_id: selectedEmployee.id }),
+        fetchAttendanceLogs({ ...baseFilter, employee_id: selectedEmployee.employee_id }),
+      ]);
+      const all = [...new Map([...byRecord, ...byEmployee].map(log => [log.id, log])).values()];
       const selectedRecordId = String(selectedEmployee.id || '');
       const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
       const selectedEmployeeCode = normalizeAttendanceCode(selectedEmployee.employee_id);
@@ -1776,14 +1789,14 @@ export default function Attendance() {
   const { data: attendanceEditAudits = [] } = useQuery({
     queryKey: ['attendanceEditAudits', selectedEmployee?.id, selectedEmployee?.employee_id, activeCompanyId],
     queryFn: async () => {
-      const records = await entities.filter('PasscodeAuditLog', { company_profile_id: activeCompanyId }, '-occurred_at');
-      return records.filter(record =>
-        record.source_entity === 'AttendanceLog' &&
-        (
-          String(record.employee_record_id || '') === String(selectedEmployee?.id || '') ||
-          normalizeAttendanceKey(record.employee_id) === normalizeAttendanceKey(selectedEmployee?.employee_id)
-        )
-      );
+      const baseFilter = { company_profile_id: activeCompanyId, source_entity: 'AttendanceLog' };
+      const [byRecord, byEmployee] = await Promise.all([
+        entities.page('PasscodeAuditLog', { ...baseFilter, employee_record_id: selectedEmployee.id }, '-occurred_at', 1, 200),
+        entities.page('PasscodeAuditLog', { ...baseFilter, employee_id: selectedEmployee.employee_id }, '-occurred_at', 1, 200),
+      ]);
+      return [...new Map(
+        [...(byRecord.data || []), ...(byEmployee.data || [])].map(record => [record.id, record])
+      ).values()].sort((a, b) => String(b.occurred_at || '').localeCompare(String(a.occurred_at || '')));
     },
     enabled: !!selectedEmployee && !!activeCompanyId,
   });

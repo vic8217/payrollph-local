@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { prisma } from "./prisma";
+import { Prisma } from "@prisma/client";
+import { normalizePagination } from "@/lib/pagination";
 
 const ENTITY_NAMES = new Set([
   "AttendanceLog",
@@ -194,6 +196,104 @@ export async function listRecords(entity, { filter = {}, sort, limit, offset = 0
   const start = Math.max(0, Number(offset) || 0);
   const limitedRecords = limit ? publicRecords.slice(start, start + Number(limit)) : publicRecords.slice(start);
   return fields ? limitedRecords.map((record) => pickFields(record, fields)) : limitedRecords;
+}
+
+function paginatedFieldExpression(field) {
+  if (field === "id") return Prisma.sql`id`;
+  if (field === "created_date") return Prisma.sql`"createdAt"`;
+  if (field === "updated_date") return Prisma.sql`"updatedAt"`;
+  return Prisma.sql`data ->> ${field}`;
+}
+
+function paginatedFilterCondition(field, expected) {
+  const expression = paginatedFieldExpression(field);
+  const comparisonValue = value => ["created_date", "updated_date"].includes(field)
+    ? new Date(value)
+    : String(value);
+  if (expected && typeof expected === "object" && !Array.isArray(expected)) {
+    const conditions = [];
+    if (Object.prototype.hasOwnProperty.call(expected, "$gte")) conditions.push(Prisma.sql`${expression} >= ${comparisonValue(expected.$gte)}`);
+    if (Object.prototype.hasOwnProperty.call(expected, "$lte")) conditions.push(Prisma.sql`${expression} <= ${comparisonValue(expected.$lte)}`);
+    if (Object.prototype.hasOwnProperty.call(expected, "$gt")) conditions.push(Prisma.sql`${expression} > ${comparisonValue(expected.$gt)}`);
+    if (Object.prototype.hasOwnProperty.call(expected, "$lt")) conditions.push(Prisma.sql`${expression} < ${comparisonValue(expected.$lt)}`);
+    if (Array.isArray(expected.$in)) {
+      const values = expected.$in.map(value => String(value));
+      conditions.push(values.length ? Prisma.sql`${expression} IN (${Prisma.join(values)})` : Prisma.sql`FALSE`);
+    }
+    return conditions.length ? Prisma.sql`(${Prisma.join(conditions, " AND ")})` : Prisma.sql`TRUE`;
+  }
+  if (expected == null) return Prisma.sql`(${expression} IS NULL OR ${expression} = '')`;
+  return Prisma.sql`${expression} = ${comparisonValue(expected)}`;
+}
+
+/** Database-level pagination for high-volume append-only entity logs. */
+export async function listRecordsPage(entity, { filter = {}, sort, page = 1, pageSize = 50, fields, legacyAttendanceAudit = false, search } = {}) {
+  assertEntityName(entity);
+  if (!["AttendanceLog", "PasscodeAuditLog"].includes(entity)) {
+    const error = new Error(`Database pagination is not enabled for ${entity}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  await ensureSeedData();
+
+  const normalized = normalizePagination(page, pageSize);
+  const safePage = normalized.page;
+  const safePageSize = normalized.pageSize;
+  const skip = (safePage - 1) * safePageSize;
+  const filterConditions = Object.entries(filter || {}).map(([field, expected]) =>
+    paginatedFilterCondition(field, expected));
+  const searchTerm = String(search || "").trim();
+  if (searchTerm) filterConditions.push(Prisma.sql`data::text ILIKE ${`%${searchTerm}%`}`);
+  if (legacyAttendanceAudit && entity === "AttendanceLog") {
+    filterConditions.push(Prisma.sql`(
+      (data ->> 'passcode_audit_action' IS NULL OR data ->> 'passcode_audit_action' = '')
+      AND (
+        data ->> 'notes' ILIKE '%Attendance correction%'
+        OR data ->> 'notes' ILIKE '%Manual edit%'
+        OR data ->> 'notes' ILIKE '%Attendance rejected by%'
+        OR data ->> 'notes' ILIKE '%OT %passcodes%'
+      )
+    )`);
+  }
+  const where = Prisma.sql`entity = ${entity}${filterConditions.length
+    ? Prisma.sql` AND ${Prisma.join(filterConditions, " AND ")}`
+    : Prisma.empty}`;
+
+  const requestedSort = String(sort || (entity === "AttendanceLog" ? "-updated_date" : "-occurred_at"));
+  const sortField = requestedSort.replace(/^-/, "");
+  const sortExpression = paginatedFieldExpression(sortField);
+  const direction = requestedSort.startsWith("-") ? Prisma.sql`DESC` : Prisma.sql`ASC`;
+
+  const [rows, countRows] = await prisma.$transaction([
+    prisma.$queryRaw(Prisma.sql`
+      SELECT id, entity, data, "createdAt", "updatedAt"
+      FROM "EntityRecord"
+      WHERE ${where}
+      ORDER BY ${sortExpression} ${direction}, id ${direction}
+      OFFSET ${skip}
+      LIMIT ${safePageSize}
+    `),
+    prisma.$queryRaw(Prisma.sql`
+      SELECT COUNT(*)::int AS total
+      FROM "EntityRecord"
+      WHERE ${where}
+    `),
+  ]);
+
+  const records = rows.map(toPublicRecord);
+  const total = Number(countRows[0]?.total || 0);
+  const totalPages = total === 0 ? 0 : Math.ceil(total / safePageSize);
+  return {
+    data: fields ? records.map(record => pickFields(record, fields)) : records,
+    pagination: {
+      page: safePage,
+      pageSize: safePageSize,
+      total,
+      totalPages,
+      hasNextPage: safePage < totalPages,
+      hasPreviousPage: safePage > 1,
+    },
+  };
 }
 
 export async function createRecord(entity, data) {

@@ -32,6 +32,17 @@ function isOvernightAttendance(log = {}) {
   return Boolean(start && end && end <= start);
 }
 
+async function employeeAttendanceForDate(employee, date) {
+  const baseFilter = { company_profile_id: employee.company_profile_id, date };
+  const [byRecord, byEmployee] = await Promise.all([
+    appApi.entities.AttendanceLog.page({ ...baseFilter, employee_record_id: employee.id }, '-updated_date', 1, 20),
+    appApi.entities.AttendanceLog.page({ ...baseFilter, employee_id: employee.employee_id }, '-updated_date', 1, 20),
+  ]);
+  return [...new Map(
+    [...(byRecord.data || []), ...(byEmployee.data || [])].map(log => [log.id, log])
+  ).values()];
+}
+
 export default function EmployeeOvertimeRequest({ employee }) {
   const [date, setDate] = useState(manilaDateString());
   const [hours, setHours] = useState('');
@@ -79,10 +90,7 @@ export default function EmployeeOvertimeRequest({ employee }) {
     setError('');
     setSuccess('');
     try {
-      const attendanceLogs = await appApi.entities.AttendanceLog.filter({
-        company_profile_id: employee.company_profile_id,
-        date,
-      });
+      const attendanceLogs = await employeeAttendanceForDate(employee, date);
       const employeeRecordId = String(employee.id || '').trim().toLowerCase();
       const employeeId = String(employee.employee_id || '').trim().toLowerCase();
       const matchingTimeIn = attendanceLogs.find(log => {
@@ -94,10 +102,7 @@ export default function EmployeeOvertimeRequest({ employee }) {
       let requestDate = matchingTimeIn ? date : null;
       if (!requestDate && date === manilaDateString()) {
         const previousDate = previousManilaDate(date);
-        const previousLogs = await appApi.entities.AttendanceLog.filter({
-          company_profile_id: employee.company_profile_id,
-          date: previousDate,
-        });
+        const previousLogs = await employeeAttendanceForDate(employee, previousDate);
         const overnightTimeIn = previousLogs.find(log => {
           const sameEmployee =
             (employeeRecordId && String(log.employee_record_id || '').trim().toLowerCase() === employeeRecordId) ||
