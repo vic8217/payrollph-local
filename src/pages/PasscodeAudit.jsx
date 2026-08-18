@@ -27,6 +27,7 @@ const actionLabels = {
   attendance_punch_attempted: 'Attendance Punch Attempted',
   attendance_punch_failed: 'Attendance Punch Failed',
   early_time_in_attempt: 'Early Time-In Attempt',
+  offline_attendance_synchronized: 'Offline Attendance Synchronized',
   attendance_correction: 'Attendance Corrected',
   attendance_manual_edit: 'Attendance Edited',
   attendance_rejected: 'Attendance Rejected',
@@ -60,6 +61,7 @@ const actionStyles = {
   attendance_punch_attempted: 'bg-amber-100 text-amber-800',
   attendance_punch_failed: 'bg-red-100 text-red-700',
   early_time_in_attempt: 'bg-amber-100 text-amber-800',
+  offline_attendance_synchronized: 'bg-blue-100 text-blue-800',
   attendance_rejected: 'bg-red-100 text-red-700',
   attendance_approved: 'bg-green-100 text-green-700',
   overtime_denied: 'bg-red-100 text-red-700',
@@ -347,6 +349,7 @@ export default function PasscodeAudit() {
                           <span className="font-medium text-amber-800">Official attendance: Not accepted</span>
                         </div>
                       )}
+                      {entry.action === 'offline_attendance_synchronized' && <div className="mt-2 grid gap-0.5 text-[11px] text-muted-foreground"><span>Attempted: {formatManilaAuditTime(entry.record.attempted_at)}</span><span>Synced: {formatManilaAuditTime(entry.record.synced_at)}</span><span>Source: Client Queued</span><span className="font-medium">Result: {String(entry.record.attendance_result || '').replaceAll('_', ' ')}</span></div>}
                       {Array.isArray(entry.record.changes) && entry.record.changes.length > 0 && (
                         <ul className="mt-2 space-y-1 text-[11px] text-muted-foreground">
                           {entry.record.changes.map(change => (

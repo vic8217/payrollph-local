@@ -142,6 +142,9 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   'break_time_out_verification_method',
   'break_time_in_verification_method',
   'time_out_verification_method',
+  'record_source',
+  'synchronized_at',
+  'offline_client_request_id',
 ].join(',');
 
 const formatHours = (value) => `${(Number(value) || 0).toFixed(2)}h`;
@@ -3764,6 +3767,7 @@ export default function Attendance() {
                             <InlineVerificationMethodIcon photoItem={timeInPhoto} />
                             <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
                           </div>
+                          {log.record_source === 'OFFLINE_SYSTEM_DOWN_SYNC' && <p className="mt-1 text-[10px] font-medium text-blue-700" title={log.synchronized_at ? `Synchronized ${formatManilaDateTime(log.synchronized_at)}` : ''}>Offline sync</p>}
                         </td>
                         <td className="px-2.5 py-3 text-xs text-muted-foreground">
                           {actualTimeIn ? formatManilaTime(actualTimeIn) : '—'}

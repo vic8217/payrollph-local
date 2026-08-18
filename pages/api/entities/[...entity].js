@@ -120,6 +120,9 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   "break_time_out_verification_method",
   "break_time_in_verification_method",
   "time_out_verification_method",
+  "record_source",
+  "synchronized_at",
+  "offline_client_request_id",
 ].join(",");
 
 function fieldsForListRequest(entity, query) {
@@ -135,7 +138,19 @@ function normalizedId(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-async function requireTimeInForOvertimeRequest(data = {}) {
+function previousManilaDate(date) {
+  const value = new Date(`${date}T00:00:00+08:00`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return manilaDateString(value);
+}
+
+function isOvernightAttendance(log = {}) {
+  const start = String(log.shift_start_time || "").slice(0, 5);
+  const end = String(log.shift_end_time || "").slice(0, 5);
+  return Boolean(start && end && end <= start);
+}
+
+async function resolveTimeInForOvertimeRequest(data = {}) {
   const companyProfileId = data.company_profile_id;
   const requestDate = String(data.date || "").slice(0, 10);
   const employeeRecordId = normalizedId(data.employee_record_id);
@@ -150,18 +165,35 @@ async function requireTimeInForOvertimeRequest(data = {}) {
   const logs = await listRecords("AttendanceLog", {
     filter: { company_profile_id: companyProfileId, date: requestDate },
   });
-  const hasTimeIn = logs.some(log => {
+  const matchingTimeIn = logs.find(log => {
     const sameEmployee =
       (employeeRecordId && normalizedId(log.employee_record_id) === employeeRecordId) ||
       (employeeId && normalizedId(log.employee_id) === employeeId);
-    return sameEmployee && Boolean(String(log.time_in || "").trim());
+    return sameEmployee && log.status !== "rejected" && Boolean(String(log.time_in || "").trim());
   });
 
-  if (!hasTimeIn) {
-    const error = new Error("You can only file an OT request after recording Time In for the selected date.");
-    error.statusCode = 400;
-    throw error;
+  if (matchingTimeIn) return requestDate;
+
+  // After midnight, an employee's active/completed night shift still belongs
+  // to the previous work date. Resolve that attendance instead of requiring a
+  // nonexistent Time In under the new calendar date.
+  if (requestDate === manilaDateString()) {
+    const previousDate = previousManilaDate(requestDate);
+    const previousLogs = await listRecords("AttendanceLog", {
+      filter: { company_profile_id: companyProfileId, date: previousDate },
+    });
+    const overnightTimeIn = previousLogs.find(log => {
+      const sameEmployee =
+        (employeeRecordId && normalizedId(log.employee_record_id) === employeeRecordId) ||
+        (employeeId && normalizedId(log.employee_id) === employeeId);
+      return sameEmployee && log.status !== "rejected" && isOvernightAttendance(log) && Boolean(String(log.time_in || "").trim());
+    });
+    if (overnightTimeIn) return previousDate;
   }
+
+  const error = new Error("You can only file an OT request after recording Time In for the selected date.");
+  error.statusCode = 400;
+  throw error;
 }
 
 async function requireCompletedAttendanceForOvertimeApproval(requestId, updates = {}) {
@@ -250,6 +282,31 @@ export default async function handler(req, res) {
         });
       }
       let data = req.body;
+      if (entity === "AttendanceLog") {
+        const companyId = String(data?.company_profile_id || "").trim();
+        const workDate = String(data?.date || "").slice(0, 10);
+        const employeeRecordId = normalizedId(data?.employee_record_id);
+        const employeeId = normalizedId(data?.employee_id);
+        if (!companyId || !workDate || (!employeeRecordId && !employeeId)) {
+          return res.status(400).json({ error: "Company, employee, and attendance work date are required." });
+        }
+        const existingLogs = await listRecords("AttendanceLog", {
+          filter: { company_profile_id: companyId, date: workDate },
+          limit: 1000,
+        });
+        const duplicate = existingLogs.find(log =>
+          log.status !== "rejected" &&
+          ((employeeRecordId && normalizedId(log.employee_record_id) === employeeRecordId) ||
+            (employeeId && normalizedId(log.employee_id) === employeeId))
+        );
+        if (duplicate) {
+          return res.status(409).json({
+            code: "DUPLICATE_ATTENDANCE_WORK_DATE",
+            error: "An attendance record already exists for this employee and work date. The duplicate was not created.",
+            existingAttendanceId: duplicate.id,
+          });
+        }
+      }
       if (entity === "Employee") {
         const session = await getServerSession(req, res, authOptions);
         const companyId = String(data?.company_profile_id || "");
@@ -261,7 +318,27 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Employee ID is required. The employee profile was not saved." });
       }
       if (entity === "OvertimeRequest") {
-        await requireTimeInForOvertimeRequest(data);
+        data = { ...data, date: await resolveTimeInForOvertimeRequest(data) };
+        const existingRequests = await listRecords("OvertimeRequest", {
+          filter: { company_profile_id: data.company_profile_id, date: data.date },
+          limit: 1000,
+        });
+        const employeeRecordId = normalizedId(data.employee_record_id);
+        const employeeId = normalizedId(data.employee_id);
+        const duplicate = existingRequests.find(request =>
+          ["pending", "approved"].includes(normalizedId(request.status)) &&
+          ((employeeRecordId && normalizedId(request.employee_record_id) === employeeRecordId) ||
+            (employeeId && normalizedId(request.employee_id) === employeeId))
+        );
+        if (duplicate) {
+          return res.status(409).json({
+            code: "DUPLICATE_OVERTIME_REQUEST",
+            error: normalizedId(duplicate.status) === "approved"
+              ? `You already have an approved OT request for ${data.date}.`
+              : `You already have an open OT request for ${data.date}.`,
+            existingOvertimeRequestId: duplicate.id,
+          });
+        }
       }
       if (entity === "CompanyProfile") {
         const session = await getServerSession(req, res, authOptions);

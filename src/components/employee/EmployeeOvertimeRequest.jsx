@@ -18,11 +18,26 @@ const statusStyles = {
   denied: 'bg-red-100 text-red-700 border-red-200',
 };
 
+function previousManilaDate(date) {
+  const value = new Date(`${date}T00:00:00+08:00`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(value);
+}
+
+function isOvernightAttendance(log = {}) {
+  const start = String(log.shift_start_time || '').slice(0, 5);
+  const end = String(log.shift_end_time || '').slice(0, 5);
+  return Boolean(start && end && end <= start);
+}
+
 export default function EmployeeOvertimeRequest({ employee }) {
   const [date, setDate] = useState(manilaDateString());
   const [hours, setHours] = useState('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
   const qc = useQueryClient();
 
@@ -36,7 +51,7 @@ export default function EmployeeOvertimeRequest({ employee }) {
   });
 
   const existingForDate = useMemo(() =>
-    requests.find(request => request.date === date && request.status === 'pending'),
+    requests.find(request => request.date === date && ['pending', 'approved'].includes(String(request.status || '').toLowerCase())),
     [requests, date],
   );
 
@@ -62,6 +77,7 @@ export default function EmployeeOvertimeRequest({ employee }) {
 
     setSaving(true);
     setError('');
+    setSuccess('');
     try {
       const attendanceLogs = await appApi.entities.AttendanceLog.filter({
         company_profile_id: employee.company_profile_id,
@@ -69,14 +85,38 @@ export default function EmployeeOvertimeRequest({ employee }) {
       });
       const employeeRecordId = String(employee.id || '').trim().toLowerCase();
       const employeeId = String(employee.employee_id || '').trim().toLowerCase();
-      const hasTimeIn = attendanceLogs.some(log => {
+      const matchingTimeIn = attendanceLogs.find(log => {
         const sameEmployee =
           (employeeRecordId && String(log.employee_record_id || '').trim().toLowerCase() === employeeRecordId) ||
           (employeeId && String(log.employee_id || '').trim().toLowerCase() === employeeId);
-        return sameEmployee && Boolean(String(log.time_in || '').trim());
+        return sameEmployee && log.status !== 'rejected' && Boolean(String(log.time_in || '').trim());
       });
-      if (!hasTimeIn) {
+      let requestDate = matchingTimeIn ? date : null;
+      if (!requestDate && date === manilaDateString()) {
+        const previousDate = previousManilaDate(date);
+        const previousLogs = await appApi.entities.AttendanceLog.filter({
+          company_profile_id: employee.company_profile_id,
+          date: previousDate,
+        });
+        const overnightTimeIn = previousLogs.find(log => {
+          const sameEmployee =
+            (employeeRecordId && String(log.employee_record_id || '').trim().toLowerCase() === employeeRecordId) ||
+            (employeeId && String(log.employee_id || '').trim().toLowerCase() === employeeId);
+          return sameEmployee && log.status !== 'rejected' && isOvernightAttendance(log) && Boolean(String(log.time_in || '').trim());
+        });
+        if (overnightTimeIn) requestDate = previousDate;
+      }
+      if (!requestDate) {
         setError('You can only file an OT request after recording Time In for the selected date.');
+        return;
+      }
+      const existingRequest = requests.find(request =>
+        request.date === requestDate && ['pending', 'approved'].includes(String(request.status || '').toLowerCase()));
+      if (existingRequest) {
+        setDate(requestDate);
+        setError(String(existingRequest.status || '').toLowerCase() === 'approved'
+          ? `You already have an approved OT request for ${requestDate}.`
+          : `You already have an open OT request for ${requestDate}.`);
         return;
       }
 
@@ -86,7 +126,7 @@ export default function EmployeeOvertimeRequest({ employee }) {
         employee_id: employee.employee_id,
         employee_name: employeeName(employee),
         department: employee.department || '',
-        date,
+        date: requestDate,
         requested_hours: Number(requestedHours.toFixed(2)),
         reason: reason.trim(),
         status: 'pending',
@@ -94,7 +134,9 @@ export default function EmployeeOvertimeRequest({ employee }) {
       });
       setHours('');
       setReason('');
+      setDate(requestDate);
       await qc.invalidateQueries({ queryKey: ['overtimeRequests', employee?.id] });
+      setSuccess(`OT request for ${requestDate} was submitted successfully and is pending approval.`);
     } catch (requestError) {
       setError(requestError?.message || 'Unable to submit OT request.');
     } finally {
@@ -141,7 +183,12 @@ export default function EmployeeOvertimeRequest({ employee }) {
         </div>
 
         {error && <p className="text-xs text-destructive">{error}</p>}
-        {existingForDate && <p className="text-xs text-amber-700">An open request already exists for this date.</p>}
+        {success && <p className="text-xs font-medium text-emerald-700">{success}</p>}
+        {existingForDate && <p className="text-xs text-amber-700">
+          {String(existingForDate.status || '').toLowerCase() === 'approved'
+            ? 'An approved request already exists for this date.'
+            : 'An open request already exists for this date.'}
+        </p>}
 
         <div className="flex justify-end">
           <Button type="submit" disabled={saving || !!existingForDate} className="gap-2">

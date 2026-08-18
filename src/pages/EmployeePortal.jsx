@@ -14,6 +14,7 @@ import EmployeeOvertimeRequest from '@/components/employee/EmployeeOvertimeReque
 import { useCompany } from '@/lib/CompanyContext';
 import { formatManilaDateTime, formatManilaTime } from '@/lib/dateUtils';
 import FaceCapture from '@/components/face/FaceCapture';
+import { acknowledgeAttendanceAttempt, createClientRequestId, isSystemUnavailableError, pendingAttendance, queueAttendanceAttempt } from '@/lib/offlineAttendance';
 
 const tabs = [
   { id: 'scan', label: 'Attendance Logger', icon: QrCode },
@@ -284,7 +285,69 @@ export default function EmployeePortal() {
   const [livenessConfirmed, setLivenessConfirmed] = useState(false);
   const [photoCaptureMetadata, setPhotoCaptureMetadata] = useState(null);
   const [photoCaptureError, setPhotoCaptureError] = useState('');
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [syncMessage, setSyncMessage] = useState('');
+  const [syncingAttendance, setSyncingAttendance] = useState(false);
   const { activeCompanyId } = useCompany();
+
+  const refreshPendingSyncCount = () => {
+    if (typeof window !== 'undefined') setPendingSyncCount(pendingAttendance(window.localStorage).length);
+  };
+
+  const queueOfflineAttempt = ({ employee, attemptedAt, location }) => {
+    const schedule = employee?.effective_schedule;
+    const next = queueAttendanceAttempt(window.localStorage, {
+      temporaryIncidentId: createClientRequestId(),
+      clientRequestId: createClientRequestId(),
+      attemptedAction: schedule?.attendanceStatus === 'Not Yet Timed In' ? 'TIME_IN_1' : 'AUTO_SEQUENCE',
+      attemptedAt,
+      employeeRecordId: employee.id,
+      employeeId: employee.employee_id,
+      companyProfileId: employee.company_profile_id || activeCompanyId,
+      shiftIdAtAttempt: schedule?.id || null,
+      scheduledStartAtAttempt: schedule?.startDateTime || null,
+      earliestAllowedAtAttempt: schedule?.earliestAllowedTimeIn || null,
+      source: 'EMPLOYEE_PORTAL',
+      location,
+      createdAt: new Date().toISOString(),
+    });
+    setPendingSyncCount(next.length);
+  };
+
+  const syncPendingAttendance = async () => {
+    if (typeof window === 'undefined' || syncingAttendance) return;
+    const events = pendingAttendance(window.localStorage);
+    if (!events.length) return refreshPendingSyncCount();
+    setSyncingAttendance(true);
+    let synchronized = 0;
+    let lastResult = null;
+    try {
+      for (const event of events) {
+        try {
+          lastResult = await appApi.functions.invoke('syncOfflineAttendance', event);
+          acknowledgeAttendanceAttempt(window.localStorage, event.clientRequestId);
+          synchronized += 1;
+        } catch (error) {
+          if (isSystemUnavailableError(error)) break;
+          // Acknowledged business/security outcomes are retained server-side only
+          // when the endpoint returns success. Other failures remain pending.
+          break;
+        }
+      }
+      refreshPendingSyncCount();
+      if (synchronized) {
+        setSyncMessage(lastResult?.attendanceResult === 'OFFICIAL_ATTENDANCE_CREATED'
+          ? `Attendance synchronized successfully. Official Time In: ${formatManilaTime(lastResult.officialTimeIn)}.`
+          : lastResult?.attendanceResult === 'EARLY_ATTEMPT_ONLY'
+            ? 'Attendance attempt synchronized for HR reference. It did not become an official Time In.'
+            : lastResult?.attendanceResult?.includes('CONFLICT') || lastResult?.attendanceResult === 'DUPLICATE_EXISTING_ATTENDANCE'
+              ? 'Attendance sync requires HR review because another or conflicting record exists.'
+              : `${synchronized} attendance attempt(s) synchronized.`);
+      }
+    } finally {
+      setSyncingAttendance(false);
+    }
+  };
 
   const closeAttendanceLogger = () => {
     setScanConfirm(null);
@@ -324,6 +387,16 @@ export default function EmployeePortal() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    refreshPendingSyncCount();
+    const reconnect = () => void syncPendingAttendance();
+    const resume = () => { if (document.visibilityState === 'visible' && navigator.onLine) void syncPendingAttendance(); };
+    window.addEventListener('online', reconnect);
+    document.addEventListener('visibilitychange', resume);
+    if (navigator.onLine) void syncPendingAttendance();
+    return () => { window.removeEventListener('online', reconnect); document.removeEventListener('visibilitychange', resume); };
+  }, [user, activeCompanyId]);
 
   useEffect(() => {
     if (
@@ -554,6 +627,7 @@ export default function EmployeePortal() {
       <main className="flex-1 overflow-auto">
         {activeTab === 'scan' && (
           <div className="mx-auto max-w-xl p-4 space-y-4">
+            {(pendingSyncCount > 0 || syncMessage) && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><p>{pendingSyncCount > 0 ? `${pendingSyncCount} attendance attempt${pendingSyncCount === 1 ? '' : 's'} pending synchronization.` : syncMessage}</p>{pendingSyncCount > 0 && <Button type="button" variant="outline" size="sm" className="mt-2" disabled={syncingAttendance} onClick={() => void syncPendingAttendance()}>{syncingAttendance ? 'Synchronizing…' : 'Sync Now'}</Button>}</div>}
             <EmployeeQRGate
               key={scanKey}
               companyProfileId={activeCompanyId}
@@ -599,17 +673,19 @@ export default function EmployeePortal() {
           <div className="bg-card rounded-2xl shadow-2xl p-6 max-w-md w-full space-y-4 max-h-[90vh] overflow-y-auto">
             {/* Punch result */}
             <div className="text-center space-y-2">
-              <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto ${scanConfirm.earlyAttempt ? 'bg-amber-100' : 'bg-green-100'}`}>
-                <CheckCircle2 className={`w-8 h-8 ${scanConfirm.earlyAttempt ? 'text-amber-600' : 'text-green-600'}`} />
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto ${scanConfirm.earlyAttempt || scanConfirm.systemUnavailable ? 'bg-amber-100' : 'bg-green-100'}`}>
+                <CheckCircle2 className={`w-8 h-8 ${scanConfirm.earlyAttempt || scanConfirm.systemUnavailable ? 'text-amber-600' : 'text-green-600'}`} />
               </div>
               <h2 className="text-xl font-bold text-foreground">
-                {scanConfirm.earlyAttempt ? 'Early Time In Recorded' : scanConfirm.action ? `${scanConfirm.action} Recorded` : 'Complete Live Photo to Record Attendance'}
+                {scanConfirm.systemUnavailable ? 'Unable to Process Attendance' : scanConfirm.earlyAttempt ? 'Early Time In Recorded' : scanConfirm.action ? `${scanConfirm.action} Recorded` : 'Complete Live Photo to Record Attendance'}
               </h2>
               <p className="text-lg font-medium text-primary">{scanConfirm.name}</p>
               {scanConfirm.time && <p className="text-muted-foreground text-sm">{scanConfirm.time}</p>}
             </div>
 
             <EmployeeShiftCard employee={scanConfirm.employee} />
+
+            {scanConfirm.systemUnavailable && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-xs text-amber-900"><p className="font-semibold">System Temporarily Unavailable</p><p className="mt-1">PayrollPH is temporarily unavailable. Your attendance attempt has been saved on this device and will be checked automatically when the system becomes available again.</p><p className="mt-2 font-semibold">This is not yet a confirmed official attendance punch.</p></div>}
 
             {scanConfirm.earlyAttempt && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-xs text-amber-900 space-y-1">
@@ -666,7 +742,7 @@ export default function EmployeePortal() {
             </div>
 
             {/* Live photo capture */}
-            {!attendanceSaved && !scanConfirm.earlyAttempt && <div className="space-y-2">
+            {!attendanceSaved && !scanConfirm.earlyAttempt && !scanConfirm.systemUnavailable && <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Identity Photo</p>
               <div className="rounded-xl border border-border p-2">
                 <FaceCapture
@@ -725,7 +801,7 @@ export default function EmployeePortal() {
               )}
             </div>}
 
-            {scanConfirm.earlyAttempt ? <Button className="w-full" onClick={closeAttendanceLogger}>I Understand — Try Again Later</Button> : !attendanceSaved ? <Button
+            {scanConfirm.earlyAttempt || scanConfirm.systemUnavailable ? <Button className="w-full" onClick={closeAttendanceLogger}>I Understand — Try Again Later</Button> : !attendanceSaved ? <Button
               className="w-full"
               disabled={photoStatus === 'uploading' || !photoDataUrl || !photoCaptureMetadata || !livenessConfirmed || Boolean(photoCaptureError)}
               onClick={async () => {
@@ -747,12 +823,15 @@ export default function EmployeePortal() {
                   return;
                 }
 
+                const attendanceAttemptedAt = new Date().toISOString();
+                let attendanceLocation = null;
                 try {
                   setPhotoSubmitError('');
                   setPhotoStatus('uploading');
                   const employee = scanConfirm.employee;
 
                   const location = await captureAttendanceLocation();
+                  attendanceLocation = location;
                   const logRes = await appApi.functions.invoke('logAttendance', {
                     employee_id: employee.employee_id,
                     employee_record_id: employee.id,
@@ -860,6 +939,14 @@ export default function EmployeePortal() {
                   }
                 } catch (error) {
                   const errorMessage = error?.message || 'Live photo or attendance logging failed. Please retake the photo and try again.';
+                  if (isSystemUnavailableError(error)) {
+                    const employee = scanConfirm.employee;
+                    queueOfflineAttempt({ employee, attemptedAt: attendanceAttemptedAt, location: attendanceLocation });
+                    setScanConfirm(current => ({ ...current, systemUnavailable: true }));
+                    setPhotoStatus('done');
+                    setPhotoSubmitError('System Temporarily Unavailable. Your attendance attempt has been saved on this device and will be checked automatically when PayrollPH is available again. You are not yet officially timed in.');
+                    return;
+                  }
                   await recordFailedAttendance({
                     employee: scanConfirm.employee,
                     stage: 'attendance_submission',

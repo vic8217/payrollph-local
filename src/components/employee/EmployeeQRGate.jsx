@@ -266,21 +266,30 @@ export default function EmployeeQRGate({
 
     // Use backend function (service role) so it works even when user is not logged in
     let emp = null;
+    let lookupError = null;
     try {
       const res = await appApi.functions.invoke('lookupEmployee', { code: trimmed, company_profile_id: companyProfileId });
       emp = res.employee;
-    } catch {
+    } catch (error) {
+      lookupError = error;
       emp = null;
     }
 
     if (!emp) {
+      const employeeWasNotFound = lookupError?.status === 404;
+      const knownEmployeeProblem = ['EMPLOYEE_INACTIVE', 'EMPLOYEE_COMPANY_MISMATCH'].includes(lookupError?.code);
+      const failureMessage = knownEmployeeProblem
+        ? lookupError.message
+        : employeeWasNotFound
+          ? 'Employee ID not found for the selected company. Check the ID or scan the latest QR code.'
+          : 'Employee lookup is temporarily unavailable. Please try again.';
       appApi.functions.invoke('recordAttendanceFailure', {
         employee_id: trimmed,
         company_profile_id: companyProfileId,
         stage: 'employee_lookup',
-        reason: 'Employee ID not found',
+        reason: lookupError?.message || failureMessage,
       }).catch(() => {});
-      setResult({ success: false, message: 'Employee ID not found' });
+      setResult({ success: false, message: failureMessage });
       setProcessing(false);
       lockedRef.current = false;
       setTimeout(() => { setResult(null); inputRef.current?.focus(); }, 3000);

@@ -1,12 +1,20 @@
 // @ts-nocheck
 export async function requestJson(path, options = {}) {
-  const response = await fetch(path, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  const controller = options.signal ? null : new AbortController();
+  const timeout = controller ? setTimeout(() => controller.abort(), 20000) : null;
+  let response;
+  try {
+    response = await fetch(path, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+      signal: options.signal || controller?.signal,
+    });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 
   const text = await response.text();
   let data = null;

@@ -93,6 +93,17 @@ function metadataCandidates(value) {
   };
 }
 
+function employeeMatchesCandidates(employee, scannedCandidates) {
+  const employeeCandidates = [
+    ...codeCandidates(employee.employee_id),
+    ...codeCandidates(employee.qr_code),
+    ...(Array.isArray(employee.employee_id_aliases)
+      ? employee.employee_id_aliases.flatMap((alias) => codeCandidates(alias))
+      : []),
+  ];
+  return scannedCandidates.some((candidate) => employeeCandidates.includes(candidate));
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -109,10 +120,19 @@ export default async function handler(req, res) {
   const scannedMetadata = metadataCandidates(code);
   if (requestedCompanyProfileId) scannedMetadata.companyProfileIds.push(requestedCompanyProfileId);
 
-  const employees = await listRecords("Employee", { limit: 2000 });
+  const requestedCompanies = [...new Set(scannedMetadata.companyProfileIds.filter(Boolean))];
+  // Scope the database query before applying the result limit. Loading a global
+  // page and filtering it afterward can exclude valid employees from the active
+  // company when they fall outside that page (commonly recently added staff).
+  const employeeBatches = requestedCompanies.length
+    ? await Promise.all(requestedCompanies.map(companyProfileId =>
+      listRecords("Employee", { filter: { company_profile_id: companyProfileId }, limit: 2000 })))
+    : [await listRecords("Employee", { limit: 2000 })];
+  const employees = [...new Map(
+    employeeBatches.flat().map(employee => [String(employee.id || employee.employee_id), employee])
+  ).values()];
   const activeEmployees = employees.filter(isActiveEmployee);
 
-  const requestedCompanies = [...new Set(scannedMetadata.companyProfileIds.filter(Boolean))];
   const belongsToRequestedCompany = emp => requestedCompanies.length === 0 ||
     requestedCompanies.includes(String(emp.company_profile_id || ""));
   const recordMatchedEmployee = scannedMetadata.employeeRecordIds.length
@@ -126,14 +146,7 @@ export default async function handler(req, res) {
 
   const employeeMatches = employees.filter((emp) => {
     if (!isActiveEmployee(emp)) return false;
-    const employeeCandidates = [
-      ...codeCandidates(emp.employee_id),
-      ...codeCandidates(emp.qr_code),
-      ...(Array.isArray(emp.employee_id_aliases)
-        ? emp.employee_id_aliases.flatMap((alias) => codeCandidates(alias))
-        : []),
-    ];
-    return scannedCandidates.some((candidate) => employeeCandidates.includes(candidate));
+    return employeeMatchesCandidates(emp, scannedCandidates);
   });
   const employee = requestedCompanies.length
     ? employeeMatches.find(belongsToRequestedCompany)
@@ -141,6 +154,29 @@ export default async function handler(req, res) {
 
   if (employee) {
     return res.status(200).json({ employee: await withCurrentShift(employee) });
+  }
+
+  const inactiveEmployee = employees.find(emp =>
+    !isActiveEmployee(emp) && employeeMatchesCandidates(emp, scannedCandidates));
+  if (inactiveEmployee) {
+    return res.status(403).json({
+      code: "EMPLOYEE_INACTIVE",
+      error: "This employee profile is inactive. Please contact HR.",
+    });
+  }
+
+  if (requestedCompanies.length) {
+    const allEmployees = await listRecords("Employee");
+    const otherCompanyEmployee = allEmployees.find(emp =>
+      isActiveEmployee(emp) &&
+      !belongsToRequestedCompany(emp) &&
+      employeeMatchesCandidates(emp, scannedCandidates));
+    if (otherCompanyEmployee) {
+      return res.status(403).json({
+        code: "EMPLOYEE_COMPANY_MISMATCH",
+        error: "This Employee ID belongs to a different company. Please ask HR to open the correct company portal.",
+      });
+    }
   }
 
   return res.status(404).json({ error: "Employee not found" });

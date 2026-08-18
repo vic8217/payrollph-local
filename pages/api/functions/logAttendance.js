@@ -376,7 +376,7 @@ function isActiveOvernightLog(log, employee, shiftSettings, date, nowDate) {
   );
 }
 
-function isRecentCompletedOvernightLog(log, employee, shiftSettings, date, nowDate) {
+function isCompletedPriorOvernightLog(log, employee, shiftSettings, date, nowDate) {
   if (!log?.time_out || log.status === "rejected" || log.date !== addDays(date, -1)) return false;
 
   const shiftOptions = resolveEmployeeShiftOptions(
@@ -388,9 +388,7 @@ function isRecentCompletedOvernightLog(log, employee, shiftSettings, date, nowDa
   if (!shiftOptions.isOvernightShift) return false;
 
   const timeOut = new Date(log.time_out);
-  return Number.isFinite(timeOut.getTime()) &&
-    nowDate.getTime() >= timeOut.getTime() &&
-    nowDate.getTime() - timeOut.getTime() < DUPLICATE_SCAN_WINDOW_MS;
+  return Number.isFinite(timeOut.getTime()) && nowDate.getTime() >= timeOut.getTime();
 }
 
 function rejectRapidScan(res, log, action, message = "Scan already recorded. Please wait before scanning again.") {
@@ -458,13 +456,27 @@ export default async function handler(req, res) {
     isActiveOvernightLog(log, employee, shiftSettings, date, nowDate)
   );
   const completedOvernightLog = employeeLogs.find((log) =>
-    isRecentCompletedOvernightLog(log, employee, shiftSettings, date, nowDate)
+    isCompletedPriorOvernightLog(log, employee, shiftSettings, date, nowDate)
   );
 
-  // A repeated final scan must stay attached to the completed overnight shift.
-  // Without this guard, the completed log is no longer "active" and the scan
-  // is incorrectly created as Time In (1) for the same prior-day shift date.
-  if (!todayLog && !overnightLog && completedOvernightLog) {
+  const nextShift = resolveEffectiveEmployeeShift(employee, shiftSettings, date);
+  const nextShiftSchedule = scheduleDateTimes(date, nextShift || (() => {
+    const fallback = resolveEmployeeShiftOptions(employee, shiftSettings, date);
+    return {
+      shift_start_time: fallback.shiftStartTime,
+      shift_end_time: fallback.shiftEndTime,
+    };
+  })());
+  const nextTimeInWindowIsClosed = Boolean(
+    nextShiftSchedule?.earliestTimeIn &&
+    nowDate.getTime() < nextShiftSchedule.earliestTimeIn.getTime()
+  );
+
+  // After an overnight shift is complete, ignore every additional scan until
+  // the next shift's official Time In window opens. A short duplicate timeout
+  // is insufficient: for example, a 6:05 AM scan after a 5:59 AM final Time
+  // Out must not become another attendance record for the prior work date.
+  if (!todayLog && !overnightLog && completedOvernightLog && nextTimeInWindowIsClosed) {
     return rejectRapidScan(
       res,
       completedOvernightLog,
