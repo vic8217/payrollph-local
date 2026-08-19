@@ -2,7 +2,21 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { listRecords } from '@/server/entityStore';
-import { agencyFeeSummary, normalizePayrollMethod } from '@/lib/agencyPayroll';
+import { agencyFeeForAttendanceDays, agencyFeeSummary, normalizePayrollMethod } from '@/lib/agencyPayroll';
+
+function attendanceDaysForEmployee(logs, employee) {
+  const employeeId = String(employee.employee_id || '').trim().toLowerCase();
+  const employeeRecordId = String(employee.id || employee.employee_record_id || '').trim().toLowerCase();
+  const unitsByDate = new Map();
+  logs.forEach(log => {
+    const matches =
+      (employeeRecordId && String(log.employee_record_id || '').trim().toLowerCase() === employeeRecordId) ||
+      (employeeId && String(log.employee_id || '').trim().toLowerCase() === employeeId);
+    if (!matches || log.status !== 'approved' || !log.time_in || log.is_absent) return;
+    unitsByDate.set(log.date, 1);
+  });
+  return [...unitsByDate.values()].reduce((sum, units) => sum + units, 0);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -21,6 +35,13 @@ export default async function handler(req, res) {
   ]);
   const period = periods.find(item => String(item.id) === periodId) || periods[0] || null;
   const finalized = ['approved', 'released'].includes(period?.status) && records.length > 0;
+  const attendanceLogs = !finalized && period?.start_date && period?.end_date
+    ? await listRecords('AttendanceLog', {
+      filter: { company_profile_id: companyId, date: { $gte: period.start_date, $lte: period.end_date } },
+      limit: 10000,
+    })
+    : [];
+  const dailyFee = Number(company.agency_fee_per_employee || 0);
   const eligible = finalized
     ? records.filter(record => record.is_agency_employee_at_payroll === true).map(record => ({
       id: record.employee_record_id || record.employee_id,
@@ -30,15 +51,23 @@ export default async function handler(req, res) {
       is_agency_employee: true,
       payroll_disbursement_method: record.payroll_method_at_payroll,
       agency_fee_amount: record.agency_fee_amount,
+      agency_fee_attendance_days: record.agency_fee_attendance_days,
     }))
     : employees.filter(employee => employee.status === 'active' && employee.is_agency_employee === true &&
       (!period?.start_date || !employee.date_hired || employee.date_hired <= period.end_date) &&
-      (!employee.termination_date || employee.termination_date >= period.start_date));
-  const fee = finalized ? Number(eligible[0]?.agency_fee_amount || 0) : Number(company.agency_fee_per_employee || 0);
-  const summary = agencyFeeSummary(eligible, String(fee));
+      (!employee.termination_date || employee.termination_date >= period.start_date))
+      .map(employee => {
+        const attendanceDays = attendanceDaysForEmployee(attendanceLogs, employee);
+        return {
+          ...employee,
+          agency_fee_attendance_days: attendanceDays,
+          agency_fee_amount: agencyFeeForAttendanceDays(dailyFee, attendanceDays),
+        };
+      });
+  const summary = agencyFeeSummary(eligible, String(dailyFee));
   return res.status(200).json({
     enabled: company.uses_employee_agency === true,
-    frequency: company.agency_fee_frequency || 'PER_PAYROLL',
+    frequency: 'PER_DAY',
     period,
     finalizedSnapshot: finalized,
     ...summary,

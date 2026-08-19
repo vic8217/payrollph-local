@@ -24,7 +24,6 @@ const EDITABLE_FIELDS = [
   "bank_account",
   "user_email",
   "employment_type",
-  "agency_fee_percentage",
   "is_agency_employee",
   "payroll_disbursement_method",
   "status",

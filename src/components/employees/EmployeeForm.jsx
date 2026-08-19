@@ -280,6 +280,9 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
     setSaveError('');
     try {
       const data = { ...form };
+      // Remove the retired employee-level percentage. Agency fees are defined
+      // only by the fixed company-level configuration.
+      delete data.agency_fee_percentage;
       data.employee_id = String(data.employee_id).trim();
       if (data.daily_rate) data.daily_rate = parseFloat(data.daily_rate);
       if (data.monthly_rate) data.monthly_rate = parseFloat(data.monthly_rate);
@@ -486,20 +489,6 @@ export default function EmployeeForm({ employee, onSaved, onCancel, onUpdated })
             </SelectContent>
           </Select>
         </div>
-
-        {form.employment_type === 'agency' && (
-          <div className="space-y-1">
-            <Label className="text-xs font-medium">Agency Fee Percentage (%)</Label>
-            <Input
-              type="number"
-              value={form.agency_fee_percentage || ''}
-              onChange={e => set('agency_fee_percentage', e.target.value ? parseFloat(e.target.value) : '')}
-              className="h-8 text-sm"
-              step="0.01"
-              placeholder="e.g., 5"
-            />
-          </div>
-        )}
 
         <div className="space-y-1 sm:col-span-2">
           <Label className="text-xs font-medium">QR Code Value</Label>

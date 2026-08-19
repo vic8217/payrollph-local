@@ -216,17 +216,11 @@ export default function CompanyProfile() {
                 Company pays an agency for some employees
               </label>
               {form.uses_employee_agency === true && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   <div className="space-y-1">
-                    <Label htmlFor="agency_fee_per_employee">Agency Fee per Employee (₱)</Label>
+                    <Label htmlFor="agency_fee_per_employee">Agency Fee per Attendance Day (₱)</Label>
                     <Input id="agency_fee_per_employee" type="number" min="0" step="0.01" value={form.agency_fee_per_employee ?? ''} onChange={e => setForm({ ...form, agency_fee_per_employee: e.target.value })} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Agency Fee Frequency</Label>
-                    <Select value={form.agency_fee_frequency || 'PER_PAYROLL'} onValueChange={value => setForm({ ...form, agency_fee_frequency: value })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="PER_PAYROLL">Per Payroll</SelectItem><SelectItem value="MONTHLY">Monthly</SelectItem></SelectContent>
-                    </Select>
+                    <p className="text-xs text-muted-foreground">Full-day or half-day attendance: 100% of the daily fee · No attendance: no fee.</p>
                   </div>
                 </div>
               )}

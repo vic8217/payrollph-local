@@ -19,7 +19,6 @@
 
 /**
  * @typedef {object} EmployeePayrollInfo
- * @property {number=} agency_fee_percentage
  * @property {number=} daily_rate
  * @property {number=} monthly_rate
  * @property {string=} employment_type
@@ -768,7 +767,6 @@ export function computeWeeklyPayroll(
 	/** @type {HoursComputationOptions} */
 	options = {},
 ) {
-	const agencyFeePercentage = employee.agency_fee_percentage || 0;
 	const dailyRate = employee.daily_rate || 0;
 	const monthlyRate = employeeStatutoryBasePay(employee);
 	const hourlyRate = dailyRate / 8;
@@ -939,11 +937,9 @@ export function computeWeeklyPayroll(
 	const grossPay = basicPay + restDayPay + overtimePay + holidayPay + nightDiffPay;
 	const withholdingTax = 0;
 
-	// Compute agency fee (percentage of basic pay only for agency employees)
-	const agencyFee =
-		employee.employment_type === 'agency'
-			? parseFloat(((basicPay * agencyFeePercentage) / 100).toFixed(2))
-			: 0;
+	// Agency fees are employer expenses configured as a fixed amount on the
+	// company profile. They must never be deducted from employee pay.
+	const agencyFee = 0;
 
 	const totalDeductions =
 		weeklySSS +

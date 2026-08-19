@@ -19,7 +19,7 @@ function validateCompanyAgencySettings(data = {}) {
     error.statusCode = 400;
     throw error;
   }
-  return { ...data, agency_fee_per_employee: cents / 100, agency_fee_frequency: data.agency_fee_frequency === "MONTHLY" ? "MONTHLY" : "PER_PAYROLL" };
+  return { ...data, agency_fee_per_employee: cents / 100, agency_fee_frequency: "PER_DAY" };
 }
 
 function validateEmployeeClassifications(data = {}) {

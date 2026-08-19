@@ -232,7 +232,7 @@ export default function Employees() {
   const downloadTemplate = () => {
     const headers = [
       'employee_id', 'first_name', 'last_name', 'middle_name', 'email', 'phone',
-      'department', 'position', 'employment_type', 'agency_fee_percentage',
+      'department', 'position', 'employment_type', 'is_agency_employee',
       'date_hired', 'daily_rate', 'monthly_rate', 'work_schedule',
       'sss_number', 'philhealth_number', 'pagibig_number', 'tin_number',
       'bank_account', 'max_cash_advance', 'cash_advance_beginning_balance',
@@ -240,7 +240,7 @@ export default function Employees() {
     ];
     const example = [
       'EMP001', 'Juan', 'Dela Cruz', 'Santos', 'juan@example.com', '09123456789',
-      'Sales', 'Sales Manager', 'regular', '', '2024-01-15', '2500', '50000',
+      'Sales', 'Sales Manager', 'regular', 'false', '2024-01-15', '2500', '50000',
       'day_shift', '12-3456789-1', '11-123456789-1', '1234-1234-1234', '123-456-789-000',
       'ACC123456789', '10000', '5000', '1000', 'active'
     ];
@@ -295,7 +295,7 @@ export default function Employees() {
 
             emp.daily_rate = parseFloat(emp.daily_rate) || 0;
             emp.monthly_rate = parseFloat(emp.monthly_rate) || 0;
-            emp.agency_fee_percentage = emp.agency_fee_percentage ? parseFloat(emp.agency_fee_percentage) : undefined;
+            emp.is_agency_employee = ['true', '1', 'yes'].includes(String(emp.is_agency_employee || '').toLowerCase());
             if (emp.max_cash_advance === undefined || emp.max_cash_advance === '') {
               throw new Error(`Row ${i + 1}: max_cash_advance is required.`);
             }

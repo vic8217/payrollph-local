@@ -23,9 +23,24 @@ export function agencyFeeSummary(employees, feeValue) {
   return {
     employeeCount: qualified.length,
     feePerEmployee: centsToMoney(feeCents),
-    totalAgencyFee: centsToMoney(qualified.length * feeCents),
+    totalAgencyFee: centsToMoney(qualified.reduce((sum, employee) =>
+      sum + Math.round(Number(employee.agency_fee_amount ?? centsToMoney(feeCents)) * 100), 0)),
     employees: qualified,
   };
+}
+
+export function agencyFeeForAttendanceDays(feeValue, attendanceDays) {
+  const cents = moneyToCents(feeValue);
+  if (cents == null) return 0;
+  const days = Math.max(0, Math.floor(Number(attendanceDays) || 0));
+  return centsToMoney(cents * days);
+}
+
+export function countAgencyAttendanceDays(logs = []) {
+  return new Set(logs
+    .filter(log => log.status === 'approved' && Boolean(log.time_in) && !log.is_absent)
+    .map(log => String(log.date || '').trim())
+    .filter(Boolean)).size;
 }
 
 export function agencyFeeForPeriod(feeValue, frequency, periodEndDate) {
