@@ -116,32 +116,32 @@ export default function EmployeeProfile({ employee }) {
   };
 
   const { data: cashAdvances = [] } = useQuery({
-    queryKey: ['myCashAdvances', employee?.employee_id],
-    queryFn: () => appApi.entities.CashAdvance.filter({ employee_id: employee.employee_id }),
+    queryKey: ['myCashAdvances', employee?.company_profile_id, employee?.employee_id],
+    queryFn: () => appApi.entities.CashAdvance.filter({ company_profile_id: employee.company_profile_id, employee_id: employee.employee_id }),
     enabled: !!employee,
   });
 
   const { data: memos = [] } = useQuery({
-    queryKey: ['employeeMemos', employee?.employee_id],
-    queryFn: () => appApi.entities.EmployeeMemo.filter({ employee_id: employee.employee_id }),
+    queryKey: ['employeeMemos', employee?.company_profile_id, employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeeMemo.filter({ company_profile_id: employee.company_profile_id, employee_id: employee.employee_id }),
     enabled: !!employee,
   });
 
   const { data: suspensions = [] } = useQuery({
-    queryKey: ['employeeSuspensions', employee?.employee_id],
-    queryFn: () => appApi.entities.EmployeeSuspension.filter({ employee_id: employee.employee_id }),
+    queryKey: ['employeeSuspensions', employee?.company_profile_id, employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeeSuspension.filter({ company_profile_id: employee.company_profile_id, employee_id: employee.employee_id }),
     enabled: !!employee,
   });
 
   const { data: terminations = [] } = useQuery({
-    queryKey: ['employeeTerminations', employee?.employee_id],
-    queryFn: () => appApi.entities.EmployeeTermination.filter({ employee_id: employee.employee_id }),
+    queryKey: ['employeeTerminations', employee?.company_profile_id, employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeeTermination.filter({ company_profile_id: employee.company_profile_id, employee_id: employee.employee_id }),
     enabled: !!employee,
   });
 
   const { data: promissoryNotes = [] } = useQuery({
-    queryKey: ['employeePromissoryNotes', employee?.employee_id],
-    queryFn: () => appApi.entities.EmployeePromissoryNote.filter({ employee_id: employee.employee_id }),
+    queryKey: ['employeePromissoryNotes', employee?.company_profile_id, employee?.employee_id],
+    queryFn: () => appApi.entities.EmployeePromissoryNote.filter({ company_profile_id: employee.company_profile_id, employee_id: employee.employee_id }),
     enabled: !!employee,
   });
 
@@ -151,9 +151,9 @@ export default function EmployeeProfile({ employee }) {
       signed_date: new Date().toISOString().slice(0, 10),
     }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['employeeMemos', employee?.employee_id] });
-      qc.invalidateQueries({ queryKey: ['employeeSuspensions', employee?.employee_id] });
-      qc.invalidateQueries({ queryKey: ['employeePromissoryNotes', employee?.employee_id] });
+      qc.invalidateQueries({ queryKey: ['employeeMemos', employee?.company_profile_id, employee?.employee_id] });
+      qc.invalidateQueries({ queryKey: ['employeeSuspensions', employee?.company_profile_id, employee?.employee_id] });
+      qc.invalidateQueries({ queryKey: ['employeePromissoryNotes', employee?.company_profile_id, employee?.employee_id] });
     },
   });
 
@@ -173,7 +173,10 @@ export default function EmployeeProfile({ employee }) {
     setSignError('');
 
     try {
-      const res = await appApi.functions.invoke('lookupEmployee', { code: trimmed });
+      const res = await appApi.functions.invoke('lookupEmployee', {
+        code: trimmed,
+        company_profile_id: employee.company_profile_id,
+      });
       const scannedEmployee = res.employee;
       if (!scannedEmployee || normalizeQrValue(scannedEmployee.employee_id) !== normalizeQrValue(employee.employee_id)) {
         setSignError('QR code does not match this employee.');

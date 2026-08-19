@@ -288,7 +288,19 @@ export default function EmployeePortal() {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [syncMessage, setSyncMessage] = useState('');
   const [syncingAttendance, setSyncingAttendance] = useState(false);
-  const { activeCompanyId } = useCompany();
+  const { activeCompanyId, activeCompany } = useCompany();
+  const explicitPortalCompanyId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('company_profile_id') ||
+      new URLSearchParams(window.location.search).get('companyId')
+    : null;
+  const isCompanySubdomain = typeof window !== 'undefined' && Boolean(
+    activeCompany?.subdomain &&
+    window.location.hostname.toLowerCase().startsWith(`${String(activeCompany.subdomain).toLowerCase()}.`)
+  );
+  // A root-domain portal has no reliable company context. Do not scope employee
+  // lookup to CompanyContext's first-company fallback; after identity is found,
+  // all writes use the company_profile_id from the employee record itself.
+  const portalCompanyId = explicitPortalCompanyId || (isCompanySubdomain ? activeCompanyId : null);
 
   const refreshPendingSyncCount = () => {
     if (typeof window !== 'undefined') setPendingSyncCount(pendingAttendance(window.localStorage).length);
@@ -630,7 +642,7 @@ export default function EmployeePortal() {
             {(pendingSyncCount > 0 || syncMessage) && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><p>{pendingSyncCount > 0 ? `${pendingSyncCount} attendance attempt${pendingSyncCount === 1 ? '' : 's'} pending synchronization.` : syncMessage}</p>{pendingSyncCount > 0 && <Button type="button" variant="outline" size="sm" className="mt-2" disabled={syncingAttendance} onClick={() => void syncPendingAttendance()}>{syncingAttendance ? 'Synchronizing…' : 'Sync Now'}</Button>}</div>}
             <EmployeeQRGate
               key={scanKey}
-              companyProfileId={activeCompanyId}
+              companyProfileId={portalCompanyId}
               onEmployeeScanned={(employee) => {
                 appApi.functions.invoke('recordAttendanceAttempt', {
                   employee_id: employee.employee_id,
@@ -653,7 +665,7 @@ export default function EmployeePortal() {
         {showGate && (
           <PortalAccessGate
             key={`${activeTab}-${scanKey}`}
-            activeCompanyId={activeCompanyId}
+            activeCompanyId={portalCompanyId}
             tabId={activeTab}
             tabLabel={tabs.find(t => t.id === activeTab)?.label || 'Employee Portal'}
             onAuthorized={authorizePortalEmployee}

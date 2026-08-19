@@ -47,10 +47,10 @@ export default function EmployeePersonalLeave({ employee }) {
   const [reason, setReason] = useState('');
 
   const { data: leaves = [], isLoading } = useQuery({
-    queryKey: ['personalLeaves', employee?.employee_id],
+    queryKey: ['personalLeaves', employee?.company_profile_id, employee?.employee_id],
     queryFn: () =>
       appApi.entities.PersonalLeave.filter(
-        { employee_id: employee.employee_id },
+        { company_profile_id: employee.company_profile_id, employee_id: employee.employee_id },
         '-created_date',
         200
       ),
@@ -65,7 +65,7 @@ export default function EmployeePersonalLeave({ employee }) {
   const createMutation = useMutation({
     mutationFn: (payload) => appApi.entities.PersonalLeave.create(payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['personalLeaves', employee?.employee_id] });
+      qc.invalidateQueries({ queryKey: ['personalLeaves', employee?.company_profile_id, employee?.employee_id] });
       setReason('');
       setStartDate('');
       setEndDate('');

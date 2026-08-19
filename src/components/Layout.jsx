@@ -204,7 +204,9 @@ export default function Layout() {
 	          item.external ? (
 	            <a
 	              key={item.path}
-              href={item.path}
+              href={activeCompanyId
+                ? `${item.path}?company_profile_id=${encodeURIComponent(activeCompanyId)}`
+                : item.path}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setMobileOpen(false)}

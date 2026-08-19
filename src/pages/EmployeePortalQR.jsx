@@ -2,14 +2,18 @@ import { useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import { Download } from 'lucide-react';
+import { useCompany } from '@/lib/CompanyContext';
 
 export default function EmployeePortalQR() {
   const canvasRef = useRef(null);
+  const { activeCompanyId } = useCompany();
 
   useEffect(() => {
-    const portalUrl = `${window.location.origin}/employee-portal`;
+    if (!activeCompanyId) return;
+    const portalUrl = new URL('/employee-portal', window.location.origin);
+    portalUrl.searchParams.set('company_profile_id', activeCompanyId);
     
-    QRCode.toCanvas(canvasRef.current, portalUrl, {
+    QRCode.toCanvas(canvasRef.current, portalUrl.toString(), {
       width: 800,
       margin: 2,
       color: {
@@ -17,7 +21,7 @@ export default function EmployeePortalQR() {
         light: '#ffffff',
       },
     });
-  }, []);
+  }, [activeCompanyId]);
 
   const handleDownload = () => {
     const canvas = canvasRef.current;

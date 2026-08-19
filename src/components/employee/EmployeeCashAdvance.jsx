@@ -90,11 +90,16 @@ export default function EmployeeCashAdvance({ employee }) {
   const agreementPhotoVideoRef = useRef(null);
   const agreementPhotoStreamRef = useRef(null);
   const qc = useQueryClient();
-  const { activeCompany } = useCompany();
+  const { companies, activeCompany } = useCompany();
+  const employeeCompany = companies.find(company => String(company.id) === String(employee?.company_profile_id)) ||
+    (String(activeCompany?.id) === String(employee?.company_profile_id) ? activeCompany : null);
 
   const { data: rawAdvances = [], isLoading } = useQuery({
-    queryKey: ['myCashAdvances', employee?.employee_id],
-    queryFn: () => appApi.entities.CashAdvance.filter({ employee_id: employee.employee_id }),
+    queryKey: ['myCashAdvances', employee?.company_profile_id, employee?.employee_id],
+    queryFn: () => appApi.entities.CashAdvance.filter({
+      company_profile_id: employee.company_profile_id,
+      employee_id: employee.employee_id,
+    }),
     enabled: !!employee,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
@@ -102,8 +107,11 @@ export default function EmployeeCashAdvance({ employee }) {
   });
 
   const { data: ledgerRows = [] } = useQuery({
-    queryKey: ['cashAdvanceLedger', employee?.employee_id],
-    queryFn: () => appApi.entities.CashAdvanceLedger.filter({ employee_id: employee.employee_id }, 'transaction_date', 1000),
+    queryKey: ['cashAdvanceLedger', employee?.company_profile_id, employee?.employee_id],
+    queryFn: () => appApi.entities.CashAdvanceLedger.filter({
+      company_profile_id: employee.company_profile_id,
+      employee_id: employee.employee_id,
+    }, 'transaction_date', 1000),
     enabled: !!employee,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
@@ -138,13 +146,13 @@ export default function EmployeeCashAdvance({ employee }) {
         : ensureCashAdvanceAdditionLedger(ca)
       )
     ).then(() => {
-      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger', employee?.employee_id] });
+      qc.invalidateQueries({ queryKey: ['cashAdvanceLedger', employee?.company_profile_id, employee?.employee_id] });
     }).catch(() => {});
   }, [rawAdvances, employee?.employee_id, qc]);
 
   // Current payroll period follows the employee's active company settings.
   const today = new Date();
-  const currentPayrollPeriod = getPayrollPeriodForDate(today, activeCompany);
+  const currentPayrollPeriod = getPayrollPeriodForDate(today, employeeCompany);
   const periodStart = currentPayrollPeriod.start_date;
   const periodEnd = currentPayrollPeriod.end_date;
 
