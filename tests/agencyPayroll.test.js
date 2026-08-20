@@ -25,6 +25,16 @@ test('agency fees charge the full daily amount for both full and half days', () 
   assert.equal(agencyFeeForAttendanceDays('150', 0), 0);
 });
 
+test('approved attendance dates are unique, and non-payroll attendance is ignored', () => {
+  assert.equal(countAgencyAttendanceDays([
+    { date: '2026-08-18', status: 'approved', time_in: '2026-08-18T00:00:00Z' },
+    { date: '2026-08-18', status: 'approved', time_in: '2026-08-18T00:05:00Z' },
+    { date: '2026-08-19', status: 'pending', time_in: '2026-08-19T00:00:00Z' },
+    { date: '2026-08-20', status: 'approved', is_absent: true, time_in: '2026-08-20T00:00:00Z' },
+  ]), 1);
+  assert.equal(agencyFeeForAttendanceDays('16.50', 1), 16.5);
+});
+
 test('allocation reconciles ATM, non-ATM, and unassigned net payroll', () => {
   const result = payrollAllocation([
     { payroll_method_at_payroll: 'ATM', net_pay: 10000 },

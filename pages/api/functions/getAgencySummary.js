@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
-import { listRecords, updateRecord } from '@/server/entityStore';
+import { listRecords } from '@/server/entityStore';
 import { agencyFeeForAttendanceDays, agencyFeeSummary, normalizePayrollMethod } from '@/lib/agencyPayroll';
 
 function attendanceDaysForEmployee(logs, employee) {
@@ -54,30 +54,13 @@ export default async function handler(req, res) {
         };
       });
   const expectedEligible = periodAgencyEmployees.filter(employee => employee.agency_fee_attendance_days > 0);
-  const recordByEmployee = new Map(records.map(record => [String(record.employee_id || '').trim().toLowerCase(), record]));
-  const synchronizedIds = new Set();
-  if (!finalized) {
-    for (const employee of expectedEligible) {
-      const record = recordByEmployee.get(String(employee.employee_id || '').trim().toLowerCase());
-      if (!record || !['draft', 'processing', 'open', ''].includes(String(record.status || '').toLowerCase())) continue;
-      if (record.is_agency_employee_at_payroll !== true || Number(record.agency_fee_attendance_days || 0) !== employee.agency_fee_attendance_days) {
-        await updateRecord('PayrollRecord', record.id, {
-          is_agency_employee_at_payroll: true,
-          agency_fee_attendance_days: employee.agency_fee_attendance_days,
-          agency_fee_amount: employee.agency_fee_amount,
-          agency_fee_per_employee_at_payroll: dailyFee,
-        });
-      }
-      synchronizedIds.add(String(employee.employee_id || '').trim().toLowerCase());
-    }
-  }
   const eligible = finalized
     ? records.filter(record => record.is_agency_employee_at_payroll === true).map(record => ({
       id: record.employee_record_id || record.employee_id, employee_id: record.employee_id, first_name: record.employee_name,
       department: record.department, is_agency_employee: true, payroll_disbursement_method: record.payroll_method_at_payroll,
       agency_fee_amount: record.agency_fee_amount, agency_fee_attendance_days: record.agency_fee_attendance_days,
     }))
-    : expectedEligible.filter(employee => synchronizedIds.has(String(employee.employee_id || '').trim().toLowerCase()));
+    : expectedEligible;
   const summary = agencyFeeSummary(eligible, String(dailyFee));
   const employeeKey = employee => String(employee.employee_id || '').trim().toLowerCase();
   const includedEmployeeIds = new Set(summary.employees.map(employeeKey));
@@ -100,7 +83,7 @@ export default async function handler(req, res) {
         reason: attendanceDays > 0
           ? finalized
             ? 'Historical payroll snapshot is not Agency'
-            : 'No draft/open payroll record to synchronize'
+            : 'Unresolved eligibility mismatch'
           : employee.date_hired && period?.start_date && employee.date_hired > period.end_date
             ? 'Hired after this payroll period'
             : (employee.termination_date || employee.resigned_date) && period?.end_date && (employee.termination_date || employee.resigned_date) < period.start_date
@@ -118,6 +101,8 @@ export default async function handler(req, res) {
       agencyCandidateCount: agencyCandidates.length,
       currentIncludedCount: currentIncludedEmployees.length,
       snapshotOnlyCount: snapshotOnlyEmployees.length,
+      payrollSnapshotCount: records.length,
+      payrollSnapshotAgencyCount: records.filter(record => record.is_agency_employee_at_payroll === true).length,
       excludedEmployees,
     },
     employees: summary.employees.map(employee => ({ ...employee, payrollMethod: normalizePayrollMethod(employee.payroll_disbursement_method) })),
