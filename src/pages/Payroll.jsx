@@ -458,6 +458,7 @@ export default function Payroll() {
     enabled: !!selectedPeriod && !!activeCompanyId,
   });
   const periodAttendanceLogs = /** @type {AttendanceLogEntity[]} */ (periodAttendanceLogsQuery.data || []);
+  const pendingPeriodAttendanceLogs = periodAttendanceLogs.filter(log => log.status === 'pending');
 
   const approvePeriod = useMutation({
     /** @param {{ id: string | number, status: string }} args */
@@ -1716,6 +1717,11 @@ export default function Payroll() {
                   <p className="text-sm text-muted-foreground">
                     {eligibleRecords.length} employees · Gross ₱{selectedPeriodGross.toLocaleString()} · Net ₱{selectedPeriodNet.toLocaleString()}
                   </p>
+                  {pendingPeriodAttendanceLogs.length > 0 && (
+                    <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                      Approval blocked: {pendingPeriodAttendanceLogs.length} attendance record{pendingPeriodAttendanceLogs.length === 1 ? '' : 's'} still pending for this payroll period. Review and approve or reject them in Attendance, including records for employees who are now inactive.
+                    </p>
+                  )}
                   {hiddenOrphanRecordCount > 0 && (
                     <p className="mt-1 text-xs text-amber-700">
                       {hiddenOrphanRecordCount} saved payroll record{hiddenOrphanRecordCount === 1 ? '' : 's'} hidden because the employee is no longer in this company employee list.
@@ -1734,7 +1740,7 @@ export default function Payroll() {
                 </div>
                 <div className="flex gap-2">
                   {selectedPeriod.status === 'processing' && (() => {
-                    const hasPendingAny = periodAttendanceLogs.some(l => l.status === 'pending');
+                    const hasPendingAny = pendingPeriodAttendanceLogs.length > 0;
                     return (
                       <Button
                         size="sm"
