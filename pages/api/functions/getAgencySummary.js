@@ -66,9 +66,10 @@ export default async function handler(req, res) {
       });
   const summary = agencyFeeSummary(eligible, String(dailyFee));
   const includedEmployeeIds = new Set(summary.employees.map(employee => String(employee.employee_id || '').trim().toLowerCase()));
-  const agencyCandidates = employees.filter(employee => employee.is_agency_employee === true &&
-    (!period?.start_date || !employee.date_hired || employee.date_hired <= period.end_date) &&
-    (!employee.termination_date || employee.termination_date >= period.start_date));
+  // Reconcile against the complete current Agency roster. Employees outside
+  // the selected payroll period remain visible as exclusions, rather than
+  // disappearing from the reconciliation total.
+  const agencyCandidates = employees.filter(employee => employee.is_agency_employee === true);
   const excludedEmployees = agencyCandidates
     .filter(employee => !includedEmployeeIds.has(String(employee.employee_id || '').trim().toLowerCase()))
     .map(employee => {
@@ -79,7 +80,13 @@ export default async function handler(req, res) {
         employee_name: [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' '),
         department: employee.department,
         attendance_days: attendanceDays,
-        reason: attendanceDays > 0 ? 'Not included in the agency fee computation' : 'No approved attendance in this payroll period',
+        reason: attendanceDays > 0
+          ? 'Not included in the agency fee computation'
+          : employee.date_hired && period?.start_date && employee.date_hired > period.end_date
+            ? 'Hired after this payroll period'
+            : employee.termination_date && period?.end_date && employee.termination_date < period.start_date
+              ? 'Inactive before this payroll period'
+              : 'No approved attendance in this payroll period',
       };
     });
   return res.status(200).json({
