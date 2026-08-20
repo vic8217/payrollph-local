@@ -66,12 +66,10 @@ export default async function handler(req, res) {
       });
   const summary = agencyFeeSummary(eligible, String(dailyFee));
   const includedEmployeeIds = new Set(summary.employees.map(employee => String(employee.employee_id || '').trim().toLowerCase()));
-  // Reconcile against employees who were active during the selected period,
-  // regardless of whether they were made inactive or resigned later.
+  // Reconcile against the complete current Agency roster shown on Employees.
+  // The period-specific reason explains why a roster member was not charged.
   const agencyCandidates = employees.filter(employee =>
-    employee.is_agency_employee === true &&
-    (!period?.start_date || !employee.date_hired || employee.date_hired <= period.end_date) &&
-    (!(employee.termination_date || employee.resigned_date) || (employee.termination_date || employee.resigned_date) >= period.start_date)
+    employee.status === 'active' && employee.is_agency_employee === true
   );
   const excludedEmployees = agencyCandidates
     .filter(employee => !includedEmployeeIds.has(String(employee.employee_id || '').trim().toLowerCase()))
