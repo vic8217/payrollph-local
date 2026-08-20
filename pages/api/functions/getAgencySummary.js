@@ -42,9 +42,10 @@ export default async function handler(req, res) {
     })
     : [];
   const dailyFee = Number(company.agency_fee_per_employee || 0);
-  const periodAgencyEmployees = employees.filter(employee => employee.status === 'active' && isAgencyEmployee(employee.is_agency_employee) &&
-      (!period?.start_date || !employee.date_hired || employee.date_hired <= period.end_date) &&
-      (!(employee.termination_date || employee.resigned_date) || (employee.termination_date || employee.resigned_date) >= period.start_date))
+  // Agency fees are earned from recorded approved attendance. Do not remove a
+  // worker from the fee population merely because current status or employment
+  // dates changed after the attendance was recorded.
+  const periodAgencyEmployees = employees.filter(employee => isAgencyEmployee(employee.is_agency_employee))
       .map(employee => {
         const attendanceDays = attendanceDaysForEmployee(attendanceLogs, employee);
         return {
@@ -84,11 +85,7 @@ export default async function handler(req, res) {
           ? finalized
             ? 'Historical payroll snapshot is not Agency'
             : 'Unresolved eligibility mismatch'
-          : employee.date_hired && period?.start_date && employee.date_hired > period.end_date
-            ? 'Hired after this payroll period'
-            : (employee.termination_date || employee.resigned_date) && period?.end_date && (employee.termination_date || employee.resigned_date) < period.start_date
-              ? 'Inactive before this payroll period'
-              : 'No approved attendance in this payroll period',
+          : 'No approved attendance in this payroll period',
       };
     });
   return res.status(200).json({

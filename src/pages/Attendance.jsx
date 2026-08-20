@@ -2611,13 +2611,12 @@ export default function Attendance() {
         overtimeHours: 0,
         nightDiffHours: 0,
       });
-      const employmentEndDate = employee.termination_date || employee.resigned_date;
-      const employedOnSummaryDate =
-        (!employee.date_hired || employee.date_hired <= summaryDate) &&
-        (!employmentEndDate || employmentEndDate >= summaryDate);
       const hasCompleteAttendance = metrics.completed && !primaryLog?.is_absent &&
         !punchIssues.some(issue => issue.startsWith('Missing') || issue === 'No attendance log');
-      const agencyFeeEligible = isAgencyEmployee(employee.is_agency_employee) && employedOnSummaryDate && hasCompleteAttendance;
+      // Agency fee eligibility is intentionally attendance-based: an Agency
+      // employee with a complete attendance record is chargeable for that day.
+      // Do not exclude a recorded workday based on hire/resignation metadata.
+      const agencyFeeEligible = isAgencyEmployee(employee.is_agency_employee) && hasCompleteAttendance;
       const agencyFee = agencyFeeEligible
         ? Number(activeCompany?.agency_fee_per_employee || 0)
         : 0;
@@ -2625,9 +2624,7 @@ export default function Attendance() {
         ? ''
         : !isAgencyEmployee(employee.is_agency_employee)
           ? 'Not marked as an Agency employee in the saved profile'
-          : !employedOnSummaryDate
-            ? 'Outside this employee’s employment dates'
-            : 'Attendance is not complete';
+          : 'Attendance is not complete';
 
       return {
         employee,
