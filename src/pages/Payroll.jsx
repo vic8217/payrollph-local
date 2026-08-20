@@ -381,6 +381,7 @@ export default function Payroll() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState(/** @type {PayrollEntity | null} */ (null));
   const [selectedRecord, setSelectedRecord] = useState(/** @type {PayrollEntity | null} */ (null));
+  const [showUnassignedEmployees, setShowUnassignedEmployees] = useState(false);
   const [reviewRecord, setReviewRecord] = useState(/** @type {PayrollEntity | null} */ (null));
   const [governmentDeductionRecord, setGovernmentDeductionRecord] = useState(/** @type {PayrollEntity | null} */ (null));
   const [governmentDeductionForm, setGovernmentDeductionForm] = useState({ sss: '', philhealth: '', pagibig: '', hrPasscode: '', adminPasscode: '' });
@@ -1259,6 +1260,7 @@ export default function Payroll() {
   const selectedPeriodGross = eligibleRecords.length ? payrollRecordTotals.gross : (selectedPeriod?.total_gross || 0);
   const selectedPeriodNet = eligibleRecords.length ? payrollRecordTotals.net : (selectedPeriod?.total_net || 0);
   const allocation = allocationQuery.data || payrollAllocation(eligibleRecords);
+  const unassignedRecords = eligibleRecords.filter(record => normalizePayrollMethod(record.payroll_method_at_payroll) === 'UNASSIGNED');
   const canSuspendCashAdvanceDeduction = user?.role === 'super_admin' && selectedPeriod && selectedPeriod.status !== 'released';
   const canSuspendCashAdvancePeriodDeduction = user?.role === 'super_admin';
 
@@ -1760,7 +1762,7 @@ export default function Payroll() {
                   {[['ATM', allocation.groups.ATM], ['Non-ATM', allocation.groups.NON_ATM], ['Unassigned', allocation.groups.UNASSIGNED]].map(([label, group]) => <div key={label} className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="text-lg font-bold">₱{group.netPayroll.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p><p className="text-xs">{group.employeeCount} employees</p></div>)}
                   <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Total Net Payroll</p><p className="text-lg font-bold">₱{allocation.totalNetPayroll.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p></div>
                 </div>
-                {allocation.groups.UNASSIGNED.employeeCount > 0 && <p className="mx-4 mb-4 rounded-md bg-amber-50 p-3 text-xs font-medium text-amber-800">{allocation.groups.UNASSIGNED.employeeCount} employee(s) need payroll method assignment. Their net pay remains included under Unassigned.</p>}
+                {allocation.groups.UNASSIGNED.employeeCount > 0 && <div className="mx-4 mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md bg-amber-50 p-3 text-xs font-medium text-amber-800"><span>{allocation.groups.UNASSIGNED.employeeCount} employee(s) need payroll method assignment. Their net pay remains included under Unassigned.</span><Button type="button" size="sm" variant="outline" className="h-7 border-amber-300 bg-white text-amber-900" onClick={() => setShowUnassignedEmployees(true)}>View employees</Button></div>}
                 <div className="grid gap-4 border-t p-4 lg:grid-cols-2">
                   <div><p className="mb-2 text-sm font-semibold">Government Contributions</p><table className="w-full text-xs"><thead><tr><th className="text-left">Contribution</th><th className="text-right">Employee</th><th className="text-right">Employer</th></tr></thead><tbody>{[['SSS', allocation.contributions.sssEmployee, allocation.contributions.sssEmployer], ['PhilHealth', allocation.contributions.philhealthEmployee, allocation.contributions.philhealthEmployer], ['Pag-IBIG', allocation.contributions.pagibigEmployee, allocation.contributions.pagibigEmployer]].map(([label, employee, employer]) => <tr key={label}><td className="py-1">{label}</td><td className="text-right">₱{employee.toLocaleString()}</td><td className="text-right">₱{employer.toLocaleString()}</td></tr>)}</tbody><tfoot><tr className="border-t font-semibold"><td className="pt-2">Total Remittance</td><td className="pt-2 text-right" colSpan={2}>₱{allocation.totalGovernmentRemittance.toLocaleString()}</td></tr></tfoot></table></div>
                   <div className="space-y-2"><p className="text-sm font-semibold">Employer Obligations</p><div className="flex justify-between text-xs"><span>Employer government share</span><span>₱{allocation.totalEmployerContribution.toLocaleString()}</span></div>{activeCompany?.uses_employee_agency && <div className="flex justify-between text-xs"><span>Agency fees</span><span>₱{allocation.agencyFees.toLocaleString()}</span></div>}<div className="flex justify-between border-t pt-2 font-semibold"><span>Total funding requirement</span><span>₱{allocation.totalEmployerFundingRequirement.toLocaleString()}</span></div><p className="text-[11px] text-muted-foreground">Net payroll, employer government share, and agency fees are shown separately to avoid double-counting employee deductions.</p></div>
@@ -1910,6 +1912,18 @@ export default function Payroll() {
             </div>
           )}
       </div>
+
+      <Dialog open={showUnassignedEmployees} onOpenChange={setShowUnassignedEmployees}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader><DialogTitle>Unassigned payroll employees</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">These employees are included in this payroll but have no ATM or Non-ATM payroll method assigned.</p>
+          <div className="max-h-80 overflow-auto rounded-md border">
+            <table className="w-full text-sm"><thead className="bg-muted/50"><tr><th className="px-3 py-2 text-left">Employee</th><th className="px-3 py-2 text-left">Employee No.</th><th className="px-3 py-2 text-left">Department</th></tr></thead><tbody>
+              {unassignedRecords.map(record => <tr key={record.id} className="border-t"><td className="px-3 py-2">{record.employee_name || `${record.first_name || ''} ${record.last_name || ''}`.trim() || 'Unknown'}</td><td className="px-3 py-2">{record.employee_id || '—'}</td><td className="px-3 py-2">{record.department || '—'}</td></tr>)}
+            </tbody></table>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Payslip Dialog */}
       <Dialog open={generationReviewOpen} onOpenChange={open => { setGenerationReviewOpen(open); if (!open) setGenerationReviewConfirmed(false); }}>

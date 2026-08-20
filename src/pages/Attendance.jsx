@@ -1874,9 +1874,6 @@ export default function Attendance() {
         : 0,
     };
   });
-  const visiblePendingOvertimeRows = openOtDate
-    ? pendingOvertimeRows.filter(row => row.request.date === openOtDate)
-    : pendingOvertimeRows;
   const selectedEmployeeOvertimeRequests = selectedEmployee
     ? overtimeRequests.filter(request =>
       String(request.employee_record_id || '') === String(selectedEmployee.id || '') ||
@@ -2487,6 +2484,17 @@ export default function Attendance() {
   }
 
   const activePeriod = selectedPeriod === 'all' ? null : displayedPayrollPeriods.find(p => p.id === selectedPeriod);
+  useEffect(() => {
+    if (activePeriod) {
+      setSummaryDate(activePeriod.start_date);
+      setOpenOtDate('');
+    }
+  }, [activePeriod?.id]);
+  const visiblePendingOvertimeRows = openOtDate
+    ? pendingOvertimeRows.filter(row => row.request.date === openOtDate)
+    : activePeriod
+      ? pendingOvertimeRows.filter(row => row.request.date >= activePeriod.start_date && row.request.date <= activePeriod.end_date)
+      : pendingOvertimeRows;
   const openOtCountPeriod = activePeriod || {
     period_name: `Payroll Period: ${activePeriodConfig.label}`,
     start_date: startStr,
