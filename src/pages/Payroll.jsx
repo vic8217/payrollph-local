@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
 import { computePagIbig, computePhilHealth, computeSSS, computeWeeklyPayroll } from '@/lib/payrollUtils';
-import { agencyFeeForAttendanceDays, countAgencyAttendanceDays, normalizePayrollMethod, payrollAllocation } from '@/lib/agencyPayroll';
+import { agencyFeeForAttendanceDays, countAgencyAttendanceDays, isAgencyEmployee, normalizePayrollMethod, payrollAllocation } from '@/lib/agencyPayroll';
 import { getPayrollPeriodForDate, getPayrollPeriodName, normalizePayrollStartDay } from '@/lib/payrollPeriod';
 import { createCashAdvanceDeductionLedger } from '@/lib/cashAdvanceLedger';
 import { capCashAdvanceDeductions } from '@/lib/cashAdvanceDeduction';
@@ -1094,7 +1094,7 @@ export default function Payroll() {
       const philhealthShares = computePhilHealth(Number(computedWithIncentives.statutory_base_pay) || Number(emp.monthly_rate) || 0);
       const pagibigShares = computePagIbig(Number(computedWithIncentives.statutory_base_pay) || Number(emp.monthly_rate) || 0);
       const agencyAttendanceDays = countAgencyAttendanceDays(empLogs);
-      const agencyFeeAtPayroll = activeCompany?.uses_employee_agency === true && emp.is_agency_employee === true
+      const agencyFeeAtPayroll = activeCompany?.uses_employee_agency === true && isAgencyEmployee(emp.is_agency_employee)
         ? agencyFeeForAttendanceDays(activeCompany.agency_fee_per_employee || 0, agencyAttendanceDays)
         : 0;
 
@@ -1104,6 +1104,10 @@ export default function Payroll() {
         : period.status === 'approved'
           ? 'approved'
           : 'draft';
+      // A missing record is a fresh generation, not a finalized snapshot.
+      // Optional chaining alone is insufficient here because
+      // `undefined !== 'draft'` is true.
+      const preserveFinalizedSnapshot = Boolean(existingRecord && existingRecord.status !== 'draft');
       const recordData = {
         payroll_period_id: period.id,
         period_name: periodName,
@@ -1111,12 +1115,12 @@ export default function Payroll() {
         employee_name: `${emp.first_name} ${emp.last_name}`,
         department: emp.department,
         employee_record_id: emp.id,
-        payroll_method_at_payroll: existingRecord?.status !== 'draft' ? normalizePayrollMethod(existingRecord.payroll_method_at_payroll) : normalizePayrollMethod(emp.payroll_disbursement_method),
-        is_agency_employee_at_payroll: existingRecord?.status !== 'draft' ? existingRecord.is_agency_employee_at_payroll === true : emp.is_agency_employee === true,
-        agency_fee_per_employee_at_payroll: existingRecord?.status !== 'draft' ? Number(existingRecord.agency_fee_per_employee_at_payroll || 0) : Number(activeCompany?.agency_fee_per_employee || 0),
-        agency_fee_frequency_at_payroll: existingRecord?.status !== 'draft' ? existingRecord.agency_fee_frequency_at_payroll : activeCompany?.agency_fee_frequency || 'PER_PAYROLL',
-        agency_fee_amount: existingRecord?.status !== 'draft' ? Number(existingRecord.agency_fee_amount || 0) : agencyFeeAtPayroll,
-        agency_fee_attendance_days: existingRecord?.status !== 'draft' ? Number(existingRecord.agency_fee_attendance_days || 0) : agencyAttendanceDays,
+        payroll_method_at_payroll: preserveFinalizedSnapshot ? normalizePayrollMethod(existingRecord.payroll_method_at_payroll) : normalizePayrollMethod(emp.payroll_disbursement_method),
+        is_agency_employee_at_payroll: preserveFinalizedSnapshot ? isAgencyEmployee(existingRecord.is_agency_employee_at_payroll) : isAgencyEmployee(emp.is_agency_employee),
+        agency_fee_per_employee_at_payroll: preserveFinalizedSnapshot ? Number(existingRecord.agency_fee_per_employee_at_payroll || 0) : Number(activeCompany?.agency_fee_per_employee || 0),
+        agency_fee_frequency_at_payroll: preserveFinalizedSnapshot ? existingRecord.agency_fee_frequency_at_payroll : activeCompany?.agency_fee_frequency || 'PER_PAYROLL',
+        agency_fee_amount: preserveFinalizedSnapshot ? Number(existingRecord.agency_fee_amount || 0) : agencyFeeAtPayroll,
+        agency_fee_attendance_days: preserveFinalizedSnapshot ? Number(existingRecord.agency_fee_attendance_days || 0) : agencyAttendanceDays,
         sss_employer_contribution: money((Number(sssShares.employer) || 0) / 4.33),
         philhealth_employer_contribution: money((Number(philhealthShares.employer) || 0) / 4.33),
         pagibig_employer_contribution: money((Number(pagibigShares.employer) || 0) / 4.33),

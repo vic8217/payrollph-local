@@ -2,7 +2,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { listRecords } from '@/server/entityStore';
-import { agencyFeeForAttendanceDays, agencyFeeSummary, normalizePayrollMethod } from '@/lib/agencyPayroll';
+import { agencyFeeForAttendanceDays, agencyFeeSummary, isAgencyEmployee, normalizePayrollMethod } from '@/lib/agencyPayroll';
 
 function attendanceDaysForEmployee(logs, employee) {
   const employeeId = String(employee.employee_id || '').trim().toLowerCase();
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
     })
     : [];
   const dailyFee = Number(company.agency_fee_per_employee || 0);
-  const periodAgencyEmployees = employees.filter(employee => employee.status === 'active' && employee.is_agency_employee === true &&
+  const periodAgencyEmployees = employees.filter(employee => employee.status === 'active' && isAgencyEmployee(employee.is_agency_employee) &&
       (!period?.start_date || !employee.date_hired || employee.date_hired <= period.end_date) &&
       (!(employee.termination_date || employee.resigned_date) || (employee.termination_date || employee.resigned_date) >= period.start_date))
       .map(employee => {
@@ -55,7 +55,7 @@ export default async function handler(req, res) {
       });
   const expectedEligible = periodAgencyEmployees.filter(employee => employee.agency_fee_attendance_days > 0);
   const eligible = finalized
-    ? records.filter(record => record.is_agency_employee_at_payroll === true).map(record => ({
+    ? records.filter(record => isAgencyEmployee(record.is_agency_employee_at_payroll)).map(record => ({
       id: record.employee_record_id || record.employee_id, employee_id: record.employee_id, first_name: record.employee_name,
       department: record.department, is_agency_employee: true, payroll_disbursement_method: record.payroll_method_at_payroll,
       agency_fee_amount: record.agency_fee_amount, agency_fee_attendance_days: record.agency_fee_attendance_days,
@@ -102,7 +102,7 @@ export default async function handler(req, res) {
       currentIncludedCount: currentIncludedEmployees.length,
       snapshotOnlyCount: snapshotOnlyEmployees.length,
       payrollSnapshotCount: records.length,
-      payrollSnapshotAgencyCount: records.filter(record => record.is_agency_employee_at_payroll === true).length,
+      payrollSnapshotAgencyCount: records.filter(record => isAgencyEmployee(record.is_agency_employee_at_payroll)).length,
       excludedEmployees,
     },
     employees: summary.employees.map(employee => ({ ...employee, payrollMethod: normalizePayrollMethod(employee.payroll_disbursement_method) })),

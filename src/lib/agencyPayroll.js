@@ -1,5 +1,11 @@
 export const PAYROLL_METHODS = ['ATM', 'NON_ATM', 'UNASSIGNED'];
 
+// Older employee imports may have stored this boolean as a string or number.
+// Keep every Agency calculation on the same, explicit interpretation.
+export function isAgencyEmployee(value) {
+  return value === true || value === 1 || ['true', '1', 'yes'].includes(String(value ?? '').trim().toLowerCase());
+}
+
 export function normalizePayrollMethod(value) {
   const normalized = String(value || '').toUpperCase().replace('-', '_');
   return PAYROLL_METHODS.includes(normalized) ? normalized : 'UNASSIGNED';
@@ -19,7 +25,7 @@ export function centsToMoney(cents) {
 export function agencyFeeSummary(employees, feeValue) {
   const feeCents = moneyToCents(feeValue);
   if (feeCents == null) throw new Error('Agency fee must be a valid non-negative amount with no more than two decimal places.');
-  const qualified = employees.filter(employee => employee.is_agency_employee === true);
+  const qualified = employees.filter(employee => isAgencyEmployee(employee.is_agency_employee));
   return {
     employeeCount: qualified.length,
     feePerEmployee: centsToMoney(feeCents),

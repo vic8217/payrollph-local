@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import { createRecord, listRecords, updateRecord } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
+import { isAgencyEmployee } from "@/lib/agencyPayroll";
 
 const EDITABLE_FIELDS = [
   "first_name",
@@ -101,6 +102,9 @@ export default async function handler(req, res) {
   EDITABLE_FIELDS.forEach(field => {
     if (Object.prototype.hasOwnProperty.call(submitted, field)) updates[field] = submitted[field];
   });
+  if (Object.prototype.hasOwnProperty.call(updates, "is_agency_employee")) {
+    updates.is_agency_employee = isAgencyEmployee(updates.is_agency_employee);
+  }
 
   const changedFields = EDITABLE_FIELDS.filter(field =>
     Object.prototype.hasOwnProperty.call(updates, field) &&

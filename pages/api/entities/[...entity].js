@@ -9,7 +9,7 @@ import {
   updateRecord,
 } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
-import { moneyToCents, normalizePayrollMethod } from "@/lib/agencyPayroll";
+import { isAgencyEmployee, moneyToCents, normalizePayrollMethod } from "@/lib/agencyPayroll";
 
 function validateCompanyAgencySettings(data = {}) {
   if (data.uses_employee_agency !== true) return data;
@@ -28,7 +28,7 @@ function validateEmployeeClassifications(data = {}) {
     result.payroll_disbursement_method = normalizePayrollMethod(result.payroll_disbursement_method);
   }
   if (Object.prototype.hasOwnProperty.call(result, "is_agency_employee")) {
-    result.is_agency_employee = result.is_agency_employee === true;
+    result.is_agency_employee = isAgencyEmployee(result.is_agency_employee);
   }
   return result;
 }

@@ -24,6 +24,7 @@ import {
   manilaDateString,
 } from '@/lib/dateUtils';
 import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot, sortedShiftAssignments } from '@/lib/shiftSettings';
+import { isAgencyEmployee } from '@/lib/agencyPayroll';
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert, QrCode, ScanFace, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -2616,9 +2617,17 @@ export default function Attendance() {
         (!employmentEndDate || employmentEndDate >= summaryDate);
       const hasCompleteAttendance = metrics.completed && !primaryLog?.is_absent &&
         !punchIssues.some(issue => issue.startsWith('Missing') || issue === 'No attendance log');
-      const agencyFee = employee.is_agency_employee === true && employedOnSummaryDate && hasCompleteAttendance
+      const agencyFeeEligible = isAgencyEmployee(employee.is_agency_employee) && employedOnSummaryDate && hasCompleteAttendance;
+      const agencyFee = agencyFeeEligible
         ? Number(activeCompany?.agency_fee_per_employee || 0)
         : 0;
+      const agencyFeeReason = agencyFeeEligible
+        ? ''
+        : !isAgencyEmployee(employee.is_agency_employee)
+          ? 'Not marked as an Agency employee in the saved profile'
+          : !employedOnSummaryDate
+            ? 'Outside this employee’s employment dates'
+            : 'Attendance is not complete';
 
       return {
         employee,
@@ -2629,6 +2638,7 @@ export default function Attendance() {
         needsPunchReview: punchIssues.length > 0,
         expectsBreakPunches,
         agencyFee,
+        agencyFeeReason,
       };
     })
     .sort((a, b) => {
@@ -3112,7 +3122,7 @@ export default function Attendance() {
                           </td>
                           <td className="px-4 py-2 text-right">{formatHours(row.hours)}</td>
                           <td className="px-4 py-2 text-right text-blue-700">{formatHours(row.overtimeHours)}</td>
-                          <td className="px-4 py-2 text-right text-amber-700">{row.agencyFee > 0 ? `₱${row.agencyFee.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</td>
+                          <td className="px-4 py-2 text-right text-amber-700" title={row.agencyFeeReason}>{row.agencyFee > 0 ? `₱${row.agencyFee.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : <span className="text-xs text-muted-foreground">{row.agencyFeeReason}</span>}</td>
                           <td className="px-4 py-2">
                             {row.needsPunchReview ? (
                               <div className="flex flex-wrap gap-1">
