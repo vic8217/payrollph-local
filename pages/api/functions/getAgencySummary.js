@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
-import { listRecords } from '@/server/entityStore';
+import { listRecords, updateRecord } from '@/server/entityStore';
 import { agencyFeeForAttendanceDays, agencyFeeSummary, normalizePayrollMethod } from '@/lib/agencyPayroll';
 
 function attendanceDaysForEmployee(logs, employee) {
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     periodId ? listRecords('PayrollRecord', { filter: { company_profile_id: companyId, payroll_period_id: periodId }, limit: 5000 }) : [],
   ]);
   const period = periods.find(item => String(item.id) === periodId) || periods[0] || null;
-  const finalized = ['approved', 'released'].includes(period?.status) && records.length > 0;
+  const finalized = ['approved', 'released'].includes(period?.status);
   const attendanceLogs = period?.start_date && period?.end_date
     ? await listRecords('AttendanceLog', {
       filter: { company_profile_id: companyId, date: { $gte: period.start_date, $lte: period.end_date } },
@@ -42,9 +42,7 @@ export default async function handler(req, res) {
     })
     : [];
   const dailyFee = Number(company.agency_fee_per_employee || 0);
-  // Agency fees are driven by approved attendance. Do not let an older payroll
-  // snapshot omit an Agency employee who actually worked in this cutoff.
-  const eligible = employees.filter(employee => employee.is_agency_employee === true &&
+  const periodAgencyEmployees = employees.filter(employee => employee.status === 'active' && employee.is_agency_employee === true &&
       (!period?.start_date || !employee.date_hired || employee.date_hired <= period.end_date) &&
       (!(employee.termination_date || employee.resigned_date) || (employee.termination_date || employee.resigned_date) >= period.start_date))
       .map(employee => {
@@ -55,14 +53,37 @@ export default async function handler(req, res) {
           agency_fee_amount: agencyFeeForAttendanceDays(dailyFee, attendanceDays),
         };
       });
+  const expectedEligible = periodAgencyEmployees.filter(employee => employee.agency_fee_attendance_days > 0);
+  const recordByEmployee = new Map(records.map(record => [String(record.employee_id || '').trim().toLowerCase(), record]));
+  const synchronizedIds = new Set();
+  if (!finalized) {
+    for (const employee of expectedEligible) {
+      const record = recordByEmployee.get(String(employee.employee_id || '').trim().toLowerCase());
+      if (!record || !['draft', 'processing', 'open', ''].includes(String(record.status || '').toLowerCase())) continue;
+      if (record.is_agency_employee_at_payroll !== true || Number(record.agency_fee_attendance_days || 0) !== employee.agency_fee_attendance_days) {
+        await updateRecord('PayrollRecord', record.id, {
+          is_agency_employee_at_payroll: true,
+          agency_fee_attendance_days: employee.agency_fee_attendance_days,
+          agency_fee_amount: employee.agency_fee_amount,
+          agency_fee_per_employee_at_payroll: dailyFee,
+        });
+      }
+      synchronizedIds.add(String(employee.employee_id || '').trim().toLowerCase());
+    }
+  }
+  const eligible = finalized
+    ? records.filter(record => record.is_agency_employee_at_payroll === true).map(record => ({
+      id: record.employee_record_id || record.employee_id, employee_id: record.employee_id, first_name: record.employee_name,
+      department: record.department, is_agency_employee: true, payroll_disbursement_method: record.payroll_method_at_payroll,
+      agency_fee_amount: record.agency_fee_amount, agency_fee_attendance_days: record.agency_fee_attendance_days,
+    }))
+    : expectedEligible.filter(employee => synchronizedIds.has(String(employee.employee_id || '').trim().toLowerCase()));
   const summary = agencyFeeSummary(eligible, String(dailyFee));
   const employeeKey = employee => String(employee.employee_id || '').trim().toLowerCase();
   const includedEmployeeIds = new Set(summary.employees.map(employeeKey));
   // Reconcile against the complete current Agency roster shown on Employees.
   // The period-specific reason explains why a roster member was not charged.
-  const agencyCandidates = employees.filter(employee =>
-    employee.status === 'active' && employee.is_agency_employee === true
-  );
+  const agencyCandidates = periodAgencyEmployees;
   const currentAgencyIds = new Set(agencyCandidates.map(employeeKey));
   const currentIncludedEmployees = summary.employees.filter(employee => currentAgencyIds.has(employeeKey(employee)));
   const snapshotOnlyEmployees = summary.employees.filter(employee => !currentAgencyIds.has(employeeKey(employee)));
@@ -77,7 +98,9 @@ export default async function handler(req, res) {
         department: employee.department,
         attendance_days: attendanceDays,
         reason: attendanceDays > 0
-          ? 'Not included in the agency fee computation'
+          ? finalized
+            ? 'Historical payroll snapshot is not Agency'
+            : 'No draft/open payroll record to synchronize'
           : employee.date_hired && period?.start_date && employee.date_hired > period.end_date
             ? 'Hired after this payroll period'
             : (employee.termination_date || employee.resigned_date) && period?.end_date && (employee.termination_date || employee.resigned_date) < period.start_date
