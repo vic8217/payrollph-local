@@ -399,6 +399,7 @@ export default function Payroll() {
   const [incompleteLogsError, setIncompleteLogsError] = useState(/** @type {Array<{ employeeName: string, date: string }> | null} */ (null));
   const [pendingAttendanceError, setPendingAttendanceError] = useState(/** @type {Array<{ employeeName: string, count: number }> | null} */ (null));
   const [pendingOvertimeError, setPendingOvertimeError] = useState(/** @type {Array<{ employeeName: string, date: string, hours: number }> | null} */ (null));
+  const [payrollGenerationError, setPayrollGenerationError] = useState('');
   const qc = useQueryClient();
   const { activeCompanyId, activeCompany } = useCompany();
   const { user } = useAuth();
@@ -770,7 +771,10 @@ export default function Payroll() {
     setIncompleteLogsError(null);
     setPendingAttendanceError(null);
     setPendingOvertimeError(null);
+    setPayrollGenerationError('');
     const periodName = getPayrollPeriodName(activePeriodConfig);
+
+    try {
 
     // Employee rates and statuses can be edited from the Employees page while
     // Payroll remains open. Always compute from a fresh server snapshot so a
@@ -1189,7 +1193,14 @@ export default function Payroll() {
     qc.invalidateQueries({ queryKey: ['payrollRecords'] });
     qc.invalidateQueries({ queryKey: ['cashAdvanceLedger'] });
     setSelectedPeriod(updatedPeriod);
-    setGenerating(false);
+    } catch (error) {
+      console.error('Payroll generation failed', error);
+      setPayrollGenerationError(error?.message || 'Payroll generation did not finish. No completed payroll is available for reconciliation yet. Correct the issue and generate this period again.');
+      qc.invalidateQueries({ queryKey: ['payrollPeriods'] });
+      qc.invalidateQueries({ queryKey: ['payrollRecords'] });
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const targetPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
@@ -1499,6 +1510,14 @@ export default function Payroll() {
               <li key={i} className="list-disc">{item.employeeName} — {item.date}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {payrollGenerationError && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          <p className="font-semibold">Payroll generation did not complete</p>
+          <p className="mt-1">{payrollGenerationError}</p>
+          <p className="mt-2 text-xs">This payroll period cannot be reconciled until generation finishes and payroll records are created.</p>
         </div>
       )}
 

@@ -2610,6 +2610,15 @@ export default function Attendance() {
         overtimeHours: 0,
         nightDiffHours: 0,
       });
+      const employmentEndDate = employee.termination_date || employee.resigned_date;
+      const employedOnSummaryDate =
+        (!employee.date_hired || employee.date_hired <= summaryDate) &&
+        (!employmentEndDate || employmentEndDate >= summaryDate);
+      const hasCompleteAttendance = metrics.completed && !primaryLog?.is_absent &&
+        !punchIssues.some(issue => issue.startsWith('Missing') || issue === 'No attendance log');
+      const agencyFee = employee.is_agency_employee === true && employedOnSummaryDate && hasCompleteAttendance
+        ? Number(activeCompany?.agency_fee_per_employee || 0)
+        : 0;
 
       return {
         employee,
@@ -2619,6 +2628,7 @@ export default function Attendance() {
         punchIssues,
         needsPunchReview: punchIssues.length > 0,
         expectsBreakPunches,
+        agencyFee,
       };
     })
     .sort((a, b) => {
@@ -2640,6 +2650,7 @@ export default function Attendance() {
     undertimeMinutes: totals.undertimeMinutes + row.undertimeMinutes,
     overtimeHours: totals.overtimeHours + row.overtimeHours,
     nightDiffHours: totals.nightDiffHours + row.nightDiffHours,
+    agencyFee: totals.agencyFee + row.agencyFee,
   }), {
     employees: 0,
     present: 0,
@@ -2651,6 +2662,7 @@ export default function Attendance() {
     undertimeMinutes: 0,
     overtimeHours: 0,
     nightDiffHours: 0,
+    agencyFee: 0,
   });
 
   const filteredEmployeeIds = new Set(filteredEmployees.map(employee => String(employee.id || '')));
@@ -3011,7 +3023,7 @@ export default function Attendance() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 border-b border-border">
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 border-b border-border">
                 <div className="px-4 py-3 border-r border-border last:border-r-0">
                   <p className="text-xs text-muted-foreground">Employees</p>
                   <p className="text-lg font-semibold text-foreground">{dailySummaryTotals.employees}</p>
@@ -3044,6 +3056,10 @@ export default function Attendance() {
                   <p className="text-xs text-muted-foreground">Night Diff</p>
                   <p className="text-lg font-semibold text-violet-700">{formatHours(dailySummaryTotals.nightDiffHours)}</p>
                 </div>
+                <div className="px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Agency Fee</p>
+                  <p className="text-lg font-semibold text-amber-700">₱{dailySummaryTotals.agencyFee.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                </div>
               </div>
 
               {loadingQuickView ? (
@@ -3063,6 +3079,7 @@ export default function Attendance() {
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Time Out(2)</th>
                         <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Hours</th>
                         <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">OT</th>
+                        <th className="text-right px-4 py-2 font-medium text-muted-foreground text-xs">Agency Fee</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Review</th>
                         <th className="text-left px-4 py-2 font-medium text-muted-foreground text-xs">Status</th>
                       </tr>
@@ -3095,6 +3112,7 @@ export default function Attendance() {
                           </td>
                           <td className="px-4 py-2 text-right">{formatHours(row.hours)}</td>
                           <td className="px-4 py-2 text-right text-blue-700">{formatHours(row.overtimeHours)}</td>
+                          <td className="px-4 py-2 text-right text-amber-700">{row.agencyFee > 0 ? `₱${row.agencyFee.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</td>
                           <td className="px-4 py-2">
                             {row.needsPunchReview ? (
                               <div className="flex flex-wrap gap-1">
