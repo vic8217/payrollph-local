@@ -2188,12 +2188,21 @@ export default function Attendance() {
       ? computeOvertimeHours(log, hours, computationOptions)
       : Number(log.overtime_hours) || 0;
     const approvedRequest = approvedOvertimeRequestForLog(log, overtimeRequests, employee);
+    // Older approved OT flows stored the confirmed actual hours on the request
+    // but did not always write the credited hours back to AttendanceLog. Keep
+    // the daily/summary view aligned with payroll for those records.
+    const recoveredOvertime = approvedRequest
+      ? capOvertimeByApprovedRequest(
+        Number(approvedRequest.confirmed_actual_ot_hours) || Number(log.ot_actual_hours) || computedOvertime,
+        approvedRequest,
+      )
+      : 0;
     const hasRequestAwareOvertime =
       log.overtime_request_id != null ||
       approvedRequest ||
       ['approved', 'denied'].includes(log.ot_status);
     const overtimeHours = hasRequestAwareOvertime
-      ? Number(log.overtime_hours) || 0
+      ? Number(log.overtime_hours) || recoveredOvertime
       : computedOvertime;
     const nightDiffHours = completed
       ? computeNightDifferentialHours(log, computationOptions)
@@ -3746,8 +3755,19 @@ export default function Attendance() {
 	                    const timeOutLocation = attendanceLocationItem(displayLog, 'time_out');
                       const actualTimeIn = actualTimeForPunch(displayLog, 'time_in');
                       const actualTimeOut = actualTimeForPunch(displayLog, 'time_out');
-	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || 0);
-	                    const creditedOvertimeHours = Number(log.overtime_hours || 0);
+	                    const approvedOtRequest = approvedOvertimeRequestForLog(log, overtimeRequests, selectedEmployee);
+	                    // Show approved OT immediately even when a legacy approval
+	                    // left AttendanceLog.overtime_hours at zero. This mirrors
+	                    // the payroll recovery path and avoids hiding valid OT.
+	                    const confirmedActualOvertime = Number(approvedOtRequest?.confirmed_actual_ot_hours) || 0;
+	                    const actualOvertimeHours = Number(log.ot_actual_hours || log.overtime_hours || confirmedActualOvertime || 0);
+	                    const recoveredCreditedOvertime = approvedOtRequest
+	                      ? capOvertimeByApprovedRequest(
+	                        confirmedActualOvertime || actualOvertimeHours,
+	                        approvedOtRequest,
+	                      )
+	                      : 0;
+	                    const creditedOvertimeHours = Number(log.overtime_hours) || recoveredCreditedOvertime;
 	                    const hasUnapprovedOvertime = actualOvertimeHours > 0.005 && creditedOvertimeHours <= 0.005 && !log.overtime_request_id;
 	                    const displayedNightDiffHours = displayLog.time_in && displayLog.time_out
 	                      ? Number(computeNightDifferentialHours(displayLog, computationOptions).toFixed(2))
@@ -3851,14 +3871,14 @@ export default function Attendance() {
                                   no approval
                                 </Badge>
                               )}
-                              {log.ot_status && (
-                                <Badge
-                                  variant="outline"
-                                  className={`px-1 py-0 text-[9px] ${overtimeStatusColors[log.ot_status]}`}
-                                >
-                                  {log.ot_status}
-                                </Badge>
-                              )}
+	                              {(log.ot_status || (approvedOtRequest && creditedOvertimeHours > 0 ? 'approved' : null)) && (
+	                                <Badge
+	                                  variant="outline"
+	                                  className={`px-1 py-0 text-[9px] ${overtimeStatusColors[log.ot_status || 'approved']}`}
+	                                >
+	                                  {log.ot_status || 'approved'}
+	                                </Badge>
+	                              )}
                             </span>
                           ) : '—'}
                         </td>
