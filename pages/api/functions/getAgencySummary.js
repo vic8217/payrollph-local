@@ -42,18 +42,9 @@ export default async function handler(req, res) {
     })
     : [];
   const dailyFee = Number(company.agency_fee_per_employee || 0);
-  const eligible = finalized
-    ? records.filter(record => record.is_agency_employee_at_payroll === true).map(record => ({
-      id: record.employee_record_id || record.employee_id,
-      employee_id: record.employee_id,
-      first_name: record.employee_name,
-      department: record.department,
-      is_agency_employee: true,
-      payroll_disbursement_method: record.payroll_method_at_payroll,
-      agency_fee_amount: record.agency_fee_amount,
-      agency_fee_attendance_days: record.agency_fee_attendance_days,
-    }))
-    : employees.filter(employee => employee.is_agency_employee === true &&
+  // Agency fees are driven by approved attendance. Do not let an older payroll
+  // snapshot omit an Agency employee who actually worked in this cutoff.
+  const eligible = employees.filter(employee => employee.is_agency_employee === true &&
       (!period?.start_date || !employee.date_hired || employee.date_hired <= period.end_date) &&
       (!(employee.termination_date || employee.resigned_date) || (employee.termination_date || employee.resigned_date) >= period.start_date))
       .map(employee => {
@@ -65,12 +56,16 @@ export default async function handler(req, res) {
         };
       });
   const summary = agencyFeeSummary(eligible, String(dailyFee));
-  const includedEmployeeIds = new Set(summary.employees.map(employee => String(employee.employee_id || '').trim().toLowerCase()));
+  const employeeKey = employee => String(employee.employee_id || '').trim().toLowerCase();
+  const includedEmployeeIds = new Set(summary.employees.map(employeeKey));
   // Reconcile against the complete current Agency roster shown on Employees.
   // The period-specific reason explains why a roster member was not charged.
   const agencyCandidates = employees.filter(employee =>
     employee.status === 'active' && employee.is_agency_employee === true
   );
+  const currentAgencyIds = new Set(agencyCandidates.map(employeeKey));
+  const currentIncludedEmployees = summary.employees.filter(employee => currentAgencyIds.has(employeeKey(employee)));
+  const snapshotOnlyEmployees = summary.employees.filter(employee => !currentAgencyIds.has(employeeKey(employee)));
   const excludedEmployees = agencyCandidates
     .filter(employee => !includedEmployeeIds.has(String(employee.employee_id || '').trim().toLowerCase()))
     .map(employee => {
@@ -98,7 +93,8 @@ export default async function handler(req, res) {
     ...summary,
     reconciliation: {
       agencyCandidateCount: agencyCandidates.length,
-      includedCount: summary.employeeCount,
+      currentIncludedCount: currentIncludedEmployees.length,
+      snapshotOnlyCount: snapshotOnlyEmployees.length,
       excludedEmployees,
     },
     employees: summary.employees.map(employee => ({ ...employee, payrollMethod: normalizePayrollMethod(employee.payroll_disbursement_method) })),
