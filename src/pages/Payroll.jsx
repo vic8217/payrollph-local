@@ -459,6 +459,15 @@ export default function Payroll() {
   });
   const periodAttendanceLogs = /** @type {AttendanceLogEntity[]} */ (periodAttendanceLogsQuery.data || []);
   const pendingPeriodAttendanceLogs = periodAttendanceLogs.filter(log => log.status === 'pending');
+  const pendingAttendanceSummary = [...new Map(pendingPeriodAttendanceLogs.map(log => {
+    const employee = employees.find(item =>
+      String(item.id || '') === String(log.employee_record_id || '') ||
+      String(item.employee_id || '').toLowerCase() === String(log.employee_id || '').toLowerCase()
+    );
+    const name = log.employee_name || (employee ? `${employee.first_name || ''} ${employee.last_name || ''}`.trim() : 'Unknown employee');
+    const key = `${log.id || `${log.employee_id}-${log.date}`}`;
+    return [key, `${name} (${log.employee_id || employee?.employee_id || 'ID unavailable'}) · ${log.date || 'date unavailable'}`];
+  })) .values()];
 
   const approvePeriod = useMutation({
     /** @param {{ id: string | number, status: string }} args */
@@ -1720,6 +1729,7 @@ export default function Payroll() {
                   {pendingPeriodAttendanceLogs.length > 0 && (
                     <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
                       Approval blocked: {pendingPeriodAttendanceLogs.length} attendance record{pendingPeriodAttendanceLogs.length === 1 ? '' : 's'} still pending for this payroll period. Review and approve or reject them in Attendance, including records for employees who are now inactive.
+                      <span className="mt-1 block font-normal">Needs review: {pendingAttendanceSummary.join('; ')}</span>
                     </p>
                   )}
                   {hiddenOrphanRecordCount > 0 && (
