@@ -1,8 +1,8 @@
 // @ts-nocheck
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, ClipboardList, Save, Scale } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, CheckCircle2, ClipboardList, Eye, Save, Scale } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { appApi } from '@/lib/appApi';
 import { useAuth } from '@/lib/AuthContext';
 import { useCompany } from '@/lib/CompanyContext';
@@ -76,7 +76,8 @@ const deriveManualSummary = (values = {}, record = {}) => {
   return next;
 };
 
-function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
+function ConsolidatedReconciliation({ records, reconciliations, onEmployee, period }) {
+  const [showDifferenceDetails, setShowDifferenceDetails] = useState(false);
   const [showDifferenceReasons, setShowDifferenceReasons] = useState(false);
   const latestByEmployee = new Map();
   reconciliations.forEach(item => {
@@ -107,6 +108,7 @@ function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
     system: rows.reduce((sum, row) => sum + num(row.system[key]), 0),
     manual: rows.reduce((sum, row) => sum + num(row.manualValues[key]), 0),
   }));
+  const periodLabel = period?.period_name || (period?.start_date && period?.end_date ? `${period.start_date} – ${period.end_date}` : 'Selected period');
 
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -122,12 +124,21 @@ function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
           <ClipboardList className="h-4 w-4" /> View Difference Reasons
         </Button>
       </div>
-      <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-xs"><thead className="bg-muted/70"><tr><th className="px-3 py-2 text-left">Source</th>{totals.map(item => <th key={item.key} className="px-3 py-2 text-right">{item.label}</th>)}</tr></thead><tbody>
+      <div className="overflow-x-auto"><table className="w-full min-w-[1200px] text-xs"><thead className="bg-muted/70"><tr><th className="px-3 py-2 text-left">Source</th>{totals.map(item => <th key={item.key} className="px-3 py-2 text-right">{item.label}</th>)}<th className="px-3 py-2 text-right">Action</th></tr></thead><tbody>
         <tr className="border-t"><td className="px-3 py-2 font-bold text-red-600">System</td>{totals.map(item => <td key={item.key} className="px-3 py-2 text-right font-mono">{item.key === 'overtime_hours' ? display(item.system, 'number') : money(item.system)}</td>)}</tr>
         <tr className="border-t"><td className="px-3 py-2 font-bold text-blue-600">Manual</td>{totals.map(item => <td key={item.key} className="px-3 py-2 text-right font-mono">{item.key === 'overtime_hours' ? display(item.manual, 'number') : money(item.manual)}</td>)}</tr>
-        <tr className="border-t bg-yellow-50"><td className="px-3 py-2 font-bold text-amber-700">Difference</td>{totals.map(item => { const difference = item.system-item.manual; return <td key={item.key} className={`px-3 py-2 text-right font-mono font-semibold ${Math.abs(difference) > .005 ? 'bg-red-100 text-red-700' : 'text-emerald-700'}`}>{item.key === 'overtime_hours' ? display(difference, 'number') : money(difference)}</td>; })}</tr>
+        <tr className="border-t bg-yellow-50"><td className="px-3 py-2 font-bold text-amber-700">Difference</td>{totals.map(item => { const difference = item.system-item.manual; return <td key={item.key} className={`px-3 py-2 text-right font-mono font-semibold ${Math.abs(difference) > .005 ? 'bg-red-100 text-red-700' : 'text-emerald-700'}`}>{item.key === 'overtime_hours' ? display(difference, 'number') : money(difference)}</td>; })}<td className="px-3 py-2 text-right"><Button variant="outline" size="sm" className="gap-1" onClick={() => setShowDifferenceDetails(true)} disabled={!rows.some(row => row.variance > 0)}><Eye className="h-3.5 w-3.5" /> View Difference Details</Button></td></tr>
       </tbody></table></div>
     </Card>
+    <Dialog open={showDifferenceDetails} onOpenChange={setShowDifferenceDetails}>
+      <DialogContent className="max-h-[85vh] max-w-6xl overflow-y-auto">
+        <DialogHeader><DialogTitle>Payroll Difference Details</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">Payroll Period: {periodLabel}</p>
+        <section className="space-y-2"><h3 className="font-semibold">Summary</h3><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{totals.map(item => { const difference = item.system - item.manual; const affected = rows.filter(row => row.differences.some(entry => entry.key === item.key)).length; return <Card key={item.key} className="p-3"><p className="text-xs text-muted-foreground">{item.label}</p><p className="font-mono font-semibold">{item.key === 'overtime_hours' ? display(difference, 'number') : money(difference)}</p><p className="text-xs text-muted-foreground">{affected} employee{affected === 1 ? '' : 's'} affected</p></Card>; })}</div></section>
+        <section className="space-y-2"><h3 className="font-semibold">Category Breakdown</h3><div className="overflow-x-auto"><table className="w-full min-w-[700px] text-xs"><thead className="bg-muted/70"><tr>{['Category','System','Manual','Difference','Employees Affected'].map(label => <th key={label} className="px-3 py-2 text-right first:text-left">{label}</th>)}</tr></thead><tbody>{totals.map(item => { const difference = item.system - item.manual; const affected = rows.filter(row => row.differences.some(entry => entry.key === item.key)).length; const format = item.key === 'overtime_hours' ? value => display(value, 'number') : money; return <tr key={item.key} className="border-t"><td className="px-3 py-2 font-medium">{item.label}</td><td className="px-3 py-2 text-right font-mono">{format(item.system)}</td><td className="px-3 py-2 text-right font-mono">{format(item.manual)}</td><td className="px-3 py-2 text-right font-mono font-semibold">{format(difference)}</td><td className="px-3 py-2 text-right">{affected}</td></tr>; })}</tbody></table></div></section>
+        <section className="space-y-2"><h3 className="font-semibold">Employee-Level Difference Breakdown</h3><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-xs"><thead className="bg-muted/70"><tr>{['Employee','Employee No.','Category','System','Manual','Difference','Reason','Action'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead><tbody>{rows.filter(row => row.variance > 0).flatMap(row => row.differences.map(item => { const format = item.key === 'overtime_hours' ? value => display(value, 'number') : money; return <tr key={`${row.record.id}-${item.key}`} className="border-t"><td className="px-3 py-2 font-medium">{row.record.employee_name}</td><td className="px-3 py-2">{row.record.employee_id}</td><td className="px-3 py-2">{item.label}</td><td className="px-3 py-2 font-mono">{format(item.system)}</td><td className="px-3 py-2 font-mono">{format(item.manual)}</td><td className="px-3 py-2 font-mono font-semibold text-red-600">{format(item.difference)}</td><td className="px-3 py-2">{row.reconciliation?.variance_note?.trim() || 'No reason entered'}</td><td className="px-3 py-2"><Button size="sm" variant="outline" onClick={() => { setShowDifferenceDetails(false); onEmployee(String(row.record.employee_id)); }}>View</Button></td></tr>; }))}</tbody></table></div></section>
+      </DialogContent>
+    </Dialog>
     <Card className="overflow-hidden">
       <div className="border-b px-4 py-3"><h2 className="font-semibold">Employee Reconciliation Status</h2><p className="text-xs text-muted-foreground">Select an employee to review the detailed payroll and daily attendance inputs.</p></div>
       <div className="overflow-x-auto"><table className="w-full min-w-[1150px] text-xs"><thead className="bg-muted/70"><tr>{['Employee','Department','OT Hours','OT Pay','Gross Pay','Deductions','Net Pay','Review Status','Variance','Action'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead><tbody>
@@ -169,10 +180,11 @@ function ConsolidatedReconciliation({ records, reconciliations, onEmployee }) {
 
 export default function PayrollReconciliation() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const qc = useQueryClient();
   const { activeCompanyId } = useCompany();
   const { user } = useAuth();
-  const [periodId, setPeriodId] = useState('');
+  const [periodId, setPeriodId] = useState(() => searchParams.get('period') || '');
   const [employeeId, setEmployeeId] = useState('all');
   const [manual, setManual] = useState({});
   const [manualDays, setManualDays] = useState({});
@@ -223,11 +235,11 @@ export default function PayrollReconciliation() {
 
   const loading = periodsQuery.isLoading || recordsQuery.isLoading || consolidatedReconQuery.isLoading || (!isConsolidated && (logsQuery.isLoading || overtimeRequestsQuery.isLoading || reconQuery.isLoading));
   return <div className="w-full space-y-4 p-4 md:p-6">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><Button variant="outline" size="icon" onClick={() => navigate('/payroll')}><ArrowLeft className="h-4 w-4"/></Button><div><h1 className="flex items-center gap-2 text-2xl font-bold"><Scale className="h-6 w-6 text-primary"/>Payroll Reconciliation</h1><p className="text-sm text-muted-foreground">Parallel comparison of system payroll against the officer’s manual computation</p></div></div><Button onClick={() => saveMutation.mutate()} disabled={!record || saveMutation.isPending}><Save className="mr-2 h-4 w-4"/>{saveMutation.isPending ? 'Saving…' : 'Save Reconciliation'}</Button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><Button variant="outline" size="icon" onClick={() => { setEmployeeId('all'); navigate(`/payroll/reconciliation${periodId ? `?period=${encodeURIComponent(periodId)}` : ''}`); }}><ArrowLeft className="h-4 w-4"/></Button><div><h1 className="flex items-center gap-2 text-2xl font-bold"><Scale className="h-6 w-6 text-primary"/>Payroll Reconciliation</h1><p className="text-sm text-muted-foreground">Parallel comparison of system payroll against the officer’s manual computation</p></div></div><Button onClick={() => saveMutation.mutate()} disabled={!record || saveMutation.isPending}><Save className="mr-2 h-4 w-4"/>{saveMutation.isPending ? 'Saving…' : 'Save Reconciliation'}</Button></div>
     <Card className="grid gap-3 p-4 md:grid-cols-2"><div><label className="text-xs font-medium text-muted-foreground">Payroll Period</label><Select value={periodId} onValueChange={value => { setPeriodId(value); setEmployeeId('all'); }}><SelectTrigger className="mt-1"><SelectValue placeholder="Select period"/></SelectTrigger><SelectContent>{periods.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.period_name || `${item.start_date} to ${item.end_date}`}</SelectItem>)}</SelectContent></Select></div><div><label className="text-xs font-medium text-muted-foreground">Employee</label><Select value={employeeId} onValueChange={setEmployeeId}><SelectTrigger className="mt-1"><SelectValue placeholder="Select employee"/></SelectTrigger><SelectContent><SelectItem value="all">All Employees · Consolidated</SelectItem>{records.map(item => <SelectItem key={item.id} value={String(item.employee_id)}>{item.employee_name} · {item.employee_id}</SelectItem>)}</SelectContent></Select></div></Card>
     {saved && <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><CheckCircle2 className="h-4 w-4"/>Reconciliation saved.</div>}
     {payrollOvertimeIsStale && <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Reconciliation includes {currentOvertimeHours.toFixed(2)} approved OT hours. The generated payroll previously contained {num(record.overtime_hours).toFixed(2)}, so regenerate payroll to update OT Pay and the final payroll record.</div>}
-    {!loading && isConsolidated && records.length > 0 && <ConsolidatedReconciliation records={records} reconciliations={consolidatedReconQuery.data || []} onEmployee={setEmployeeId}/>}
+    {!loading && isConsolidated && records.length > 0 && <ConsolidatedReconciliation records={records} reconciliations={consolidatedReconQuery.data || []} period={period} onEmployee={setEmployeeId}/>}
     {!loading && records.length === 0 && <Card className="p-10 text-center text-sm text-muted-foreground"><p className="font-medium text-foreground">No completed payroll records are available for this period.</p><p className="mt-2">This period has {Number(period?.employee_count) || 0} generated employee record{Number(period?.employee_count) === 1 ? '' : 's'}. Return to Payroll, correct any generation error, then generate the selected period again before starting reconciliation.</p><Button className="mt-4" variant="outline" onClick={() => navigate('/payroll')}>Go to Payroll</Button></Card>}
     {record && <>
       <Card className="overflow-hidden"><div className="border-b px-4 py-3"><h2 className="font-semibold">{record.employee_name}</h2><p className="text-xs text-muted-foreground">{record.department || 'Unassigned'} · System / Manual / Difference (System − Manual)</p></div><div className="overflow-x-auto"><table className="w-full min-w-[1800px] text-xs"><thead className="bg-muted/70"><tr><th className="sticky left-0 z-10 bg-muted px-3 py-2 text-left">Source</th>{SUMMARY_FIELDS.map(([key,label]) => <th key={key} className="whitespace-nowrap px-3 py-2 text-right">{label}</th>)}</tr></thead><tbody><tr className="border-t"><td className="sticky left-0 bg-background px-3 py-2 font-bold text-red-600">System</td>{SUMMARY_FIELDS.map(([key,,type]) => <td key={key} className="px-3 py-2 text-right font-mono">{display(systemSummaryValue(key),type)}</td>)}</tr><tr className="border-t"><td className="sticky left-0 bg-background px-3 py-2 font-bold text-blue-600">Manual</td>{SUMMARY_FIELDS.map(([key]) => <td key={key} className="p-1"><Input type="number" step="0.01" className="h-8 min-w-24 text-right font-mono" value={effectiveManual[key] ?? ''} disabled={DERIVED_SUMMARY_FIELDS.has(key)} title={DERIVED_SUMMARY_FIELDS.has(key) ? 'Automatically calculated from the manual reconciliation inputs' : undefined} onChange={event => setManual(values => ({ ...values, [key]: event.target.value }))}/></td>)}</tr><tr className="border-t bg-yellow-50"><td className="sticky left-0 bg-yellow-50 px-3 py-2 font-bold text-amber-700">Difference</td>{SUMMARY_FIELDS.map(([key,,type]) => { const difference = systemSummaryValue(key)-num(effectiveManual[key]); return <td key={key} className={`px-3 py-2 text-right font-mono font-semibold ${Math.abs(difference) > .005 ? 'bg-red-100 text-red-700' : 'text-emerald-700'}`}>{display(difference,type)}</td>; })}</tr></tbody></table></div></Card>
