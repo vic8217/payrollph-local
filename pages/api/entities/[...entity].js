@@ -367,6 +367,15 @@ export default async function handler(req, res) {
             : {}),
         });
       }
+      if (entity === "PayrollReconciliation" && data?.resolution_status) {
+        const session = await getServerSession(req, res, authOptions);
+        if (!session?.user) return res.status(401).json({ error: "Authentication is required to resolve a reconciliation." });
+        data = {
+          ...data,
+          resolved_by: session.user.name || session.user.email || "Unknown officer",
+          resolved_at: new Date().toISOString(),
+        };
+      }
       if (entity === "Employee") data = validateEmployeeClassifications(data);
       const record = await createRecord(entity, data);
       return res.status(201).json(record);
@@ -399,6 +408,12 @@ export default async function handler(req, res) {
         if (!session?.user || (session.user.role !== "super_admin" && !ownsCompany)) return res.status(403).json({ error: "You cannot update this company." });
       }
       if (entity === "CompanyProfile") updateData = validateCompanyAgencySettings(updateData);
+      if (entity === "PayrollReconciliation" && Object.prototype.hasOwnProperty.call(updateData, "resolution_status")) {
+        const session = await getServerSession(req, res, authOptions);
+        if (!session?.user) return res.status(401).json({ error: "Authentication is required to resolve a reconciliation." });
+        updateData.resolved_by = session.user.name || session.user.email || "Unknown officer";
+        updateData.resolved_at = new Date().toISOString();
+      }
       if (entity === "Employee") updateData = validateEmployeeClassifications(updateData);
       if (entity === "AttendanceLog" && Object.prototype.hasOwnProperty.call(updateData, "time_in")) {
         return res.status(403).json({
