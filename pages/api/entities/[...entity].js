@@ -10,6 +10,17 @@ import {
 } from "@/server/entityStore";
 import { manilaDateString } from "@/lib/dateUtils";
 import { isAgencyEmployee, moneyToCents, normalizePayrollMethod } from "@/lib/agencyPayroll";
+import { payrollReconciliationReadiness } from "@/server/payrollReconciliationReadiness";
+
+async function assertPayrollReleaseReadiness(periodId) {
+  const [period] = await listRecords("PayrollPeriod", { filter: { id: periodId }, limit: 1 });
+  if (!period || period.status === "released") return;
+  const readiness = await payrollReconciliationReadiness(period.company_profile_id, periodId);
+  if (!readiness.isReadyForFinalization) {
+    const error = new Error(`Payroll cannot be finalized. Outstanding reconciliation items: ${readiness.pendingEmployees} pending reconciliations; ${readiness.unresolvedEmployees} unresolved variances; ${readiness.remarksForResolution.noteCount} reviewer remarks requiring response; ${readiness.remarksForReview.noteCount} reviewer responses awaiting confirmation.`);
+    error.statusCode = 409; error.details = { pending: readiness.pendingEmployees, unresolved: readiness.unresolvedEmployees, remarksForResolution: readiness.remarksForResolution.noteCount, remarksForReview: readiness.remarksForReview.noteCount, reviewerNotesAvailable: readiness.reviewerNotesAvailable }; throw error;
+  }
+}
 
 function validateCompanyAgencySettings(data = {}) {
   if (data.uses_employee_agency !== true) return data;
@@ -400,6 +411,7 @@ export default async function handler(req, res) {
         await requireCompletedAttendanceForOvertimeApproval(req.body.id, req.body.data || {});
       }
       let updateData = { ...(req.body.data || {}) };
+      if (entity === "PayrollPeriod" && updateData.status === "released") await assertPayrollReleaseReadiness(req.body.id);
       if (entity === "CompanyProfile") {
         const session = await getServerSession(req, res, authOptions);
         const [company] = await listRecords("CompanyProfile", { filter: { id: req.body.id }, limit: 1 });

@@ -25,6 +25,10 @@ model AppUser {
   faceProfile            UserFaceProfile?
   faceVerificationLogs   UserFaceVerificationLog[]
   faceVerificationChallenges UserFaceVerificationChallenge[]
+  reviewerNotesCreated PayrollReconciliationReviewerNote[] @relation("ReviewerNoteCreatedBy")
+  reviewerNotesResponded PayrollReconciliationReviewerNote[] @relation("ReviewerNoteRespondedBy")
+  reviewerNotesResolved PayrollReconciliationReviewerNote[] @relation("ReviewerNoteResolvedBy")
+  reviewerNoteEvents PayrollReconciliationReviewerNoteEvent[] @relation("ReviewerNoteEventActor")
 }
 
 model EntityRecord {
@@ -35,6 +39,62 @@ model EntityRecord {
   updatedAt DateTime @updatedAt
 
   @@index([entity])
+}
+
+// Reviewer questions and their workflow history are intentionally separate from
+// the generic PayrollReconciliation JSON payload. Foreign keys remain logical
+// IDs because payroll entities are stored in EntityRecord.
+model PayrollReconciliationReviewerNote {
+  id                  String   @id @default(cuid())
+  companyProfileId    String
+  payrollPeriodId     String
+  employeeId          String
+  reconciliationId    String?
+  category            String
+  reviewerNote        String
+  status              String   @default("needs_response")
+  createdByUserId     String
+  createdAt           DateTime @default(now())
+  response            String?
+  respondedByUserId   String?
+  respondedAt        DateTime?
+  resolutionNote      String?
+  resolvedByUserId    String?
+  resolvedAt          DateTime?
+  updatedAt           DateTime @updatedAt
+  createdBy           AppUser  @relation("ReviewerNoteCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  respondedBy         AppUser? @relation("ReviewerNoteRespondedBy", fields: [respondedByUserId], references: [id], onDelete: Restrict)
+  resolvedBy          AppUser? @relation("ReviewerNoteResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict)
+  events              PayrollReconciliationReviewerNoteEvent[]
+
+  @@index([companyProfileId, payrollPeriodId], map: "ReviewerNote_company_period_idx")
+  @@index([companyProfileId, payrollPeriodId, status], map: "ReviewerNote_company_period_status_idx")
+  @@index([companyProfileId, employeeId, payrollPeriodId], map: "ReviewerNote_company_employee_period_idx")
+  @@index([employeeId, payrollPeriodId])
+  @@index([status])
+  @@index([reconciliationId])
+}
+
+model PayrollReconciliationReviewerNoteEvent {
+  id                      String   @id @default(cuid())
+  noteId                  String
+  eventType               String
+  previousStatus          String?
+  newStatus               String?
+  remarks                 String?
+  actorUserId             String
+  actorRole               String
+  snapshotCategory        String?
+  snapshotSystemValue     Decimal? @db.Decimal(18, 4)
+  snapshotManualValue     Decimal? @db.Decimal(18, 4)
+  snapshotDifferenceValue Decimal? @db.Decimal(18, 4)
+  snapshotValueType       String?
+  createdAt               DateTime @default(now())
+  note                    PayrollReconciliationReviewerNote @relation(fields: [noteId], references: [id], onDelete: Restrict)
+  actor                   AppUser @relation("ReviewerNoteEventActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([noteId, createdAt])
+  @@index([actorUserId])
 }
 
 model PasswordResetToken {
