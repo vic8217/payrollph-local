@@ -91,6 +91,18 @@ export default function UserManagement() {
     },
   });
 
+  const activateMutation = useMutation({
+    mutationFn: (id) =>
+      requestJson('/api/users', {
+        method: 'PATCH',
+        body: JSON.stringify({ id, data: { approval_status: 'approved' } }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast({ title: 'User activated successfully' });
+    },
+  });
+
   const removeMutation = useMutation({
     mutationFn: (id) =>
       requestJson('/api/users', {
@@ -241,8 +253,9 @@ export default function UserManagement() {
             const isEditing = editingUserId === user.id;
             const isPending = user.approval_status === 'pending';
             const isApprovedEmployee = user.approval_status === 'approved' && user.role !== 'super_admin';
+            const isSuspended = user.approval_status === 'suspended';
             const resetPasscode = resetPasscodes[user.email];
-            const actionDisabled = approveMutation.isPending || denyMutation.isPending || suspendMutation.isPending || removeMutation.isPending || resetPasscodeMutation.isPending;
+            const actionDisabled = approveMutation.isPending || denyMutation.isPending || suspendMutation.isPending || activateMutation.isPending || removeMutation.isPending || resetPasscodeMutation.isPending;
 
             return (
               <Card key={user.id}>
@@ -345,6 +358,18 @@ export default function UserManagement() {
                               </>
                             )}
                           </>
+                        )}
+                        {isSuspended && currentUser?.role === 'super_admin' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => activateMutation.mutate(user.id)}
+                            disabled={actionDisabled}
+                            className="gap-1"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Activate
+                          </Button>
                         )}
                         {user.role === 'super_admin' && (
                           <Button
