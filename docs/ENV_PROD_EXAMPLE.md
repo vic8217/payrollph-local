@@ -20,6 +20,10 @@ NEXTAUTH_SECRET="replace-with-long-random-secret"
 # Optional: if your runtime needs explicit port
 PORT="3000"
 
+# Optional temporary application maintenance switch. Enabled only when exactly "true".
+# Super admins retain access; all other application and API access is unavailable.
+PAYROLLPH_MAINTENANCE_MODE=false
+
 # Required: absolute persistent upload directory for logos/photos/files.
 # Point this outside the source tree to a mounted persistent disk/volume.
 UPLOAD_DIR="/var/lib/payrollph/uploads"
@@ -92,3 +96,5 @@ bash scripts/postdeploy-check.sh https://payroll.yourdomain.com
   - Set exact public URL and redeploy/restart.
 - HTTPS not ready:
   - Wait for DNS propagation and SSL issuance.
+# Set to the literal `true` only while performing temporary application maintenance.
+# Super admins retain access; all other application/API access is unavailable.

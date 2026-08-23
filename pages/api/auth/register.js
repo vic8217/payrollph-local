@@ -1,6 +1,7 @@
 // @ts-nocheck
 import bcrypt from "bcryptjs";
 import { prisma } from "@/server/prisma";
+import { isMaintenanceMode, sendMaintenanceUnavailable } from "@/server/maintenance";
 
 const ALLOWED_ROLES = new Set(["super_admin", "admin", "user"]);
 
@@ -9,6 +10,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (isMaintenanceMode()) return sendMaintenanceUnavailable(res);
 
   const email = String(req.body?.email || "").toLowerCase().trim();
   const password = String(req.body?.password || "");

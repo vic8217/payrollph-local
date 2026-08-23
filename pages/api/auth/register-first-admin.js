@@ -1,12 +1,14 @@
 // @ts-nocheck
 import bcrypt from "bcryptjs";
 import { prisma } from "@/server/prisma";
+import { isMaintenanceMode, sendMaintenanceUnavailable } from "@/server/maintenance";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (isMaintenanceMode()) return sendMaintenanceUnavailable(res);
 
   const existingCount = await prisma.appUser.count();
   if (existingCount > 0) {

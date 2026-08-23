@@ -34,6 +34,11 @@ async function signInWithCredentials(email, password) {
     if (data?.error === "ACCESS_SCHEDULE_BLOCKED") {
       throw new Error("Your account is outside its allowed access schedule. Please contact the super admin.");
     }
+    if (data?.error === "MAINTENANCE_MODE") {
+      const error = new Error("MAINTENANCE_MODE");
+      error.code = "MAINTENANCE_MODE";
+      throw error;
+    }
 
     throw new Error("Invalid email or password");
   }
@@ -66,6 +71,9 @@ export default function Landing() {
   const [isUsingRecoveryKey, setIsUsingRecoveryKey] = useState(false);
   const [showSuperAdminRecovery, setShowSuperAdminRecovery] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+  // Keep public account-creation/recovery controls hidden until the non-sensitive
+  // status endpoint explicitly says maintenance is off.
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(null);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
 
@@ -78,6 +86,13 @@ export default function Landing() {
     }
   }, []);
 
+  useEffect(() => {
+    fetch("/api/auth/maintenance-status")
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => setIsMaintenanceMode(data?.maintenance === true))
+      .catch(() => setIsMaintenanceMode(true));
+  }, []);
+
   const handleLogin = async (event) => {
     event.preventDefault();
     setIsLoggingIn(true);
@@ -88,6 +103,10 @@ export default function Landing() {
       );
       window.location.href = "/";
     } catch (error) {
+      if (error.code === "MAINTENANCE_MODE" || error.message === "MAINTENANCE_MODE") {
+        window.location.href = "/maintenance";
+        return;
+      }
       toast({
         title: "Unable to sign in",
         description: error.message || "Please check your credentials.",
@@ -337,7 +356,7 @@ export default function Landing() {
                 Back to login
               </button>
             ) : (
-              <div className="landing-auth-tabs mt-10 grid grid-cols-2 rounded-md bg-muted p-1">
+              <div className={`landing-auth-tabs mt-10 grid ${isMaintenanceMode === false ? "grid-cols-2" : "grid-cols-1"} rounded-md bg-muted p-1`}>
                 <button
                   type="button"
                   onClick={() => setAuthMode("login")}
@@ -350,7 +369,7 @@ export default function Landing() {
                     Login
                   </span>
                 </button>
-                <button
+                {isMaintenanceMode === false && <button
                   type="button"
                   onClick={() => setAuthMode("register")}
                   className={`rounded px-3 py-2 text-sm font-medium transition ${
@@ -361,7 +380,7 @@ export default function Landing() {
                     <UserPlus className="h-4 w-4" />
                     Register
                   </span>
-                </button>
+                </button>}
               </div>
             )}
 
@@ -404,7 +423,7 @@ export default function Landing() {
                     />
                     <span>Remember</span>
                   </label>
-                  <button
+                  {isMaintenanceMode === false && <button
                     type="button"
                     className="text-slate-500 transition hover:text-violet-600"
                     onClick={() => {
@@ -413,7 +432,7 @@ export default function Landing() {
                     }}
                   >
                     Forgot Password ?
-                  </button>
+                  </button>}
                 </div>
                 <Button
                   type="submit"
@@ -422,7 +441,7 @@ export default function Landing() {
                 >
                   {isLoggingIn ? "SIGNING IN..." : "SUBMIT"}
                 </Button>
-                <p className="pt-1 text-center text-[11px] text-slate-500">
+                {isMaintenanceMode === false && <p className="pt-1 text-center text-[11px] text-slate-500">
                   Need an account?{" "}
                   <button
                     type="button"
@@ -431,7 +450,7 @@ export default function Landing() {
                   >
                     Create account
                   </button>
-                </p>
+                </p>}
               </form>
             ) : authMode === "register" ? (
               <form onSubmit={handleRegister} className="landing-auth-fields mt-8 space-y-4">

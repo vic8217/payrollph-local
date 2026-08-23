@@ -42,12 +42,16 @@ import ManagementReports from '@/pages/ManagementReports';
 import PayrollReconciliation from '@/pages/PayrollReconciliation';
 import TimeInReviews from '@/pages/TimeInReviews';
 import Agency from '@/pages/Agency';
+import Maintenance from '@/pages/Maintenance';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
 
   // Public routes — render immediately without auth check, no loading needed
   const path = window.location.pathname;
+  if (path === '/maintenance') {
+    return <Maintenance />;
+  }
   if (path.startsWith('/employee-portal')) {
     return <EmployeePortal />;
   }

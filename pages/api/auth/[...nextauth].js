@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { prisma } from "@/server/prisma";
 import { isWithinAccessSchedule } from "@/lib/accessSchedule";
+import { isMaintenanceMode } from "@/server/maintenance";
 
 /** Webpack + CJS interop: default export may be nested as `{ default: fn }`. */
 function unwrapDefault(m) {
@@ -82,6 +83,11 @@ export const authOptions = {
           await createAccessLog(user, "login_failed", req);
           return null;
         }
+        // Check the database record before a session is created. This prevents a
+        // non-super-admin from obtaining a usable session during maintenance.
+        if (isMaintenanceMode() && user.role !== "super_admin") {
+          throw new Error("MAINTENANCE_MODE");
+        }
         if (user.role !== "super_admin" && !isWithinAccessSchedule(user.accessSchedule)) {
           throw new Error("ACCESS_SCHEDULE_BLOCKED");
         }
@@ -158,6 +164,9 @@ export const authOptions = {
           token.active_session_valid =
             scheduleUser?.role === "super_admin" ||
             isWithinAccessSchedule(scheduleUser?.accessSchedule);
+          if (isMaintenanceMode() && scheduleUser?.role !== "super_admin") {
+            token.active_session_valid = false;
+          }
           token.role = scheduleUser?.role || token.role || "user";
           const companyProfileIds = parseCompanyProfileIds(scheduleUser?.companyProfileId);
           token.company_profile_id = companyProfileIds[0] || null;

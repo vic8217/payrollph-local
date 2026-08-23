@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createHash, randomBytes } from "crypto";
 import { prisma } from "@/server/prisma";
+import { isMaintenanceMode, sendMaintenanceUnavailable } from "@/server/maintenance";
 
 const RESET_TOKEN_TTL_MINUTES = 30;
 
@@ -23,6 +24,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (isMaintenanceMode()) return sendMaintenanceUnavailable(res);
 
   const email = String(req.body?.email || "").toLowerCase().trim();
   if (!email) {

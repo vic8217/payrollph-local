@@ -2,6 +2,7 @@
 import bcrypt from "bcryptjs";
 import { createHash } from "crypto";
 import { prisma } from "@/server/prisma";
+import { isMaintenanceMode, sendMaintenanceUnavailable } from "@/server/maintenance";
 
 function hashToken(token) {
   return createHash("sha256").update(token).digest("hex");
@@ -16,6 +17,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Method not allowed" });
   }
+  if (isMaintenanceMode()) return sendMaintenanceUnavailable(res);
 
   const token = String(req.body?.token || "").trim();
   const email = String(req.body?.email || "").toLowerCase().trim();
