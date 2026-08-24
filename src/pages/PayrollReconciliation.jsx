@@ -18,6 +18,8 @@ import DailyAttendanceInputsTable from '@/components/payroll/DailyAttendanceInpu
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { approvedOvertimeRequestForLog, capOvertimeByApprovedRequest } from '@/lib/overtimeRequests';
+import { computeCreditedHoursWorked, computeLateMinutes, computeNightDifferentialHours, computeOvertimeHours } from '@/lib/payrollUtils';
+import { effectiveShiftSetting, legacyShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot } from '@/lib/shiftSettings';
 
 const SUMMARY_FIELDS = [
   ['regular_days', 'Regular Days', 'number'], ['daily_rate', 'Rate / Day', 'money'], ['basic_pay', 'Basic Pay', 'money'],
@@ -238,7 +240,7 @@ function ReconciliationQueue({ records, reconciliations, reviewerNotes, dailyNot
       <Card className="p-4"><p className="text-xs font-semibold">Review Status</p><p className="mt-1 text-2xl font-bold">{counts.review}</p><button type="button" onClick={() => setFilter('review')} className="mt-1 text-xs text-primary hover:underline">View items requiring action →</button></Card>
     </div>
     {filter !== 'all' && <div className="flex items-center gap-2 text-sm"><span className="rounded-full bg-muted px-3 py-1">Status: {filter === 'pending' ? 'Pending' : filter === 'variance' ? 'With variance' : 'Review required'}</span><Button size="sm" variant="ghost" onClick={() => setFilter('all')}>Clear</Button></div>}
-    <Card className="overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"><div><h2 className="font-semibold">Employee Reconciliation Queue</h2><p className="text-xs text-muted-foreground">Select an employee to reconcile daily inputs, variances, and notes.</p></div><span className="text-xs text-muted-foreground">{visible.length} employees</span></div><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="bg-muted/70"><tr>{['Employee','System Net Pay','Variance','Daily Admin/HR Notes','Status','Action'].map(label => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr></thead><tbody>{visible.map(row => <tr key={row.record.id} className="border-t"><td className="px-4 py-3 font-medium">{row.record.employee_name}<span className="block text-xs font-normal text-muted-foreground">{row.record.employee_id}</span></td><td className="px-4 py-3 font-mono">{money(row.record.net_pay)}</td><td className={`px-4 py-3 font-mono ${row.variance ? 'text-red-600' : 'text-emerald-700'}`}>{row.variance ? money(row.difference) : 'None'}</td><td className="px-4 py-3 text-xs">{row.noteCount ? `${row.noteCount} note${row.noteCount === 1 ? '' : 's'}` : '—'}</td><td className="px-4 py-3"><span className="rounded-full bg-muted px-2 py-1 text-xs">{row.status}</span></td><td className="px-4 py-3"><Button size="sm" variant="outline" onClick={() => onEmployee(String(row.record.employee_id))}>{row.reconciliation ? 'Open' : 'Reconcile'}</Button></td></tr>)}</tbody></table></div>{!visible.length && <p className="p-8 text-center text-sm text-muted-foreground">No employees match this filter.</p>}</Card>
+    <Card className="overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"><div><h2 className="font-semibold">Employee Reconciliation Queue</h2><p className="text-xs text-muted-foreground">Select an employee to reconcile daily inputs, variances, and notes.</p></div><span className="text-xs text-muted-foreground">{visible.length} employees</span></div><div className="overflow-x-auto"><table className="w-full min-w-[940px] text-sm"><thead className="bg-muted/70"><tr>{['#','Employee','System Net Pay','Variance','Daily Admin/HR Notes','Status','Action'].map(label => <th key={label} className={`px-4 py-3 text-left ${label === '#' ? 'w-12 text-right' : ''}`}>{label}</th>)}</tr></thead><tbody>{visible.map((row, index) => <tr key={row.record.id} className="border-t"><td className="px-4 py-3 text-right font-mono text-muted-foreground">{index + 1}</td><td className="px-4 py-3 font-medium">{row.record.employee_name}<span className="block text-xs font-normal text-muted-foreground">{row.record.employee_id}</span></td><td className="px-4 py-3 font-mono">{money(row.record.net_pay)}</td><td className={`px-4 py-3 font-mono ${row.variance ? 'text-red-600' : 'text-emerald-700'}`}>{row.variance ? money(row.difference) : 'None'}</td><td className="px-4 py-3 text-xs">{row.noteCount ? `${row.noteCount} note${row.noteCount === 1 ? '' : 's'}` : '—'}</td><td className="px-4 py-3"><span className="rounded-full bg-muted px-2 py-1 text-xs">{row.status}</span></td><td className="px-4 py-3"><Button size="sm" variant="outline" onClick={() => onEmployee(String(row.record.employee_id))}>{row.reconciliation ? 'Open' : 'Reconcile'}</Button></td></tr>)}</tbody></table></div>{!visible.length && <p className="p-8 text-center text-sm text-muted-foreground">No employees match this filter.</p>}</Card>
   </div>;
 }
 
@@ -286,6 +288,9 @@ export default function PayrollReconciliation() {
   useEffect(() => { if (employeeId !== 'all' && records.length && !records.some(row => String(row.employee_id) === employeeId)) setEmployeeId('all'); }, [records, employeeId]);
   const record = records.find(row => String(row.employee_id) === employeeId);
   const isConsolidated = employeeId === 'all';
+  const employeeQuery = useQuery({ queryKey: ['recon-employee', activeCompanyId, employeeId], queryFn: () => appApi.entities.Employee.filter({ company_profile_id: activeCompanyId, employee_id: employeeId }, '-created_date', 1), enabled: Boolean(activeCompanyId && employeeId && !isConsolidated) });
+  const employee = employeeQuery.data?.[0];
+  const shiftSettingsQuery = useQuery({ queryKey: ['recon-shift-settings', activeCompanyId], queryFn: () => appApi.entities.Settings.filter({ company_profile_id: activeCompanyId }), enabled: Boolean(activeCompanyId && !isConsolidated) });
   const logsQuery = useQuery({ queryKey: ['recon-logs', activeCompanyId, employeeId, period?.start_date, period?.end_date], queryFn: () => appApi.entities.AttendanceLog.filter({ company_profile_id: activeCompanyId, employee_id: employeeId, date: { $gte: period.start_date, $lte: period.end_date } }, 'date', 100), enabled: Boolean(activeCompanyId && employeeId && !isConsolidated && period?.start_date) });
   const overtimeRequestsQuery = useQuery({ queryKey: ['recon-overtime-requests', activeCompanyId, employeeId, period?.start_date, period?.end_date], queryFn: () => appApi.entities.OvertimeRequest.filter({ company_profile_id: activeCompanyId, employee_id: employeeId, date: { $gte: period.start_date, $lte: period.end_date }, status: 'approved' }, '-reviewed_at', 100), enabled: Boolean(activeCompanyId && employeeId && !isConsolidated && period?.start_date) });
   const reconQuery = useQuery({ queryKey: ['recon-saved', activeCompanyId, periodId, employeeId], queryFn: () => appApi.entities.PayrollReconciliation.filter({ company_profile_id: activeCompanyId, payroll_period_id: periodId, employee_id: employeeId }, '-updated_date', 1), enabled: Boolean(activeCompanyId && periodId && employeeId && !isConsolidated) });
@@ -297,8 +302,46 @@ export default function PayrollReconciliation() {
   const days = useMemo(() => dateRange(period?.start_date, period?.end_date), [period?.start_date, period?.end_date]);
   const logByDate = useMemo(() => new Map((logsQuery.data || []).map(log => [log.date, log])), [logsQuery.data]);
   const overtimeRequests = overtimeRequestsQuery.data || [];
-  const systemDailyValue = (log, key) => num(key === 'regular_hours' ? log.hours_worked : key === 'overtime_hours' ? reconciledOvertimeHours(log, overtimeRequests) : log[key]);
-  const currentOvertimeHours = useMemo(() => (logsQuery.data || []).reduce((total, log) => total + reconciledOvertimeHours(log, overtimeRequests), 0), [logsQuery.data, overtimeRequestsQuery.dataUpdatedAt]);
+  const dailyShiftOptions = log => {
+    const sourceSettings = shiftSettingsQuery.data || [];
+    const settings = sourceSettings.map(setting => effectiveShiftSetting(setting, log?.date)).filter(setting => setting?.is_active !== false);
+    const periodDefaultSettings = sourceSettings.map(setting => effectiveShiftSetting(setting, period?.end_date)).filter(setting => setting?.is_active !== false);
+    const defaultShift = periodDefaultSettings.find(setting => setting.is_default) || periodDefaultSettings[0] || {};
+    const shiftValue = log?.work_schedule || resolveEmployeeWorkSchedule(employee, log?.date, defaultShift.id || 'day_shift');
+    const savedShift = settings.find(setting => String(setting.id) === String(shiftValue));
+    const shift = shiftFromAttendanceSnapshot(log, savedShift) || savedShift || legacyShiftSetting(shiftValue) || defaultShift;
+    const grace = Number(shift.grace_period_minutes) || 0;
+    return {
+      shiftStartTime: shift.shift_start_time || '08:00',
+      shiftEndTime: shift.shift_end_time || '17:00',
+      overtimeStartTime: shift.overtime_start_time || null,
+      timeInAllowanceMinutes: Number(shift.time_in_allowance_minutes) || 0,
+      breakInGraceMinutes: grace,
+      breakDurationMinutes: Number(shift.break_duration_minutes || employee?.break_duration_minutes) || 60,
+      paidBreakTime: Boolean(shift.paid_break_time),
+    };
+  };
+  const derivedRegularHours = log => computeCreditedHoursWorked(log, dailyShiftOptions(log));
+  const derivedLateMinutes = log => computeLateMinutes(log, dailyShiftOptions(log));
+  const derivedOvertimeHours = log => {
+    const approvedRequest = approvedOvertimeRequestForLog(log, overtimeRequests, employee);
+    const requestAware = log?.ot_actual_hours != null || log?.overtime_request_id != null || log?.ot_requested_hours === 0;
+    if (approvedRequest || num(log?.overtime_hours) > 0 || requestAware) return reconciledOvertimeHours(log, overtimeRequests);
+    const options = dailyShiftOptions(log);
+    return options.overtimeStartTime ? computeOvertimeHours(log, derivedRegularHours(log), options) : num(log?.overtime_hours);
+  };
+  const derivedNightDiffHours = log => computeNightDifferentialHours(log, dailyShiftOptions(log));
+  const derivedUndertimeMinutes = log => {
+    const storedMinutes = num(log?.undertime_minutes);
+    if (storedMinutes > 0 || !log?.time_in || log?.day_type === 'half_day') return storedMinutes;
+    const options = dailyShiftOptions(log);
+    const creditedHours = derivedRegularHours(log);
+    const missingMinutes = creditedHours > 0 && creditedHours < 8 ? (8 - creditedHours) * 60 : 0;
+    const lateMinutes = derivedLateMinutes(log);
+    return Math.max(0, missingMinutes - lateMinutes);
+  };
+  const systemDailyValue = (log, key) => num(key === 'regular_hours' ? derivedRegularHours(log) : key === 'overtime_hours' ? derivedOvertimeHours(log) : key === 'night_diff_hours' ? derivedNightDiffHours(log) : key === 'late_minutes' ? derivedLateMinutes(log) : key === 'undertime_minutes' ? derivedUndertimeMinutes(log) : log[key]);
+  const currentOvertimeHours = useMemo(() => (logsQuery.data || []).reduce((total, log) => total + derivedOvertimeHours(log), 0), [logsQuery.data, overtimeRequestsQuery.dataUpdatedAt, employeeQuery.dataUpdatedAt, shiftSettingsQuery.dataUpdatedAt]);
   const payrollOvertimeIsStale = Boolean(record && Math.abs(num(record.overtime_hours) - currentOvertimeHours) > .005);
   const systemSummaryValue = key => key === 'overtime_hours' ? currentOvertimeHours : num(record?.[key]);
   const effectiveManual = deriveManualSummary(manual, record);
@@ -367,7 +410,7 @@ export default function PayrollReconciliation() {
     onError: error => setSaveError(error.message || 'Unable to complete final review.'),
   });
 
-  const loading = periodsQuery.isLoading || recordsQuery.isLoading || consolidatedReconQuery.isLoading || (!isConsolidated && (logsQuery.isLoading || overtimeRequestsQuery.isLoading || reconQuery.isLoading));
+  const loading = periodsQuery.isLoading || recordsQuery.isLoading || consolidatedReconQuery.isLoading || (!isConsolidated && (logsQuery.isLoading || overtimeRequestsQuery.isLoading || reconQuery.isLoading || employeeQuery.isLoading || shiftSettingsQuery.isLoading));
   return <div className="w-full space-y-4 p-4 md:p-6">
     <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><Button variant="outline" size="icon" onClick={() => { setEmployeeId('all'); navigate(`/payroll/reconciliation${periodId ? `?period=${encodeURIComponent(periodId)}` : ''}`); }}><ArrowLeft className="h-4 w-4"/></Button><div><h1 className="flex items-center gap-2 text-2xl font-bold"><Scale className="h-6 w-6 text-primary"/>Payroll Reconciliation</h1><p className="text-sm text-muted-foreground">Reconcile payroll inputs, submit them for review, resolve feedback, and complete final review.</p></div></div>{record && activeStep === 1 && <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}><Save className="mr-2 h-4 w-4"/>{saveMutation.isPending ? 'Saving…' : 'Save changes'}</Button>}</div>
     <div className="grid gap-2 overflow-x-auto rounded-xl border bg-card p-2 md:grid-cols-4" role="tablist" aria-label="Payroll reconciliation workflow">{[

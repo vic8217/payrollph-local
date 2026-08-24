@@ -16,6 +16,14 @@ const metrics = [
 
 const punchFields = ['time_in', 'break_time_out', 'break_time_in', 'time_out'];
 
+const shiftSchedule = log => {
+  const name = log?.shift_name || log?.shift_setting_name || log?.work_schedule || '';
+  const start = log?.shift_start_time || '';
+  const end = log?.shift_end_time || '';
+  if (!name && !start && !end) return '—';
+  return `${name || 'Shift'}${start && end ? ` · ${start}–${end}` : ''}`;
+};
+
 export default function DailyAttendanceInputsTable({ days, logByDate, manualDays, setManualDays, systemDailyValue, time, onSave, dailyNotes = [], noteScope, onNotesSaved }) {
   const [editingDates, setEditingDates] = useState({});
   const [noteDate, setNoteDate] = useState('');
@@ -30,10 +38,10 @@ export default function DailyAttendanceInputsTable({ days, logByDate, manualDays
       <p className="text-xs text-muted-foreground">Manual punches are editable. Regular hours, OT, night differential, late, and undertime are automatically computed from those punches.</p>
     </div>
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1600px] text-xs">
+      <table className="w-full min-w-[1750px] text-xs">
         <thead className="bg-muted/70">
           <tr>
-            <th className="px-3 py-2 text-left">Date</th><th className="px-3 py-2 text-left">Type</th><th className="px-3 py-2 text-left">Day / Status</th><th className="px-3 py-2 text-left">Day Type</th><th className="px-3 py-2 text-left">System Punches<br /><span className="font-normal">(In 1 / Out 1 / In 2 / Out 2)</span></th>
+            <th className="px-3 py-2 text-left">Date</th><th className="px-3 py-2 text-left">Type</th><th className="px-3 py-2 text-left">Day / Status</th><th className="px-3 py-2 text-left">Day Type</th><th className="px-3 py-2 text-left">Shift Schedule</th><th className="px-3 py-2 text-left">System Punches<br /><span className="font-normal">(In 1 / Out 1 / In 2 / Out 2)</span></th>
             {metrics.map(([key, label]) => <th key={key} className="px-3 py-2 text-right">{label}<br /><span className="font-normal">System / Manual / Variance</span></th>)}
             <th className="px-3 py-2 text-left">Admin/HR Note</th><th className="px-3 py-2 text-right">Actions</th>
           </tr>
@@ -53,19 +61,20 @@ export default function DailyAttendanceInputsTable({ days, logByDate, manualDays
                 <td className="px-3 py-2"><span className="rounded border border-blue-200 bg-blue-50 px-2 py-1 font-semibold text-blue-700">SYSTEM</span></td>
                 <td className="px-3 py-2">{log.day_type || 'No record'}<br /><span className="text-muted-foreground">{log.status || '—'}</span></td>
                 <td className="px-3 py-2">{log.day_type || 'regular'}</td>
+                <td className="whitespace-nowrap px-3 py-2">{shiftSchedule(log)}</td>
                 <td className="whitespace-nowrap px-3 py-2 font-mono">{punchFields.map((key, index) => <span key={key}>{time(log[key])}{index < 3 ? ' · ' : ''}</span>)}</td>
                 {metrics.map(([key]) => <td key={key} className="px-3 py-2 text-right font-mono">{system(key).toFixed(2)}</td>)}
                 <td rowSpan={3} className="min-w-44 px-3 py-2 align-middle"><div className="flex flex-col items-start gap-2">{dailyNote ? <span className="text-xs text-emerald-700">✓ Note saved</span> : varianceExists ? <span className="text-xs text-amber-700">● Note required</span> : <span className="text-xs text-muted-foreground">No note added</span>}<Button size="sm" variant="outline" onClick={() => { setNoteDate(date); setNoteText(dailyNote?.note || ''); }}>{dailyNote ? 'View/Edit Note' : 'Add Note'}</Button></div></td><td className="px-3 py-2 text-right">—</td>
               </tr>
               <tr>
                 <td className="px-3 py-2"><span className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">MANUAL</span></td><td className="px-3 py-2">—</td>
-                <td className="px-3 py-2">{editing ? <Input className="h-8 w-24" value={manual.day_type ?? ''} placeholder="regular" onChange={event => update(date, 'day_type', event.target.value)} /> : (manual.day_type || 'regular')}</td>
+                <td className="px-3 py-2">{editing ? <Input className="h-8 w-24" value={manual.day_type ?? ''} placeholder="regular" onChange={event => update(date, 'day_type', event.target.value)} /> : (manual.day_type || 'regular')}</td><td className="px-3 py-2 text-muted-foreground">—</td>
                 <td className="px-3 py-2"><div className="grid min-w-64 grid-cols-4 gap-1">{punchFields.map(key => editing ? <Input key={key} type="time" className="h-8 px-1 text-[10px]" value={manual[key] ?? ''} onChange={event => update(date, key, event.target.value)} /> : <span key={key} className="rounded border px-1 py-2 text-center">{time(manual[key])}</span>)}</div></td>
                 {metrics.map(([key]) => <td key={key} className="px-3 py-2 text-right font-mono">{manualValue(key).toFixed(2)}</td>)}
                 <td className="px-3 py-2 text-right"><Button size="sm" variant="outline" onClick={() => { if (editing) { onSave?.(); setEditingDates(current => ({ ...current, [date]: false })); } else setEditingDates(current => ({ ...current, [date]: true })); }}>{editing ? 'Save' : 'Edit'}</Button></td>
               </tr>
               <tr>
-                <td className="px-3 py-2"><span className="rounded border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700">VARIANCE</span></td><td className="px-3 py-2">—</td><td className="px-3 py-2">—</td><td className="px-3 py-2">—</td>
+                <td className="px-3 py-2"><span className="rounded border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700">VARIANCE</span></td><td className="px-3 py-2">—</td><td className="px-3 py-2">—</td><td className="px-3 py-2">—</td><td className="px-3 py-2">—</td>
                 {metrics.map(([key]) => { const difference = system(key) - manualValue(key); return <td key={key} className={`px-3 py-2 text-right font-mono font-semibold ${difference > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{difference.toFixed(2)}</td>; })}<td className="px-3 py-2 text-right">—</td>
               </tr>
             </Fragment>;
