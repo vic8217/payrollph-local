@@ -1,27 +1,17 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import { appApi } from '@/lib/appApi';
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
 		  LayoutDashboard, Users, Clock, CreditCard,
 		  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, AlertTriangle, ShieldCheck, ReceiptText, BadgeDollarSign, ListChecks, Calculator, BarChart3
+		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, ShieldCheck, ReceiptText, BadgeDollarSign, ListChecks, Calculator, BarChart3
 		} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useCompany } from '@/lib/CompanyContext';
 import { useAuth } from '@/lib/AuthContext';
 import { Badge } from '@/components/ui/badge';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { canReceiveBreakTimeAlerts, employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
-import { manilaDateString } from '@/lib/dateUtils';
 import { hasPermission, permissionForPath, ROLE_PERMISSIONS } from '@/lib/permissions';
 
 // super_admin = all access
@@ -70,8 +60,6 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
-  const [breakAlertOpen, setBreakAlertOpen] = useState(false);
-  const [dismissedBreakAlertKey, setDismissedBreakAlertKey] = useState('');
   const [openGroups, setOpenGroups] = useState({});
   const { companies, activeCompany, setCompany, isCompanyRestricted } = useCompany();
   const { user } = useAuth();
@@ -84,7 +72,6 @@ export default function Layout() {
     return (!permission || hasPermission(userRole, permission)) && (!item.agencyOnly || activeCompany?.uses_employee_agency === true);
   });
   const visibleByPath = new Map(visibleNavItems.map(item => [item.path, item]));
-  const canSeeBreakAlerts = canReceiveBreakTimeAlerts(user);
   const activeCompanyId = activeCompany?.id;
   const timeInReviewBadgeStatus = userRole === 'super_admin' ? 'pending' : 'approved';
 
@@ -99,54 +86,6 @@ export default function Layout() {
   });
   const timeInReviewCount = Number(timeInReviewPage?.pagination?.total || 0);
 
-  const { data: employees = [] } = useQuery({
-    queryKey: ['employees', activeCompanyId, 'break-time-alerts'],
-    queryFn: () => appApi.entities.Employee.filter({ status: 'active', company_profile_id: activeCompanyId }),
-    enabled: !!activeCompanyId && canSeeBreakAlerts,
-  });
-
-  const { data: shiftSettings = [] } = useQuery({
-    queryKey: ['settings', activeCompanyId, 'break-time-alerts'],
-    queryFn: () => appApi.entities.Settings.filter({ company_profile_id: activeCompanyId }),
-    enabled: !!activeCompanyId && canSeeBreakAlerts,
-  });
-
-  const employeesNeedingBreakTime = useMemo(
-    () => employeesMissingBreakTime(employees, shiftSettings, manilaDateString()),
-    [employees, shiftSettings],
-  );
-  const missingBreakTimeCount = employeesNeedingBreakTime.length;
-  const breakAlertKey = activeCompanyId && missingBreakTimeCount > 0
-    ? `break-time-alert:${activeCompanyId}:${employeesNeedingBreakTime.map(employee => employee.id).sort().join(',')}`
-    : '';
-  const breakAlertStorageKey = activeCompanyId ? `payrollph:break-alert-dismissed:${activeCompanyId}` : '';
-
-  useEffect(() => {
-    if (!breakAlertKey || !canSeeBreakAlerts) {
-      if (typeof window !== 'undefined' && breakAlertStorageKey) window.localStorage.removeItem(breakAlertStorageKey);
-      if (dismissedBreakAlertKey) setDismissedBreakAlertKey('');
-      setBreakAlertOpen(false);
-      return;
-    }
-    if (dismissedBreakAlertKey === breakAlertKey) return;
-    const storedKey = typeof window !== 'undefined' && breakAlertStorageKey
-      ? window.localStorage.getItem(breakAlertStorageKey)
-      : '';
-    if (storedKey === breakAlertKey) {
-      setDismissedBreakAlertKey(breakAlertKey);
-      setBreakAlertOpen(false);
-      return;
-    }
-    setBreakAlertOpen(true);
-  }, [breakAlertKey, breakAlertStorageKey, canSeeBreakAlerts, dismissedBreakAlertKey]);
-
-  const dismissBreakAlert = () => {
-    if (typeof window !== 'undefined' && breakAlertStorageKey && breakAlertKey) {
-      window.localStorage.setItem(breakAlertStorageKey, breakAlertKey);
-    }
-    setDismissedBreakAlertKey(breakAlertKey);
-    setBreakAlertOpen(false);
-  };
 
   const SidebarContent = ({ mobile = false } = {}) => {
     const effectiveCollapsed = mobile ? false : collapsed;
@@ -218,9 +157,8 @@ export default function Layout() {
               <span>{group.label}</span><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !expanded && '-rotate-90')} />
             </button>}
             {expanded && items.map((item) => {
-            const showBreakBadge = item.path === '/work-schedule' && missingBreakTimeCount > 0;
             const showTimeInReviewBadge = item.path === '/attendance/time-in-reviews' && timeInReviewCount > 0;
-            const itemBadgeCount = showTimeInReviewBadge ? timeInReviewCount : missingBreakTimeCount;
+            const itemBadgeCount = timeInReviewCount;
             const badgeLabel = itemBadgeCount > 99 ? '99+' : String(itemBadgeCount);
 
             return (item.external ? (
@@ -257,17 +195,6 @@ export default function Layout() {
             >
 	              <item.icon className="w-4 h-4 flex-shrink-0" />
 	              {!effectiveCollapsed && <span className="flex-1">{item.label}</span>}
-                {showBreakBadge && (
-                  <Badge
-                    variant="destructive"
-                    className={cn(
-                      "h-5 min-w-5 px-1.5 justify-center rounded-full text-[10px] leading-none",
-                      effectiveCollapsed && "absolute -right-1 -top-1"
-                    )}
-                  >
-                    {badgeLabel}
-                  </Badge>
-                )}
                 {showTimeInReviewBadge && (
                   <Badge
                     className={cn(
@@ -313,46 +240,6 @@ export default function Layout() {
 
   return (
 	    <div className="flex h-screen bg-background overflow-hidden">
-        <Dialog open={breakAlertOpen} onOpenChange={open => open ? setBreakAlertOpen(true) : dismissBreakAlert()}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center">
-                  <AlertTriangle className="h-5 w-5 text-destructive" />
-                </div>
-                <div>
-                  <DialogTitle>Break time required</DialogTitle>
-                  <DialogDescription>
-                    {missingBreakTimeCount} active employee{missingBreakTimeCount === 1 ? ' needs' : 's need'} a lunch break schedule.
-                  </DialogDescription>
-                </div>
-              </div>
-            </DialogHeader>
-            <div className="rounded-lg border border-border bg-muted/30 max-h-52 overflow-auto">
-              {employeesNeedingBreakTime.slice(0, 8).map(employee => (
-                <div key={employee.id} className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border last:border-0">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{employee.first_name} {employee.last_name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{employee.employee_id || 'No employee ID'}{employee.department ? ` · ${employee.department}` : ''}</p>
-                  </div>
-                  <Badge variant="destructive" className="text-[10px]">Missing</Badge>
-                </div>
-              ))}
-              {employeesNeedingBreakTime.length > 8 && (
-                <div className="px-3 py-2 text-xs text-muted-foreground">
-                  +{employeesNeedingBreakTime.length - 8} more employee{employeesNeedingBreakTime.length - 8 === 1 ? '' : 's'}
-                </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={dismissBreakAlert}>Dismiss</Button>
-              <Button asChild onClick={dismissBreakAlert}>
-                <NavLink to="/settings">Set break times</NavLink>
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
 	      {/* Desktop Sidebar */}
       <aside className={cn(
         "hidden md:flex flex-col border-r border-border bg-card transition-all duration-300 flex-shrink-0",

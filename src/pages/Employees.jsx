@@ -635,7 +635,7 @@ export default function Employees() {
       <div className="flex flex-wrap gap-3">
         <Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="w-48"><SelectValue placeholder="Employee Status" /></SelectTrigger><SelectContent>{filters.map(filter => <SelectItem key={filter.id} value={filter.id}>{filter.label} ({filter.count})</SelectItem>)}</SelectContent></Select>
         <Select value={payrollMethodFilter} onValueChange={setPayrollMethodFilter}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Payroll Methods</SelectItem><SelectItem value="ATM">ATM</SelectItem><SelectItem value="NON_ATM">Non-ATM</SelectItem><SelectItem value="UNASSIGNED">Unassigned</SelectItem></SelectContent></Select>
-        {activeCompany?.uses_employee_agency && <Select value={agencyTypeFilter} onValueChange={setAgencyTypeFilter}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Employee Types</SelectItem><SelectItem value="agency">Agency</SelectItem><SelectItem value="direct">Direct</SelectItem></SelectContent></Select>}
+        <Select value={agencyTypeFilter} onValueChange={setAgencyTypeFilter}><SelectTrigger className="w-48"><SelectValue placeholder="Employee Type" /></SelectTrigger><SelectContent><SelectItem value="all">All Employee Types</SelectItem><SelectItem value="agency">Agency</SelectItem><SelectItem value="direct">Direct</SelectItem></SelectContent></Select>
       </div>
 
       <Card className="overflow-hidden">
