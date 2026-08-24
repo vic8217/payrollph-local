@@ -206,12 +206,16 @@ export default function UserManagement() {
   const roleColors = {
     super_admin: 'bg-purple-100 text-purple-700 border-purple-200',
     admin: 'bg-red-100 text-red-700 border-red-200',
+    hr_staff: 'bg-sky-100 text-sky-700 border-sky-200',
+    attendance_staff: 'bg-cyan-100 text-cyan-700 border-cyan-200',
     user: 'bg-blue-100 text-blue-700 border-blue-200',
   };
 
   const roleLabels = {
     super_admin: 'Super Admin',
     admin: 'Management / Admin',
+    hr_staff: 'HR Staff',
+    attendance_staff: 'Attendance Staff',
     user: 'User / HR Officer',
   };
 
@@ -417,7 +421,9 @@ export default function UserManagement() {
                               <SelectItem value="super_admin">Super Admin (all access)</SelectItem>
                             )}
                             <SelectItem value="admin">Management / Admin</SelectItem>
-                            <SelectItem value="user">User / HR Officer</SelectItem>
+                            <SelectItem value="hr_staff">HR Staff</SelectItem>
+                            <SelectItem value="attendance_staff">Attendance Staff</SelectItem>
+                            <SelectItem value="user">User / HR Officer (legacy)</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>

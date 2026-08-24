@@ -1,6 +1,6 @@
 // @ts-nocheck
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { appApi } from '@/lib/appApi';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -378,6 +378,7 @@ function automaticIncentivesForEmployee(employee, logs, periodStartDate, periodE
 
 export default function Payroll() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedPeriod, setSelectedPeriod] = useState(/** @type {PayrollEntity | null} */ (null));
   const [selectedRecord, setSelectedRecord] = useState(/** @type {PayrollEntity | null} */ (null));
@@ -388,6 +389,7 @@ export default function Payroll() {
   const [governmentDeductionError, setGovernmentDeductionError] = useState('');
   const [generationReviewOpen, setGenerationReviewOpen] = useState(false);
   const [generationReviewConfirmed, setGenerationReviewConfirmed] = useState(false);
+  const [generationOverrideConfirmed, setGenerationOverrideConfirmed] = useState(false);
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [generating, setGenerating] = useState(false);
   const [previewEmployeeId, setPreviewEmployeeId] = useState('');
@@ -403,6 +405,7 @@ export default function Payroll() {
   const qc = useQueryClient();
   const { activeCompanyId, activeCompany } = useCompany();
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
   const entities = /** @type {Record<string, any>} */ (appApi.entities);
 
   const baseWeek = new Date();
@@ -766,7 +769,7 @@ export default function Payroll() {
     if (weekStart > new Date()) return;
     const existingTargetPeriod = periods.find(p => p.start_date === startStr && p.end_date === endStr);
     if (existingTargetPeriod?.status === 'released') return;
-    if (!existingTargetPeriod && previousPeriodReleaseBlock) return;
+    if (!existingTargetPeriod && previousPeriodReleaseBlock && !isSuperAdmin) return;
     setGenerating(true);
     setIncompleteLogsError(null);
     setPendingAttendanceError(null);
@@ -1216,6 +1219,14 @@ export default function Payroll() {
   );
   const hasAnyEarlierPayroll = periods.some(period => period.end_date < startStr);
   const previousPeriodReleaseBlock = !targetPeriod && hasAnyEarlierPayroll && previousPeriod?.status !== 'released';
+  useEffect(() => {
+    if (isSuperAdmin && new URLSearchParams(location.search).get('override') === '1' && previousPeriodReleaseBlock) {
+      setGenerationReviewConfirmed(false);
+      setGenerationOverrideConfirmed(false);
+      setGenerationReviewOpen(true);
+      navigate('/payroll', { replace: true });
+    }
+  }, [isSuperAdmin, location.search, previousPeriodReleaseBlock]);
   const savedPeriodsByRange = new Map(periods.map(period => [`${period.start_date}:${period.end_date}`, period]));
   const summaryPeriods = Array.from({ length: 8 }, (_, index) => {
     const configuredPeriod = getPayrollPeriodForDate(baseWeek, activeCompany, -index);
@@ -1248,7 +1259,7 @@ export default function Payroll() {
     previousPeriodReleaseBlock;
   const generateTitle = targetPeriod?.status === 'released'
     ? 'Released payroll periods cannot be regenerated'
-    : previousPeriodReleaseBlock
+    : previousPeriodReleaseBlock && !isSuperAdmin
       ? `Release the previous payroll period (${previousPeriodConfig.start_date} to ${previousPeriodConfig.end_date}) before generating this period`
     : targetPeriodIsComplete
       ? 'Regenerate this payroll period using the latest attendance and payroll rules'
@@ -1327,7 +1338,7 @@ export default function Payroll() {
             <Calculator className="h-4 w-4" /> Payroll Recon
           </Button>
           <Button
-            onClick={() => { setGenerationReviewConfirmed(false); setGenerationReviewOpen(true); }}
+            onClick={() => { setGenerationReviewConfirmed(false); setGenerationOverrideConfirmed(false); setGenerationReviewOpen(true); }}
             disabled={generateDisabled}
             className="gap-2"
             title={generateTitle}
@@ -1965,23 +1976,29 @@ export default function Payroll() {
       </Dialog>
 
       {/* Payslip Dialog */}
-      <Dialog open={generationReviewOpen} onOpenChange={open => { setGenerationReviewOpen(open); if (!open) setGenerationReviewConfirmed(false); }}>
+      <Dialog open={generationReviewOpen} onOpenChange={open => { setGenerationReviewOpen(open); if (!open) { setGenerationReviewConfirmed(false); setGenerationOverrideConfirmed(false); } }}>
         <PayrollDialogContent className="max-w-lg">
-          <PayrollDialogHeader><PayrollDialogTitle>Review mandatory deductions</PayrollDialogTitle></PayrollDialogHeader>
+          <PayrollDialogHeader><PayrollDialogTitle>{isSuperAdmin && previousPeriodReleaseBlock ? 'Review previous payroll period' : 'Review mandatory deductions'}</PayrollDialogTitle></PayrollDialogHeader>
           <div className="space-y-4">
-            <div className={`rounded-lg border p-4 ${targetPeriod?.mandatory_deductions_applied ? 'border-green-200 bg-green-50 text-green-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
-              <p className="font-semibold">{targetPeriod?.mandatory_deductions_applied ? 'Mandatory deductions applied' : 'No mandatory deductions applied'}</p>
-              <p className="text-sm mt-1">{targetPeriod?.mandatory_deductions_applied
+            <div className={`rounded-lg border p-4 ${(!previousPeriodReleaseBlock && targetPeriod?.mandatory_deductions_applied) ? 'border-green-200 bg-green-50 text-green-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+              <p className="font-semibold">{isSuperAdmin && previousPeriodReleaseBlock ? 'Previous period requires review' : targetPeriod?.mandatory_deductions_applied ? 'Mandatory deductions applied' : 'No mandatory deductions applied'}</p>
+              <p className="text-sm mt-1">{isSuperAdmin && previousPeriodReleaseBlock
+                ? `Review and complete ${previousPeriod?.period_name || `${previousPeriodConfig.start_date} to ${previousPeriodConfig.end_date}`} before releasing it. The current period (${targetPeriodLabel}) will be generated only after this explicit override confirmation.`
+                : targetPeriod?.mandatory_deductions_applied
                 ? 'This payroll period already has reviewed mandatory deductions. Regeneration will preserve those amounts.'
                 : 'This is the default. SSS, PhilHealth, and Pag-IBIG will be ₱0.00 unless an approved deduction set is applied after payroll generation.'}</p>
             </div>
             <button type="button" className="w-full flex items-start gap-3 rounded-lg border p-4 text-left" onClick={() => setGenerationReviewConfirmed(value => !value)}>
               <Checkbox checked={generationReviewConfirmed} className="mt-0.5" />
-              <span className="text-sm">I reviewed the mandatory deduction status for <strong>{targetPeriodLabel}</strong> and confirm that payroll may be generated with the status shown above.</span>
+              <span className="text-sm">I reviewed the {isSuperAdmin && previousPeriodReleaseBlock ? 'previous payroll period requirements' : 'mandatory deduction status'} for <strong>{isSuperAdmin && previousPeriodReleaseBlock ? (previousPeriod?.period_name || `${previousPeriodConfig.start_date} to ${previousPeriodConfig.end_date}`) : targetPeriodLabel}</strong> and confirm that payroll may be generated with the status shown above.</span>
             </button>
+            {isSuperAdmin && previousPeriodReleaseBlock && <button type="button" className="w-full flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-left text-amber-950" onClick={() => setGenerationOverrideConfirmed(value => !value)}>
+              <Checkbox checked={generationOverrideConfirmed} className="mt-0.5" />
+              <span className="text-sm"><strong>Super-admin override for previous period:</strong> I authorize generating <strong>{targetPeriodLabel}</strong> even though <strong>{previousPeriod?.period_name || `${previousPeriodConfig.start_date} to ${previousPeriodConfig.end_date}`}</strong> is not released. I understand that missing data and required actions belong to the previous period and must be completed, corrected, reconciled, and released afterward.</span>
+            </button>}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setGenerationReviewOpen(false)}>Cancel</Button>
-              <Button disabled={!generationReviewConfirmed} onClick={() => { setGenerationReviewOpen(false); setGenerationReviewConfirmed(false); generatePayroll(); }}>
+              <Button disabled={!generationReviewConfirmed || (isSuperAdmin && previousPeriodReleaseBlock && !generationOverrideConfirmed)} onClick={() => { setGenerationReviewOpen(false); setGenerationReviewConfirmed(false); setGenerationOverrideConfirmed(false); generatePayroll(); }}>
                 <Play className="w-4 h-4 mr-2" />Confirm and generate
               </Button>
             </div>

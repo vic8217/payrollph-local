@@ -43,6 +43,7 @@ import PayrollReconciliation from '@/pages/PayrollReconciliation';
 import TimeInReviews from '@/pages/TimeInReviews';
 import Agency from '@/pages/Agency';
 import Maintenance from '@/pages/Maintenance';
+import { hasPermission, permissionForPath } from '@/lib/permissions';
 
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
@@ -85,6 +86,14 @@ const AuthenticatedApp = () => {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
+  }
+
+  // Keep client-side navigation aligned with the server request gate. This is
+  // especially important for `/`, which remains public so the login page can
+  // be reached while maintenance mode is active.
+  const requiredPermission = permissionForPath(path);
+  if (requiredPermission && !hasPermission(user.role, requiredPermission)) {
+    return <Navigate to="/attendance" replace />;
   }
 
   return (

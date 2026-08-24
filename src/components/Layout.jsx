@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import { canReceiveBreakTimeAlerts, employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
 import { manilaDateString } from '@/lib/dateUtils';
+import { hasPermission, permissionForPath, ROLE_PERMISSIONS } from '@/lib/permissions';
 
 // super_admin = all access
 // admin = all except daily passcode & user management
@@ -56,6 +57,14 @@ const navItems = [
   { label: 'Portal QR Code',  icon: QrCode,            path: '/employee-portal-qr', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Employee Portal', icon: MonitorSmartphone, path: '/employee-portal',    roles: ['super_admin', 'admin', 'user'], external: true },
 ];
+const NAV_GROUPS = [
+  { label: 'Overview', paths: ['/', '/management-reports'] },
+  { label: 'People & Attendance', paths: ['/employees', '/agency', '/attendance', '/attendance/time-in-reviews', '/work-schedule', '/personal-leave', '/holidays', '/no-work-days'] },
+  { label: 'Payroll', paths: ['/payroll', '/special-rates', '/special-rate-payroll', '/thirteenth-month-pay', '/separation-pay', '/cash-advance'] },
+  { label: 'Compliance', paths: ['/statutory-rates', '/mandatory-deductions'] },
+  { label: 'Security & Access', paths: ['/user-management', '/users-log', '/passcode-audit', '/payslip-acknowledgements', '/passcode-manager'] },
+  { label: 'Settings', paths: ['/company-profile', '/archived-companies', '/settings', '/employee-portal-qr'] },
+];
 
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(false);
@@ -63,13 +72,18 @@ export default function Layout() {
   const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
   const [breakAlertOpen, setBreakAlertOpen] = useState(false);
   const [dismissedBreakAlertKey, setDismissedBreakAlertKey] = useState('');
+  const [openGroups, setOpenGroups] = useState({});
   const { companies, activeCompany, setCompany, isCompanyRestricted } = useCompany();
   const { user } = useAuth();
 
   const handleLogout = () => appApi.auth.logout('/landing');
 
-  const userRole = ['super_admin', 'admin', 'user'].includes(user?.role) ? user.role : 'user';
-  const visibleNavItems = navItems.filter(item => item.roles.includes(userRole) && (!item.agencyOnly || activeCompany?.uses_employee_agency === true));
+  const userRole = Object.hasOwn(ROLE_PERMISSIONS, user?.role) ? user.role : 'user';
+  const visibleNavItems = navItems.filter(item => {
+    const permission = permissionForPath(item.path);
+    return (!permission || hasPermission(userRole, permission)) && (!item.agencyOnly || activeCompany?.uses_employee_agency === true);
+  });
+  const visibleByPath = new Map(visibleNavItems.map(item => [item.path, item]));
   const canSeeBreakAlerts = canReceiveBreakTimeAlerts(user);
   const activeCompanyId = activeCompany?.id;
   const timeInReviewBadgeStatus = userRole === 'super_admin' ? 'pending' : 'approved';
@@ -193,15 +207,23 @@ export default function Layout() {
         )}
       </div>
 
-      <nav className="flex-1 py-4 space-y-0.5 px-2 overflow-y-auto">
-	        {visibleNavItems.map((item) => {
+      <nav className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
+        {NAV_GROUPS.map((group) => {
+          const items = group.paths.map(path => visibleByPath.get(path)).filter(Boolean);
+          if (!items.length) return null;
+          const active = items.some(item => window.location.pathname === item.path);
+          const expanded = effectiveCollapsed || openGroups[group.label] || active;
+          return <div key={group.label} className="space-y-0.5">
+            {!effectiveCollapsed && <button type="button" aria-expanded={expanded} onClick={() => setOpenGroups(prev => ({ ...prev, [group.label]: !expanded }))} className="flex w-full items-center justify-between rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted">
+              <span>{group.label}</span><ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !expanded && '-rotate-90')} />
+            </button>}
+            {expanded && items.map((item) => {
             const showBreakBadge = item.path === '/work-schedule' && missingBreakTimeCount > 0;
             const showTimeInReviewBadge = item.path === '/attendance/time-in-reviews' && timeInReviewCount > 0;
             const itemBadgeCount = showTimeInReviewBadge ? timeInReviewCount : missingBreakTimeCount;
             const badgeLabel = itemBadgeCount > 99 ? '99+' : String(itemBadgeCount);
 
-            return (
-	          item.external ? (
+            return (item.external ? (
 	            <a
 	              key={item.path}
               href={activeCompanyId
@@ -257,8 +279,15 @@ export default function Layout() {
                   </Badge>
                 )}
 	            </NavLink>
-	          )
-          )})}
+              ));
+            })}
+          </div>;
+        })}
+        {visibleNavItems.filter(item => item.external).map(item => (
+          <a key={item.path} href={activeCompanyId ? `${item.path}?company_profile_id=${encodeURIComponent(activeCompanyId)}` : item.path} target="_blank" rel="noopener noreferrer" className={cn("flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted border border-dashed border-border mt-2", effectiveCollapsed && "justify-center px-2")}>
+            <item.icon className="w-4 h-4 flex-shrink-0" /> {!effectiveCollapsed && <span>Employee Portal ↗</span>}
+          </a>
+        ))}
 	      </nav>
 
       <div className={cn("p-3 border-t border-border", effectiveCollapsed && "px-1")}>

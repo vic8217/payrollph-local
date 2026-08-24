@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/server/prisma";
 import { isMaintenanceMode, sendMaintenanceUnavailable } from "@/server/maintenance";
 
-const ALLOWED_ROLES = new Set(["super_admin", "admin", "user"]);
+const ALLOWED_ROLES = new Set(["user"]);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

@@ -43,7 +43,14 @@ export default async function handler(req, res) {
       const companyProfileId = String(input.companyProfileId || '');
       if (!canAccessCompany(user, companyProfileId)) return fail(res, 403, 'You do not have access to this company.');
       const where = { companyProfileId, ...(input.payrollPeriodId ? { payrollPeriodId: String(input.payrollPeriodId) } : {}), ...(input.employeeId ? { employeeId: String(input.employeeId) } : {}) };
-      const notes = await prisma.payrollReconciliationReviewerNote.findMany({ where, include: { events: { orderBy: { createdAt: 'asc' } }, createdBy: true, respondedBy: true, resolvedBy: true }, orderBy: { createdAt: 'desc' } });
+      let notes = [];
+      try {
+        notes = await prisma.payrollReconciliationReviewerNote.findMany({ where, include: { events: { orderBy: { createdAt: 'asc' } }, createdBy: true, respondedBy: true, resolvedBy: true }, orderBy: { createdAt: 'desc' } });
+      } catch (error) {
+        // Reviewer notes are an optional workflow feature until its migration is deployed.
+        // Do not expose a database-schema error in the reconciliation screen.
+        if (error?.code !== 'P2021') throw error;
+      }
       if (action === 'summary') {
         return res.status(200).json(await payrollReconciliationReadiness(companyProfileId, String(input.payrollPeriodId)));
       }

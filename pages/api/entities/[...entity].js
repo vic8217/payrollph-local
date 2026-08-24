@@ -11,6 +11,7 @@ import {
 import { manilaDateString } from "@/lib/dateUtils";
 import { isAgencyEmployee, moneyToCents, normalizePayrollMethod } from "@/lib/agencyPayroll";
 import { payrollReconciliationReadiness } from "@/server/payrollReconciliationReadiness";
+import { ENTITY_PERMISSIONS, hasPermission } from "@/lib/permissions";
 
 async function assertPayrollReleaseReadiness(periodId) {
   const [period] = await listRecords("PayrollPeriod", { filter: { id: periodId }, limit: 1 });
@@ -272,6 +273,16 @@ export default async function handler(req, res) {
   }
 
   try {
+    const entityPermission = ENTITY_PERMISSIONS[entity];
+    const session = await getServerSession(req, res, authOptions);
+    if (session?.user?.role === "attendance_staff" && !entityPermission && entity !== "Employee") {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    if (entityPermission) {
+      if (!session?.user || !hasPermission(session.user.role, entityPermission)) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+    }
     if (entity === "EmployeePasskey") {
       return res.status(403).json({ error: "Employee passkeys are available only through the protected passkey workflow." });
     }

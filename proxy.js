@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { prisma } from "@/server/prisma";
 import { isMaintenanceMode, MAINTENANCE_UNAVAILABLE_MESSAGE } from "@/server/maintenance";
+import { hasPermission, permissionForPath } from "@/lib/permissions";
 
 const PUBLIC_PAGE_PATHS = new Set(["/", "/landing", "/maintenance"]);
 const LOGIN_API_PATHS = new Set([
@@ -21,13 +22,10 @@ function unavailableApiResponse() {
  * persisted AppUser row rather than the role claim in a browser cookie/JWT.
  */
 export async function proxy(request) {
-  if (!isMaintenanceMode()) return NextResponse.next();
-
   const { pathname } = request.nextUrl;
   const isApi = pathname.startsWith("/api/");
 
-  if (LOGIN_API_PATHS.has(pathname)) return NextResponse.next();
-  if (!isApi && PUBLIC_PAGE_PATHS.has(pathname)) return NextResponse.next();
+  if (LOGIN_API_PATHS.has(pathname) || (!isApi && PUBLIC_PAGE_PATHS.has(pathname))) return NextResponse.next();
 
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (token?.sub && token.active_session_id) {
@@ -39,11 +37,29 @@ export async function proxy(request) {
       },
       select: { role: true },
     });
-    if (user?.role === "super_admin") return NextResponse.next();
+    if (isMaintenanceMode() && user?.role === "super_admin") return NextResponse.next();
+    if (!isMaintenanceMode() && !isApi) {
+      const permission = permissionForPath(pathname);
+      if (!permission || hasPermission(user?.role, permission)) return NextResponse.next();
+      return NextResponse.redirect(new URL("/landing", request.url));
+    }
+    if (!isMaintenanceMode() && isApi && user?.role === "attendance_staff") {
+      const allowedFunctionApis = new Set([
+        "/api/functions/reviewTimeInAdjustment",
+        "/api/functions/changeEmployeeWorkSchedule",
+      ]);
+      if (pathname.startsWith("/api/functions/") && !allowedFunctionApis.has(pathname)) {
+        return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+      }
+      if (pathname.startsWith("/api/users") || pathname.startsWith("/api/payroll-") || pathname.startsWith("/api/benefits")) {
+        return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+      }
+      return NextResponse.next();
+    }
   }
-
-  if (isApi) return unavailableApiResponse();
-  return NextResponse.redirect(new URL("/maintenance", request.url));
+  if (isMaintenanceMode()) return isApi ? unavailableApiResponse() : NextResponse.redirect(new URL("/maintenance", request.url));
+  if (isApi) return NextResponse.next();
+  return NextResponse.redirect(new URL("/landing", request.url));
 }
 
 export const config = {

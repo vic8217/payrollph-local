@@ -1718,8 +1718,10 @@ export default function Attendance() {
   const [downloading, setDownloading] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState('all');
   const [summaryDate, setSummaryDate] = useState(() => manilaDateString());
+  const [summaryMetric, setSummaryMetric] = useState(null);
   const [showQuickView, setShowQuickView] = useState(false);
   const [showApprovedOtPage, setShowApprovedOtPage] = useState(false);
+  const [confirmingAbsence, setConfirmingAbsence] = useState(null);
   const [approvedOtDetail, setApprovedOtDetail] = useState(null);
   const [approvedOtDate, setApprovedOtDate] = useState('');
   const [approvedOtEmployee, setApprovedOtEmployee] = useState('all');
@@ -1727,6 +1729,20 @@ export default function Attendance() {
   const { activeCompanyId, activeCompany } = useCompany();
   const qc = useQueryClient();
   const canCorrectAttendance = ['admin', 'super_admin'].includes(currentUser?.role);
+  const confirmAbsenceMutation = useMutation({
+    mutationFn: employee => appApi.entities.AttendanceLog.create({
+      company_profile_id: activeCompanyId,
+      employee_record_id: employee.id,
+      employee_id: employee.employee_id,
+      employee_name: employeeFullName(employee),
+      date: summaryDate,
+      status: 'approved',
+      day_type: 'absent',
+      is_absent: true,
+      notes: 'Absence confirmed by authorized reviewer',
+    }),
+    onSuccess: () => { setConfirmingAbsence(null); qc.invalidateQueries({ queryKey: ['attendance'] }); qc.invalidateQueries({ queryKey: ['attendance-summary'] }); },
+  });
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60 * 1000);
@@ -2649,6 +2665,7 @@ export default function Attendance() {
   const dailySummaryTotals = dailySummaryRows.reduce((totals, row) => ({
     employees: totals.employees + 1,
     present: totals.present + (row.logs > 0 ? 1 : 0),
+    absent: totals.absent + (row.log?.is_absent === true || row.log?.day_type === 'absent' ? 1 : 0),
     complete: totals.complete + (row.completed ? 1 : 0),
     incomplete: totals.incomplete + (row.logs > 0 && !row.completed ? 1 : 0),
     noLog: totals.noLog + (row.logs === 0 ? 1 : 0),
@@ -2661,6 +2678,7 @@ export default function Attendance() {
   }), {
     employees: 0,
     present: 0,
+    absent: 0,
     complete: 0,
     incomplete: 0,
     noLog: 0,
@@ -2671,6 +2689,20 @@ export default function Attendance() {
     nightDiffHours: 0,
     agencyFee: 0,
   });
+  const summaryRowsForDisplay = summaryMetric
+    ? dailySummaryRows.filter(row => {
+      if (summaryMetric === 'present') return row.logs > 0;
+      if (summaryMetric === 'absent') return row.log?.is_absent === true || row.log?.day_type === 'absent';
+      if (summaryMetric === 'complete') return row.completed;
+      if (summaryMetric === 'incomplete') return row.logs > 0 && !row.completed;
+      if (summaryMetric === 'undertime') return row.undertimeMinutes > 0;
+      if (summaryMetric === 'overtime') return row.overtimeHours > 0;
+      if (summaryMetric === 'night_diff') return row.nightDiffHours > 0;
+      if (summaryMetric === 'agency_fee') return row.agencyFee > 0;
+      if (summaryMetric === 'hours') return row.hours > 0;
+      return true;
+    })
+    : [];
 
   const filteredEmployeeIds = new Set(filteredEmployees.map(employee => String(employee.id || '')));
   const filteredEmployeeCodes = new Set(filteredEmployees.map(employee => normalizeAttendanceKey(employee.employee_id)));
@@ -2998,14 +3030,6 @@ export default function Attendance() {
                 <div>
                   <div className="flex items-center gap-2">
                     <p className="font-semibold text-sm text-foreground">Daily Punch Audit</p>
-                    <Badge
-                      variant="outline"
-                      className={dailySummaryTotals.needsReview > 0
-                        ? 'bg-amber-100 text-amber-800 border-amber-200'
-                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'}
-                    >
-                      {dailySummaryTotals.needsReview} need review
-                    </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Review all four daily punches for {filterDept === 'all' ? 'all departments' : filterDept} · {summaryDate}
@@ -3030,46 +3054,11 @@ export default function Attendance() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 border-b border-border">
-                <div className="px-4 py-3 border-r border-border last:border-r-0">
-                  <p className="text-xs text-muted-foreground">Employees</p>
-                  <p className="text-lg font-semibold text-foreground">{dailySummaryTotals.employees}</p>
-                </div>
-                <div className="px-4 py-3 border-r border-border last:border-r-0">
-                  <p className="text-xs text-muted-foreground">Present</p>
-                  <p className="text-lg font-semibold text-emerald-700">{dailySummaryTotals.present}</p>
-                </div>
-                <div className="px-4 py-3 border-r border-border last:border-r-0">
-                  <p className="text-xs text-muted-foreground">Complete</p>
-                  <p className="text-lg font-semibold text-foreground">{dailySummaryTotals.complete}</p>
-                </div>
-                <div className="px-4 py-3 border-r border-border last:border-r-0">
-                  <p className="text-xs text-muted-foreground">Incomplete</p>
-                  <p className="text-lg font-semibold text-amber-700">{dailySummaryTotals.incomplete}</p>
-                </div>
-                <div className="px-4 py-3 border-r border-border last:border-r-0">
-                  <p className="text-xs text-muted-foreground">Work Hours</p>
-                  <p className="text-lg font-semibold text-foreground">{formatHours(dailySummaryTotals.hours)}</p>
-                </div>
-                <div className="px-4 py-3 border-r border-border last:border-r-0">
-                  <p className="text-xs text-muted-foreground">Undertime</p>
-                  <p className="text-lg font-semibold text-red-700">{formatMinutes(dailySummaryTotals.undertimeMinutes)}</p>
-                </div>
-                <div className="px-4 py-3 border-r border-border last:border-r-0">
-                  <p className="text-xs text-muted-foreground">Overtime</p>
-                  <p className="text-lg font-semibold text-blue-700">{formatHours(dailySummaryTotals.overtimeHours)}</p>
-                </div>
-                <div className="px-4 py-3">
-                  <p className="text-xs text-muted-foreground">Night Diff</p>
-                  <p className="text-lg font-semibold text-violet-700">{formatHours(dailySummaryTotals.nightDiffHours)}</p>
-                </div>
-                <div className="px-4 py-3">
-                  <p className="text-xs text-muted-foreground">Agency Fee</p>
-                  <p className="text-lg font-semibold text-amber-700">₱{dailySummaryTotals.agencyFee.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 border-b border-border p-4 bg-muted/20">
+                {[['employees','Employees',dailySummaryTotals.employees,'text-foreground'],['present','Present',dailySummaryTotals.present,'text-emerald-700'],['absent','Absent',dailySummaryTotals.absent,'text-red-700'],['complete','Complete',dailySummaryTotals.complete,'text-foreground'],['incomplete','Incomplete',dailySummaryTotals.incomplete,'text-amber-700'],['hours','Work Hours',formatHours(dailySummaryTotals.hours),'text-foreground'],['undertime','Undertime',formatMinutes(dailySummaryTotals.undertimeMinutes),'text-red-700'],['overtime','Overtime',formatHours(dailySummaryTotals.overtimeHours),'text-blue-700'],['night_diff','Night Diff',formatHours(dailySummaryTotals.nightDiffHours),'text-violet-700'],['agency_fee','Agency Fee',`₱${dailySummaryTotals.agencyFee.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,'text-amber-700']].map(([key,label,value,color]) => <button key={key} type="button" onClick={() => setSummaryMetric(key)} className={`relative min-h-[88px] rounded-xl border bg-card p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md ${summaryMetric === key ? 'border-primary ring-2 ring-primary/20' : 'border-border'}`}><div className="flex items-start justify-between gap-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>{((key === 'absent' && dailySummaryTotals.absent > 0) || (key === 'incomplete' && dailySummaryTotals.incomplete > 0)) && <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200 text-[10px]">{key === 'absent' ? dailySummaryTotals.absent : dailySummaryTotals.incomplete} need review</Badge>}</div><p className={`mt-2 text-xl font-bold ${color}`}>{value}</p><p className="mt-1 text-[11px] text-muted-foreground">View details</p></button>)}
               </div>
 
-              {loadingQuickView ? (
+              {summaryMetric && (loadingQuickView ? (
                 <div className="flex justify-center py-8">
                   <div className="w-7 h-7 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
                 </div>
@@ -3092,7 +3081,7 @@ export default function Attendance() {
                       </tr>
                     </thead>
                     <tbody>
-                      {dailySummaryRows.map(row => (
+                      {summaryRowsForDisplay.map(row => (
                         <tr key={row.employee.id} className="border-b border-border last:border-0">
                           <td className="px-4 py-2">
                             <button
@@ -3141,10 +3130,10 @@ export default function Attendance() {
                           </td>
                           <td className="px-4 py-2">
                             {row.status === 'no_log' ? (
-                              <Badge variant="outline" className="bg-muted text-muted-foreground border-border">No log</Badge>
+                              <div className="flex items-center gap-2"><Badge variant="outline" className="bg-muted text-muted-foreground border-border">Potential absence</Badge>{currentUser?.role !== 'attendance_staff' && <Button size="sm" variant="outline" className="h-7 text-xs text-red-700" onClick={() => setConfirmingAbsence(row.employee)}>Confirm absent</Button>}</div>
                             ) : (
-                              <Badge className={statusColors[row.status] || statusColors.pending}>
-                                {row.status}
+                              <Badge className={row.log?.is_absent ? 'bg-red-100 text-red-700' : (statusColors[row.status] || statusColors.pending)}>
+                                {row.log?.is_absent ? 'Absent' : row.status}
                               </Badge>
                             )}
                           </td>
@@ -3160,8 +3149,10 @@ export default function Attendance() {
                     </tbody>
                   </table>
                 </div>
-              )}
+              ))}
             </Card>
+
+            <Dialog open={!!confirmingAbsence} onOpenChange={open => !open && setConfirmingAbsence(null)}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Confirm absence</DialogTitle></DialogHeader>{confirmingAbsence && <div className="space-y-4"><p className="text-sm text-muted-foreground">Confirm that <strong>{employeeFullName(confirmingAbsence)}</strong> was absent on {summaryDate}. This creates an auditable attendance record.</p><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setConfirmingAbsence(null)}>Cancel</Button><Button variant="destructive" disabled={confirmAbsenceMutation.isPending} onClick={() => confirmAbsenceMutation.mutate(confirmingAbsence)}>{confirmAbsenceMutation.isPending ? 'Saving...' : 'Confirm Absent'}</Button></div></div>}</DialogContent></Dialog>
 
             <Card className="border border-amber-200 bg-amber-50/40 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">

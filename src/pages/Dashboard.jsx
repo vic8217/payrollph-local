@@ -1,14 +1,17 @@
 // @ts-nocheck
-import { appApi } from '@/lib/appApi';
+import { appApi, requestJson } from '@/lib/appApi';
 import { useQuery } from '@tanstack/react-query';
-import { Users, Clock, Wallet, CreditCard, Trophy, FileText } from 'lucide-react';
+import { Users, Clock, Wallet, CreditCard, Trophy, FileText, Timer, AlertTriangle, Database, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import { useCompany } from '@/lib/CompanyContext';
+import { useAuth } from '@/lib/AuthContext';
 import { manilaDateString } from '@/lib/dateUtils';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useState } from 'react';
 
 function StatCard({ title, value, icon: Icon, color, sub }) {
   return (
@@ -31,6 +34,12 @@ function StatCard({ title, value, icon: Icon, color, sub }) {
 
 export default function Dashboard() {
   const { activeCompanyId } = useCompany();
+  const { user } = useAuth();
+  const [showSystemHealth, setShowSystemHealth] = useState(false);
+  const systemHealthQuery = useQuery({ queryKey: ['system-health'], queryFn: () => requestJson('/api/admin/system-health'), enabled: user?.role === 'super_admin', staleTime: 60 * 1000 });
+  const formatBytes = value => { const n = Number(value || 0); if (!n) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1); return `${(n / 1024 ** i).toFixed(i ? 2 : 0)} ${units[i]}`; };
+  const [showApprovedOt, setShowApprovedOt] = useState(false);
+  const [showAttendanceExceptions, setShowAttendanceExceptions] = useState(false);
 
   const { data: employees = [] } = useQuery({
     queryKey: ['employees', activeCompanyId],
@@ -61,6 +70,40 @@ export default function Dashboard() {
   const presentToday = todayAttendance.filter(a => a.time_in && !a.is_absent).length;
   const pendingCA = cashAdvances.filter(ca => ca.status === 'pending' || ca.status === 'approved_by_manager').length;
   const latestPayroll = payrollPeriods[0];
+  const previousPayroll = payrollPeriods[1];
+  const { data: latestOtRecords = [] } = useQuery({
+    queryKey: ['dashboard-approved-ot', activeCompanyId, latestPayroll?.id],
+    queryFn: () => appApi.entities.PayrollRecord.filter({ company_profile_id: activeCompanyId, payroll_period_id: latestPayroll.id }, 'employee_name', 500),
+    enabled: !!activeCompanyId && !!latestPayroll?.id,
+  });
+  const { data: previousOtRecords = [] } = useQuery({
+    queryKey: ['dashboard-approved-ot-previous', activeCompanyId, previousPayroll?.id],
+    queryFn: () => appApi.entities.PayrollRecord.filter({ company_profile_id: activeCompanyId, payroll_period_id: previousPayroll.id }, 'employee_name', 500),
+    enabled: !!activeCompanyId && !!previousPayroll?.id,
+  });
+  const approvedOt = latestOtRecords.filter(record => Number(record.overtime_hours) > 0);
+  const previousApprovedOt = previousOtRecords.filter(record => Number(record.overtime_hours) > 0);
+  const otHours = approvedOt.reduce((sum, record) => sum + (Number(record.overtime_hours) || 0), 0);
+  const previousOtHours = previousApprovedOt.reduce((sum, record) => sum + (Number(record.overtime_hours) || 0), 0);
+  const otAmount = approvedOt.reduce((sum, record) => sum + (Number(record.overtime_pay) || 0), 0);
+  const previousOtAmount = previousApprovedOt.reduce((sum, record) => sum + (Number(record.overtime_pay) || 0), 0);
+  const periodFilter = period => period ? { company_profile_id: activeCompanyId, date: { $gte: period.start_date, $lte: period.end_date } } : null;
+  const { data: currentAttendancePeriod = [] } = useQuery({
+    queryKey: ['dashboard-attendance-period', activeCompanyId, latestPayroll?.id],
+    queryFn: () => appApi.entities.AttendanceLog.allPages(periodFilter(latestPayroll), 'date', { pageSize: 500 }),
+    enabled: !!activeCompanyId && !!latestPayroll?.start_date && !!latestPayroll?.end_date,
+  });
+  const { data: previousAttendancePeriod = [] } = useQuery({
+    queryKey: ['dashboard-attendance-period-previous', activeCompanyId, previousPayroll?.id],
+    queryFn: () => appApi.entities.AttendanceLog.allPages(periodFilter(previousPayroll), 'date', { pageSize: 500 }),
+    enabled: !!activeCompanyId && !!previousPayroll?.start_date && !!previousPayroll?.end_date,
+  });
+  const isAbsent = record => Boolean(record.is_absent || record.status === 'absent' || record.day_type === 'absent');
+  const isLate = record => (Number(record.late_minutes) || 0) > 0;
+  const currentLate = currentAttendancePeriod.filter(isLate);
+  const previousLate = previousAttendancePeriod.filter(isLate);
+  const currentAbsent = currentAttendancePeriod.filter(isAbsent);
+  const previousAbsent = previousAttendancePeriod.filter(isAbsent);
 
   const statusColors = {
     draft: 'bg-muted text-muted-foreground',
@@ -70,7 +113,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
+    <div className="w-full p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-foreground">Dashboard</h1>
         <p className="text-muted-foreground text-xs sm:text-sm mt-1">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
@@ -88,6 +131,8 @@ export default function Dashboard() {
           sub={latestPayroll?.period_name || 'No payroll yet'}
         />
       </div>
+      {user?.role === 'super_admin' && <section><div className="mb-2 flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">System Health</p><Button variant="ghost" size="sm" onClick={() => systemHealthQuery.refetch()}><RefreshCw className={`mr-1 h-3.5 w-3.5 ${systemHealthQuery.isFetching ? 'animate-spin' : ''}`} />Refresh</Button></div><div className="grid gap-3 sm:grid-cols-2"><Card><CardContent className="p-4"><p className="flex items-center gap-2 text-sm font-semibold"><Database className="h-4 w-4 text-primary" />Database</p>{systemHealthQuery.isLoading ? <p className="mt-3 text-sm text-muted-foreground">Checking database...</p> : systemHealthQuery.isError ? <p className="mt-3 text-sm text-red-600">Database status unavailable</p> : <><p className="mt-2 text-sm font-semibold capitalize text-emerald-700">● {systemHealthQuery.data?.database?.status}</p><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><span>Size<br/><b>{formatBytes(systemHealthQuery.data?.database?.sizeBytes)}</b></span><span>Connections<br/><b>{systemHealthQuery.data?.database?.activeConnections} / {systemHealthQuery.data?.database?.maxConnections}</b></span><span>Utilization<br/><b>{systemHealthQuery.data?.database?.connectionUtilizationPercent}%</b></span><span>Largest table<br/><b>{systemHealthQuery.data?.database?.tables?.[0]?.name || '—'}</b></span></div><Button variant="link" className="mt-2 h-auto p-0 text-xs" onClick={() => setShowSystemHealth(true)}>View Details</Button></>}</CardContent></Card><Card><CardContent className="p-4"><p className="text-sm font-semibold">Application</p><p className="mt-2 text-sm font-semibold text-emerald-700">● Online</p><p className="mt-1 text-xs text-muted-foreground">Database connectivity and application runtime responding.</p></CardContent></Card></div></section>}
+      <Dialog open={showSystemHealth} onOpenChange={setShowSystemHealth}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>System Health Details</DialogTitle></DialogHeader>{systemHealthQuery.data && <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-4"><Card className="p-3"><p className="text-xs text-muted-foreground">Database size</p><p className="font-semibold">{formatBytes(systemHealthQuery.data.database.sizeBytes)}</p></Card><Card className="p-3"><p className="text-xs text-muted-foreground">Connections</p><p className="font-semibold">{systemHealthQuery.data.database.activeConnections} / {systemHealthQuery.data.database.maxConnections}</p></Card><Card className="p-3"><p className="text-xs text-muted-foreground">Utilization</p><p className="font-semibold">{systemHealthQuery.data.database.connectionUtilizationPercent}%</p></Card><Card className="p-3"><p className="text-xs text-muted-foreground">Last checked</p><p className="font-semibold">{new Date(systemHealthQuery.data.checkedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}</p></Card></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted"><tr>{['Table','Estimated Rows','Data','Indexes','Total'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead><tbody>{(systemHealthQuery.data.database.tables || []).map(table => <tr key={table.name} className="border-t"><td className="px-3 py-2 font-medium">{table.name}</td><td className="px-3 py-2">{table.estimatedRows.toLocaleString()}</td><td className="px-3 py-2">{formatBytes(table.dataBytes)}</td><td className="px-3 py-2">{formatBytes(table.indexBytes)}</td><td className="px-3 py-2 font-semibold">{formatBytes(table.totalBytes)}</td></tr>)}</tbody></table></div></div>}</DialogContent></Dialog>
 
       {/* Quick Access */}
       <div>
@@ -97,7 +142,35 @@ export default function Dashboard() {
             <FileText className="w-4 h-4" /> View Approved Payroll Summary
           </Button>
         </Link>
+        {user?.role === 'super_admin' && <Link to="/payroll?override=1"><Button variant="outline" className="ml-2 gap-2 border-amber-300 text-amber-800 hover:bg-amber-50"><AlertTriangle className="w-4 h-4" /> Override Payroll Release Block</Button></Link>}
+        <Button variant="outline" className="ml-2 gap-2 border-primary/30 text-primary hover:bg-primary/5" onClick={() => setShowApprovedOt(true)}>
+          <Timer className="w-4 h-4" /> Approved OT Details
+        </Button>
+        <Button variant="outline" className="ml-2 gap-2 border-amber-300 text-amber-700 hover:bg-amber-50" onClick={() => setShowAttendanceExceptions(true)}>
+          <AlertTriangle className="w-4 h-4" /> Late & Absent Details
+        </Button>
       </div>
+
+      <Card className="border border-border shadow-sm">
+        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><Timer className="h-4 w-4 text-violet-600" /> Approved Overtime</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div><p className="text-xs text-muted-foreground">Current period OT</p><p className="text-2xl font-bold">{otHours.toFixed(2)} hrs</p><p className="text-xs text-muted-foreground">{latestPayroll?.period_name || 'No payroll period'}</p></div>
+            <div><p className="text-xs text-muted-foreground">Previous period OT</p><p className="text-2xl font-bold">{previousOtHours.toFixed(2)} hrs</p><p className="text-xs text-muted-foreground">{previousPayroll?.period_name || 'No previous period'}</p></div>
+            <div><p className="text-xs text-muted-foreground">OT amount equivalent</p><p className="text-2xl font-bold text-violet-700">₱{otAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p><p className={`text-xs ${otHours >= previousOtHours ? 'text-emerald-600' : 'text-amber-600'}`}>{otHours >= previousOtHours ? '▲' : '▼'} {Math.abs(otHours - previousOtHours).toFixed(2)} hrs vs previous period</p></div>
+          </div>
+          <div className="mt-4 space-y-2"><p className="text-xs font-medium text-muted-foreground">OT hours comparison</p>{[[latestPayroll?.period_name || 'Current', otHours, 'bg-violet-500'], [previousPayroll?.period_name || 'Previous', previousOtHours, 'bg-slate-400']].map(([label, value, color]) => <div key={label} className="flex items-center gap-3 text-xs"><span className="w-28 truncate">{label}</span><div className="h-5 flex-1 rounded bg-muted"><div className={`h-5 rounded ${color}`} style={{ width: `${Math.max(value / Math.max(otHours, previousOtHours, 1) * 100, value ? 4 : 0)}%` }} /></div><span className="w-16 text-right font-semibold">{Number(value).toFixed(2)}h</span></div>)}</div>
+        </CardContent>
+      </Card>
+
+      <Card className="border border-border shadow-sm">
+        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-sm"><AlertTriangle className="h-4 w-4 text-amber-500" /> Late & Absent Comparison</CardTitle></CardHeader>
+        <CardContent><div className="grid gap-4 sm:grid-cols-2"><div><p className="text-xs text-muted-foreground">Late records</p><p className="text-2xl font-bold">{currentLate.length}</p><p className="text-xs text-muted-foreground">Previous period: {previousLate.length}</p></div><div><p className="text-xs text-muted-foreground">Absent records</p><p className="text-2xl font-bold">{currentAbsent.length}</p><p className="text-xs text-muted-foreground">Previous period: {previousAbsent.length}</p></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2">{[['Late', currentLate.length, previousLate.length, 'bg-amber-500'], ['Absent', currentAbsent.length, previousAbsent.length, 'bg-red-500']].map(([label, current, previous, color]) => <div key={label}><p className="mb-1 text-xs font-medium text-muted-foreground">{label} · current / previous</p><div className="flex items-center gap-2"><div className="h-5 flex-1 rounded bg-muted"><div className={`h-5 rounded ${color}`} style={{ width: `${Math.max(current / Math.max(current, previous, 1) * 100, current ? 4 : 0)}%` }} /></div><span className="w-20 text-right text-xs font-semibold">{current} / {previous}</span></div></div>)}</div></CardContent>
+      </Card>
+
+      <Dialog open={showAttendanceExceptions} onOpenChange={setShowAttendanceExceptions}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>Late and Absent Details</DialogTitle></DialogHeader><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted"><tr>{['Name','Employee No.','Payroll Period','Status','Late Minutes'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead><tbody>{[...currentLate.map(record => ({ ...record, exception: 'Late' })), ...currentAbsent.map(record => ({ ...record, exception: 'Absent' }))].map(record => <tr key={`${record.id}-${record.exception}`} className="border-t"><td className="px-3 py-2 font-medium">{record.employee_name || '—'}</td><td className="px-3 py-2">{record.employee_id || '—'}</td><td className="px-3 py-2">{latestPayroll?.period_name || '—'}</td><td className={`px-3 py-2 font-semibold ${record.exception === 'Absent' ? 'text-red-600' : 'text-amber-600'}`}>{record.exception}</td><td className="px-3 py-2">{record.exception === 'Late' ? Number(record.late_minutes || 0) : '—'}</td></tr>)}{!currentLate.length && !currentAbsent.length && <tr><td colSpan="5" className="px-3 py-6 text-center text-muted-foreground">No late or absent records in the current payroll period.</td></tr>}</tbody></table></div></DialogContent></Dialog>
+
+      <Dialog open={showApprovedOt} onOpenChange={setShowApprovedOt}><DialogContent className="max-w-4xl"><DialogHeader><DialogTitle>Approved Overtime Details</DialogTitle></DialogHeader><div className="space-y-5"><div className="grid gap-3 sm:grid-cols-2"><Card className="p-3"><p className="text-xs text-muted-foreground">Current period</p><p className="font-semibold">{latestPayroll?.period_name || '—'}</p><p className="text-sm">{otHours.toFixed(2)} hours · ₱{otAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p></Card><Card className="p-3"><p className="text-xs text-muted-foreground">Previous period</p><p className="font-semibold">{previousPayroll?.period_name || '—'}</p><p className="text-sm">{previousOtHours.toFixed(2)} hours · ₱{previousOtAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p></Card></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted"><tr>{['Name','Employee No.','Payroll Period','OT Hours Approved','OT Amount Equivalent'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead><tbody>{approvedOt.map(record => <tr key={record.id} className="border-t"><td className="px-3 py-2 font-medium">{record.employee_name || '—'}</td><td className="px-3 py-2">{record.employee_id || '—'}</td><td className="px-3 py-2">{latestPayroll?.period_name || '—'}</td><td className="px-3 py-2">{Number(record.overtime_hours).toFixed(2)}</td><td className="px-3 py-2">₱{Number(record.overtime_pay || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td></tr>)}{!approvedOt.length && <tr><td colSpan="5" className="px-3 py-6 text-center text-muted-foreground">No approved overtime in the current payroll period.</td></tr>}</tbody></table></div></div></DialogContent></Dialog>
 
       {/* Cash Advance Leaderboard */}
       {(() => {

@@ -441,7 +441,7 @@ export default function Settings() {
     const [h, m] = t.split(':');
     const d = new Date();
     d.setHours(parseInt(h), parseInt(m));
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
   };
 
   return (

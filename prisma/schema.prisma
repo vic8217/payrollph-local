@@ -29,6 +29,8 @@ model AppUser {
   reviewerNotesResponded PayrollReconciliationReviewerNote[] @relation("ReviewerNoteRespondedBy")
   reviewerNotesResolved PayrollReconciliationReviewerNote[] @relation("ReviewerNoteResolvedBy")
   reviewerNoteEvents PayrollReconciliationReviewerNoteEvent[] @relation("ReviewerNoteEventActor")
+  dailyVarianceNotesCreated PayrollReconciliationDailyVarianceNote[] @relation("DailyVarianceNoteCreatedBy")
+  dailyVarianceNotesUpdated PayrollReconciliationDailyVarianceNote[] @relation("DailyVarianceNoteUpdatedBy")
 }
 
 model EntityRecord {
@@ -95,6 +97,24 @@ model PayrollReconciliationReviewerNoteEvent {
 
   @@index([noteId, createdAt])
   @@index([actorUserId])
+}
+
+model PayrollReconciliationDailyVarianceNote {
+  id                String   @id @default(cuid())
+  companyProfileId  String
+  payrollPeriodId   String
+  employeeId        String
+  attendanceDate    DateTime @db.Date
+  note              String
+  createdByUserId   String
+  createdAt         DateTime @default(now())
+  updatedByUserId   String?
+  updatedAt         DateTime @updatedAt
+  createdBy         AppUser  @relation("DailyVarianceNoteCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  updatedBy         AppUser? @relation("DailyVarianceNoteUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([companyProfileId, payrollPeriodId, employeeId, attendanceDate], map: "DailyVarianceNote_company_period_employee_date_key")
+  @@index([companyProfileId, payrollPeriodId, employeeId], map: "DailyVarianceNote_company_period_employee_idx")
 }
 
 model PasswordResetToken {

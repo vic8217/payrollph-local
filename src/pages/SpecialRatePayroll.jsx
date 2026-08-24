@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const money = value => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const employeeName = employee => [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
 const employeeKey = row => String(row?.employee_record_id || row?.employee_id || '').trim().toLowerCase();
-const punch = value => value ? new Date(value).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' }) : 'Missing';
+const punch = value => value ? new Date(value).toLocaleTimeString('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }) : 'Missing';
 
 function defaultDates() {
   const manilaToday = new Intl.DateTimeFormat('en-CA', {

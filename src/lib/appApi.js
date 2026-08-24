@@ -126,6 +126,9 @@ export const appApi = {
       return cachedUser;
     },
     clearCache: clearCachedUser,
+    async touch() {
+      return requestJson("/api/auth/touch", { method: "POST" });
+    },
     async logout(callbackUrl = "/landing") {
       cachedUser = null;
       try {

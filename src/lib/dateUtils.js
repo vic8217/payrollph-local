@@ -19,7 +19,7 @@ export function manilaDateString(date = new Date()) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-export function formatManilaTime(value, { hour12 = true, includeSeconds = false } = {}) {
+export function formatManilaTime(value, { hour12 = false, includeSeconds = false } = {}) {
   const date = toValidDate(value);
   if (!date) return '';
 
@@ -42,9 +42,9 @@ export function formatManilaDateTime(value, options = {}) {
     month: options.month || 'short',
     day: options.day || 'numeric',
     year: options.year || 'numeric',
-    hour: 'numeric',
+    hour: '2-digit',
     minute: '2-digit',
-    hour12: true,
+    hour12: false,
     ...(options.weekday ? { weekday: options.weekday } : {}),
   }).format(date);
 }

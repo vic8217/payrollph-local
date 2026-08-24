@@ -11,7 +11,7 @@ import {
   resolveEmployeeWorkSchedule,
   sortedShiftAssignments,
 } from '@/lib/shiftSettings';
-import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, CalendarDays, XCircle, History } from 'lucide-react';
+import { Search, Sun, Moon, UserCircle, CheckCircle2, Clock, CalendarDays, XCircle, History, TriangleAlert } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
+import { employeesMissingBreakTime } from '@/lib/breakTimeRequirements';
 
 const shiftConfig = {
   day_shift:   { label: 'Day Shift',   icon: Sun,  className: 'bg-amber-100 text-amber-700 border-amber-200' },
@@ -31,7 +32,7 @@ function formatShiftTime(value) {
   const [hours, minutes] = value.split(':');
   const date = new Date();
   date.setHours(Number(hours), Number(minutes), 0, 0);
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function isNightShift(shift) {
@@ -79,9 +80,9 @@ function formatScheduleChangeDate(value) {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
-    hour: 'numeric',
+    hour: '2-digit',
     minute: '2-digit',
-    hour12: true,
+    hour12: false,
     timeZone: 'Asia/Manila',
   }).format(date);
 }
@@ -89,6 +90,7 @@ function formatScheduleChangeDate(value) {
 export default function WorkSchedule() {
   const [search, setSearch] = useState('');
   const [filterShift, setFilterShift] = useState('all');
+  const [showAttentionOnly, setShowAttentionOnly] = useState(false);
   const [savingId, setSavingId] = useState(null);
   const [effectiveDate, setEffectiveDate] = useState(defaultEffectiveDate);
   const [summaryDate, setSummaryDate] = useState(manilaDateString);
@@ -241,6 +243,9 @@ export default function WorkSchedule() {
         .toLowerCase().includes(search.trim().toLowerCase());
     })
     .filter(e => filterShift === 'all' || getSummaryShift(e)?.id === filterShift);
+  const attentionEmployees = employeesMissingBreakTime(employees, effectiveShiftSettings, summaryDate);
+  const attentionIds = new Set(attentionEmployees.map(employee => employee.id));
+  const displayedEmployees = showAttentionOnly ? filtered.filter(employee => attentionIds.has(employee.id)) : filtered;
 
   const summaryShifts = shiftOptions.length > 0 ? shiftOptions : Object.entries(shiftConfig).map(([value, config]) => ({ value, label: config.label }));
   const summaryCounts = summaryShifts.map(shift => ({
@@ -272,6 +277,7 @@ export default function WorkSchedule() {
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <button type="button" onClick={() => setShowAttentionOnly(value => !value)} className={`border rounded-xl p-4 flex items-center gap-3 text-left transition hover:shadow-md ${showAttentionOnly ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-200' : 'border-amber-200 bg-amber-50/60'}`}><TriangleAlert className="w-5 h-5 text-amber-600" /><div><p className="text-xl font-bold text-amber-800">{attentionEmployees.length}</p><p className="text-xs text-amber-700">Needs Attention</p><p className="text-[11px] text-amber-700">Missing break schedule · click to filter</p></div></button>
         {summaryCounts.map(shift => {
           const style = getShiftStyle(shift);
           const Icon = style.icon;
@@ -359,10 +365,10 @@ export default function WorkSchedule() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {displayedEmployees.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-12 text-muted-foreground text-sm">No employees found.</td></tr>
               ) : (
-                filtered.map(emp => {
+                displayedEmployees.map(emp => {
                   const summaryShift = getSummaryShift(emp);
                   const assignmentShiftValue = getCurrentShiftValue(emp, effectiveDate);
                   const pendingAssignment = nextEmployeeShiftAssignment(emp);

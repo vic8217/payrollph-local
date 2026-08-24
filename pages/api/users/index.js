@@ -5,6 +5,7 @@ import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
 import { normalizeAccessSchedule } from "@/lib/accessSchedule";
 import { listRecords } from "@/server/entityStore";
+import { ROLE_PERMISSIONS } from "@/lib/permissions";
 
 function parseCompanyProfileIds(value) {
   return String(value || "")
@@ -182,6 +183,9 @@ export default async function handler(req, res) {
 
       if (session.user.role !== "super_admin" && data?.role === "super_admin") {
         return res.status(403).json({ error: "Admin users cannot assign Super Admin role" });
+      }
+      if (data?.role !== undefined && !Object.hasOwn(ROLE_PERMISSIONS, data.role)) {
+        return res.status(400).json({ error: "Invalid role" });
       }
 
       const nextAccessSchedule =

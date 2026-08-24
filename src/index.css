@@ -4,6 +4,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Application pages use the full available content width. Individual pages
+   retain their own responsive padding and grid constraints where needed. */
+.max-w-7xl {
+  max-width: none !important;
+}
+
 @layer base {
   :root {
     --background: 210 20% 98%;

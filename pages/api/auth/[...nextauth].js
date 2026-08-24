@@ -20,6 +20,7 @@ const NextAuth = unwrapDefault(NextAuthImport);
 const CredentialsProvider = unwrapDefault(CredentialsImport);
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60;
+export const SESSION_IDLE_TIMEOUT_SECONDS = 5 * 60;
 
 function parseCompanyProfileIds(value) {
   return String(value || "")
@@ -93,7 +94,9 @@ export const authOptions = {
         }
 
         const sessionId = randomUUID();
-        const sessionExpiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
+        // JWTs may live for the configured maximum age, but their persisted
+        // active-session record expires after five idle minutes.
+        const sessionExpiresAt = new Date(Date.now() + SESSION_IDLE_TIMEOUT_SECONDS * 1000);
         const activeSession =
           user.role === "super_admin"
             ? await prisma.appUser.updateMany({
@@ -185,6 +188,7 @@ export const authOptions = {
         session.user.role = token.role || "user";
         session.user.company_profile_id = token.company_profile_id || null;
         session.user.company_profile_ids = token.company_profile_ids || [];
+        session.user.active_session_id = token.active_session_id || null;
       }
       return session;
     },

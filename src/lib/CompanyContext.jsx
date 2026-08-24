@@ -9,8 +9,11 @@ export const CompanyProvider = ({ children }) => {
   const [isCompanyRestricted, setIsCompanyRestricted] = useState(false);
 
   const refreshCompanies = useCallback(async ({ selectCompanyId } = {}) => {
+    // The provider is mounted around the public login page too. During
+    // maintenance (or before authentication), company data is intentionally
+    // unavailable; treat that as an empty selection rather than crashing the UI.
     const [list, currentUser] = await Promise.all([
-      appApi.entities.CompanyProfile.list(),
+      appApi.entities.CompanyProfile.list().catch(() => []),
       appApi.auth.me().catch(() => null),
     ]);
 

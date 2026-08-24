@@ -633,33 +633,19 @@ export default function Employees() {
       </div>
 
       <div className="flex flex-wrap gap-3">
+        <Select value={statusFilter} onValueChange={setStatusFilter}><SelectTrigger className="w-48"><SelectValue placeholder="Employee Status" /></SelectTrigger><SelectContent>{filters.map(filter => <SelectItem key={filter.id} value={filter.id}>{filter.label} ({filter.count})</SelectItem>)}</SelectContent></Select>
         <Select value={payrollMethodFilter} onValueChange={setPayrollMethodFilter}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Payroll Methods</SelectItem><SelectItem value="ATM">ATM</SelectItem><SelectItem value="NON_ATM">Non-ATM</SelectItem><SelectItem value="UNASSIGNED">Unassigned</SelectItem></SelectContent></Select>
         {activeCompany?.uses_employee_agency && <Select value={agencyTypeFilter} onValueChange={setAgencyTypeFilter}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Employee Types</SelectItem><SelectItem value="agency">Agency</SelectItem><SelectItem value="direct">Direct</SelectItem></SelectContent></Select>}
       </div>
 
       <Card className="overflow-hidden">
         <div className="border-b px-4 py-3"><p className="font-semibold">Employee Summary</p></div>
-        <div className="overflow-x-auto max-h-80"><table className="w-full text-sm"><thead className="bg-muted/50 sticky top-0"><tr><th className="p-3 text-left">Employee</th><th className="p-3 text-left">Employee No.</th><th className="p-3 text-left">Department</th><th className="p-3 text-left">Status</th>{activeCompany?.uses_employee_agency && <th className="p-3 text-left">Employee Type</th>}<th className="p-3 text-left">Payroll Method</th></tr></thead><tbody>{filtered.map(employee => <tr key={`summary-${employee.id}`} className="border-t"><td className="p-3 font-medium">{employeeFullName(employee)}</td><td className="p-3">{employee.employee_id}</td><td className="p-3">{employee.department || '—'}</td><td className="p-3 capitalize">{normalizeEmployeeStatus(employee.status)}</td>{activeCompany?.uses_employee_agency && <td className="p-3">{employee.is_agency_employee ? 'Agency' : 'Direct'}</td>}<td className="p-3">{normalizePayrollMethod(employee.payroll_disbursement_method).replace('_', '-')}</td></tr>)}</tbody></table></div>
+        <div className="overflow-x-auto max-h-80"><table className="w-full text-sm"><thead className="bg-muted/50 sticky top-0"><tr><th className="p-3 text-left">Employee</th><th className="p-3 text-left">Employee No.</th><th className="p-3 text-left">Department</th><th className="p-3 text-left">Status</th>{activeCompany?.uses_employee_agency && <th className="p-3 text-left">Employee Type</th>}<th className="p-3 text-left">Payroll Method</th><th className="p-3 text-left">Action</th></tr></thead><tbody>{filtered.map(employee => { const status = normalizeEmployeeStatus(employee.status); return <tr key={`summary-${employee.id}`} className="border-t"><td className="p-3 font-medium">{employeeFullName(employee)}</td><td className="p-3">{employee.employee_id}</td><td className="p-3">{employee.department || '—'}</td><td className="p-3 capitalize">{status}</td>{activeCompany?.uses_employee_agency && <td className="p-3">{employee.is_agency_employee ? 'Agency' : 'Direct'}</td>}<td className="p-3">{normalizePayrollMethod(employee.payroll_disbursement_method).replace('_', '-')}</td><td className="p-3"><div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={() => setFile201Employee(employee)}>201</Button>{status !== 'archived' && <Button size="sm" variant="outline" onClick={() => { if (!String(employee.employee_id || '').trim()) { window.alert('Employee ID is required before an ID card and QR code can be generated. Assign an Employee ID first.'); return; } setIdEmployee(employee); }}>ID</Button>}{canRenumberEmployees && status !== 'archived' && <Button size="sm" variant="outline" onClick={() => setRenumberEmployee(employee)}>Number</Button>}<Button size="sm" variant="outline" onClick={() => { setEditEmployee(employee); setShowForm(true); }}>Edit</Button>{status !== 'archived' && <Button size="sm" variant="outline" onClick={() => openIncentiveDialog(employee)}>Incentives</Button>}{status !== 'archived' && status !== 'resigned' && <Button size="sm" variant="outline" className="text-amber-700" onClick={() => { if (confirm('Tag this employee as resigned?')) updateStatusMutation.mutate({ id: employee.id, status: 'resigned' }); }}>Resign</Button>}{status === 'resigned' && <Button size="sm" variant="outline" onClick={() => { if (confirm('Archive this resigned employee?')) updateStatusMutation.mutate({ id: employee.id, status: 'archived' }); }}>Archive</Button>}{status === 'archived' && <Button size="sm" variant="outline" onClick={() => { if (confirm('Restore this archived employee as resigned?')) updateStatusMutation.mutate({ id: employee.id, status: 'resigned' }); }}>Restore</Button>}</div></td></tr>; })}</tbody></table></div>
       </Card>
 
-      <div className="flex flex-wrap gap-2">
-        {filters.map(filter => (
-          <Button
-            key={filter.id}
-            size="sm"
-            variant={statusFilter === filter.id ? 'default' : 'outline'}
-            onClick={() => setStatusFilter(filter.id)}
-            className="gap-2"
-          >
-            {filter.label}
-            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${statusFilter === filter.id ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground'}`}>
-              {filter.count}
-            </span>
-          </Button>
-        ))}
-      </div>
+      {false && (
 
-      {isLoading ? (
+      isLoading ? (
         <div className="flex justify-center py-16">
           <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
         </div>
@@ -771,8 +757,9 @@ export default function Employees() {
             <div className="col-span-3 text-center py-16 text-muted-foreground text-sm">No employees found.</div>
           )}
         </div>
-      )}
+      )
 
+      )}
       {/* Employee Form Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
