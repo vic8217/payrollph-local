@@ -59,7 +59,7 @@ model PayrollReconciliationReviewerNote {
   createdAt           DateTime @default(now())
   response            String?
   respondedByUserId   String?
-  respondedAt        DateTime?
+  respondedAt         DateTime?
   resolutionNote      String?
   resolvedByUserId    String?
   resolvedAt          DateTime?
@@ -201,17 +201,17 @@ model UserFaceVerificationLog {
 
 model UserFaceVerificationChallenge {
   id            String    @id @default(cuid())
-  userId        String
-  user          AppUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  user           AppUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
   companyProfileId String?
-  purpose       String
-  nonceHash     String
-  issuedAt      DateTime  @default(now())
-  expiresAt     DateTime
-  consumedAt    DateTime?
+  purpose        String
+  nonceHash      String
+  issuedAt       DateTime  @default(now())
+  expiresAt      DateTime
+  consumedAt     DateTime?
   deviceUserAgent String?
-  ipAddress     String?
-  createdAt     DateTime  @default(now())
+  ipAddress      String?
+  createdAt      DateTime  @default(now())
 
   @@index([userId])
   @@index([purpose])
@@ -291,4 +291,105 @@ model FaceVerificationSetting {
   updatedAt           DateTime @updatedAt
 
   @@index([companyProfileId])
+}
+
+model BiometricDevice {
+  id                     String   @id @default(cuid())
+  companyProfileId       String
+  deviceSerial           String   @unique
+  cloudId                String?
+  terminalType           String?
+  productName            String?
+  siteCode               String?
+  siteName               String?
+  registrationSecretHash String?
+  status                 String   @default("active")
+  lastSeenAt             DateTime?
+  lastLoginAt            DateTime?
+  metadata               Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  userMappings           BiometricUserMapping[]
+  timeLogs               BiometricTimeLog[]
+  adminLogs              BiometricAdminLog[]
+
+  @@index([companyProfileId])
+  @@index([companyProfileId, status])
+  @@index([cloudId])
+}
+
+model BiometricUserMapping {
+  id               String          @id @default(cuid())
+  companyProfileId String
+  deviceId         String
+  employeeRecordId String
+  employeeId       String
+  deviceUserId     String
+  status           String          @default("active")
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  device           BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, deviceUserId])
+  @@unique([deviceId, employeeRecordId])
+  @@index([companyProfileId, employeeId])
+  @@index([companyProfileId, status])
+}
+
+model BiometricTimeLog {
+  id                 String          @id @default(cuid())
+  companyProfileId   String
+  deviceId           String
+  deviceSerial       String
+  logId              String
+  deviceUserId       String?
+  occurredAt         DateTime?
+  occurredAtLocal    String?
+  utcTimezoneMinutes Int?
+  attendStatus       String?
+  verifyMethod       String?
+  jobCode            String?
+  transId            String?
+  rawPayload         Json
+  receivedAt         DateTime        @default(now())
+  sourceIp           String?
+  processingStatus   String          @default("received")
+  employeeRecordId   String?
+  employeeId         String?
+  attendanceLogId    String?
+  mappedSlot         String?
+  createdAt          DateTime        @default(now())
+  device             BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+
+  @@unique([deviceSerial, logId])
+  @@index([companyProfileId, occurredAt])
+  @@index([deviceId, occurredAt])
+  @@index([companyProfileId, deviceUserId, occurredAt])
+  @@index([processingStatus])
+}
+
+model BiometricAdminLog {
+  id               String          @id @default(cuid())
+  companyProfileId String
+  deviceId         String
+  deviceSerial     String
+  logId            String
+  adminId          String?
+  deviceUserId     String?
+  occurredAt       DateTime?
+  occurredAtLocal  String?
+  action           String?
+  stat             String?
+  transId          String?
+  rawPayload       Json
+  receivedAt       DateTime        @default(now())
+  sourceIp         String?
+  processingStatus String          @default("received")
+  createdAt        DateTime        @default(now())
+  device           BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+
+  @@unique([deviceSerial, logId])
+  @@index([companyProfileId, occurredAt])
+  @@index([deviceId, occurredAt])
+  @@index([processingStatus])
 }
