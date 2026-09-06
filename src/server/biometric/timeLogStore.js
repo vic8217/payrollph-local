@@ -23,9 +23,6 @@ export function parseDeviceOccurredAt(payload) {
   const normalized = raw.replace(/-T/, "T");
   let instant = null;
 
-  // Some F500 firmware sends a trailing Z while also providing UtcTimezoneMinutes.
-  // Preserve the raw value and, when an explicit numeric offset is absent, treat the
-  // clock reading as device-local time using UtcTimezoneMinutes.
   const clock = normalized.replace(/Z$/i, "");
   const simpleClock = clock.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})$/);
   if (simpleClock && timezoneMinutes !== null) {
@@ -43,19 +40,47 @@ function isUniqueConflict(error) {
   return error?.code === "P2002";
 }
 
+async function resolveMapping(deviceId, deviceUserId) {
+  if (!deviceUserId) return null;
+  return prisma.biometricUserMapping.findFirst({
+    where: { deviceId, deviceUserId, status: "active" },
+  });
+}
+
+async function companyAllowed(deviceId, companyProfileId) {
+  if (!companyProfileId) return false;
+  const allowed = await prisma.biometricDeviceCompany.findFirst({
+    where: { deviceId, companyProfileId, status: "active" },
+    select: { id: true },
+  });
+  return Boolean(allowed);
+}
+
 export async function storeTimeLog({ device, payload, sourceIp }) {
   const logId = text(payload.LogID);
   if (!logId) throw new Error("TIME_LOG_ID_REQUIRED");
+  const deviceUserId = text(payload.UserID);
   const { occurredAt, occurredAtLocal } = parseDeviceOccurredAt(payload);
+  const mapping = await resolveMapping(device.id, deviceUserId);
+  const mappingAllowed = mapping
+    ? await companyAllowed(device.id, mapping.companyProfileId)
+    : false;
+
+  // Raw storage always succeeds for a registered device. Company/employee fields
+  // are populated only from an active mapping whose company is authorized on the
+  // physical device. Unmapped punches remain auditable and can be resolved later.
+  const processingStatus = mapping
+    ? (mappingAllowed ? "mapped_pending_attendance" : "company_not_authorized")
+    : "unmapped_user";
 
   try {
     const record = await prisma.biometricTimeLog.create({
       data: {
-        companyProfileId: device.companyProfileId,
+        companyProfileId: mappingAllowed ? mapping.companyProfileId : null,
         deviceId: device.id,
         deviceSerial: device.deviceSerial,
         logId,
-        deviceUserId: text(payload.UserID),
+        deviceUserId,
         occurredAt,
         occurredAtLocal,
         utcTimezoneMinutes: intOrNull(payload.UtcTimezoneMinutes),
@@ -65,7 +90,9 @@ export async function storeTimeLog({ device, payload, sourceIp }) {
         transId: text(payload.TransID),
         rawPayload: payload,
         sourceIp,
-        processingStatus: "received",
+        processingStatus,
+        employeeRecordId: mappingAllowed ? mapping.employeeRecordId : null,
+        employeeId: mappingAllowed ? mapping.employeeId : null,
       },
     });
     return { record, duplicate: false };
@@ -86,7 +113,7 @@ export async function storeAdminLog({ device, payload, sourceIp }) {
   try {
     const record = await prisma.biometricAdminLog.create({
       data: {
-        companyProfileId: device.companyProfileId,
+        companyProfileId: null,
         deviceId: device.id,
         deviceSerial: device.deviceSerial,
         logId,
