@@ -2,9 +2,9 @@
 // `user` is a legacy HR-level role and remains supported for existing accounts.
 export const ROLE_PERMISSIONS = {
   super_admin: ["*"],
-  admin: ["employees", "attendance", "schedule", "leave", "holidays", "no_work_days", "payroll", "special_rates", "special_payroll", "thirteenth_month", "separation_pay", "statutory_rates", "deductions", "cash_advance", "users", "passcode_audit", "payslip_receipts", "company_profile", "shift_settings", "employee_portal"],
-  hr_staff: ["employees", "attendance", "schedule", "leave", "holidays", "no_work_days", "payslip_receipts"],
-  user: ["employees", "attendance", "schedule", "leave", "holidays", "no_work_days", "payslip_receipts"],
+  admin: ["employees", "attendance", "biometric_mapping", "schedule", "leave", "holidays", "no_work_days", "payroll", "special_rates", "special_payroll", "thirteenth_month", "separation_pay", "statutory_rates", "deductions", "cash_advance", "users", "passcode_audit", "payslip_receipts", "company_profile", "shift_settings", "employee_portal"],
+  hr_staff: ["employees", "attendance", "biometric_mapping", "schedule", "leave", "holidays", "no_work_days", "payslip_receipts"],
+  user: ["employees", "attendance", "biometric_mapping", "schedule", "leave", "holidays", "no_work_days", "payslip_receipts"],
   attendance_staff: ["attendance", "schedule", "leave", "holidays", "no_work_days"],
 };
 
@@ -15,7 +15,7 @@ export function hasPermission(role, permission) {
 
 export const ROUTE_PERMISSIONS = {
   "/": "overview", "/management-reports": "overview", "/employees": "employees",
-  "/attendance": "attendance", "/attendance/time-in-reviews": "attendance", "/work-schedule": "schedule",
+  "/attendance": "attendance", "/attendance/time-in-reviews": "attendance", "/biometric-mapping": "biometric_mapping", "/work-schedule": "schedule",
   "/personal-leave": "leave", "/holidays": "holidays", "/no-work-days": "no_work_days",
   "/payroll": "payroll", "/special-rates": "special_rates", "/special-rate-payroll": "special_payroll",
   "/thirteenth-month-pay": "thirteenth_month", "/separation-pay": "separation_pay", "/statutory-rates": "statutory_rates",
