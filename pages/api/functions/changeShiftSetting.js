@@ -23,6 +23,8 @@ const AUDITED_SHIFT_FIELDS = {
   paid_breaktime_approval_document_name: 'Approval document',
   is_default: 'Default shift',
   is_active: 'Active',
+  has_break: 'Has break',
+  attendance_punch_mode: 'Attendance punch mode',
 };
 
 function versionsWithBaseline(shift) {
@@ -110,13 +112,25 @@ function normalizeShiftData(data = {}) {
   if (shiftTimeError) {
     throw new Error(shiftTimeError);
   }
-  const breakStart = timeToMinutes(normalized.break_start_time);
-  const breakEnd = timeToMinutes(normalized.break_end_time);
-  const breakDuration = Number(normalized.break_duration_minutes);
-  if (breakStart == null || breakEnd == null || breakStart === breakEnd || !(breakDuration > 0 && breakDuration <= 480)) {
-    throw new Error('Enter a valid break start, break end, and break duration.');
+  normalized.has_break = normalized.has_break !== false && normalized.has_break !== 'false';
+  normalized.attendance_punch_mode = String(normalized.attendance_punch_mode || '').toLowerCase() === 'automatic_shift'
+    ? 'automatic_shift'
+    : 'full_punch';
+
+  if (!normalized.has_break) {
+    normalized.break_start_time = null;
+    normalized.break_end_time = null;
+    normalized.break_duration_minutes = null;
+    normalized.paid_break_time = false;
+  } else {
+    const breakStart = timeToMinutes(normalized.break_start_time);
+    const breakEnd = timeToMinutes(normalized.break_end_time);
+    const breakDuration = Number(normalized.break_duration_minutes);
+    if (breakStart == null || breakEnd == null || breakStart === breakEnd || !(breakDuration > 0 && breakDuration <= 480)) {
+      throw new Error('Enter a valid break start, break end, and break duration.');
+    }
+    normalized.break_duration_minutes = breakDuration;
   }
-  normalized.break_duration_minutes = breakDuration;
 
   if (normalized.paid_break_time) {
     if (!normalized.paid_breaktime_approval_document_url) {

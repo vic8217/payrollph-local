@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ExcelJS from 'exceljs';
-import { CheckCircle2, Download, Fingerprint, Search, Upload, Users } from 'lucide-react';
+import { CheckCircle2, Download, Fingerprint, Search, Upload, Users, Wrench } from 'lucide-react';
 import { useCompany } from '@/lib/CompanyContext';
+import { readApiJson } from '@/lib/apiResponse';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -14,14 +15,7 @@ async function api(url, options = {}) {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload.error || 'Request failed.');
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
-  }
-  return payload;
+  return readApiJson(response);
 }
 
 function normalizeHeader(value) {
@@ -83,10 +77,18 @@ export default function BiometricMapping() {
 
   useEffect(() => { load().catch(error => setMessage(error.message)); }, [activeCompanyId]);
 
-  const mappingByEmployee = useMemo(() => new Map(
-    data.mappings.filter(mapping => mapping.device_id === deviceId && mapping.status === 'active')
-      .map(mapping => [mapping.employee_record_id, mapping])
-  ), [data.mappings, deviceId]);
+  const mappingByEmployee = useMemo(() => {
+    const map = new Map();
+    const active = data.mappings.filter(mapping => mapping.device_id === deviceId && mapping.status === 'active');
+    active.forEach(mapping => {
+      if (mapping.employee_record_id) map.set(mapping.employee_record_id, mapping);
+    });
+    active.forEach(mapping => {
+      const employee = data.employees.find(item => item.employee_id === mapping.employee_id);
+      if (employee && !map.has(employee.id)) map.set(employee.id, mapping);
+    });
+    return map;
+  }, [data.mappings, data.employees, deviceId]);
 
   const filteredEmployees = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -104,7 +106,7 @@ export default function BiometricMapping() {
         method: 'POST',
         body: JSON.stringify({
           operation: 'upsert', company_profile_id: activeCompanyId, device_id: deviceId,
-          employee_id: employee.employee_id, device_user_id: deviceUserId,
+          employee_id: employee.employee_id, employee_record_id: employee.id, device_user_id: deviceUserId,
         }),
       });
       setMessage(`${employee.employee_name} mapped successfully. Held unmapped punches for this User ID were reprocessed.`);
@@ -181,7 +183,26 @@ export default function BiometricMapping() {
     } finally { setBusy(false); }
   };
 
+  const repairMapping = async mapping => {
+    if (!mapping?.id) return;
+    setBusy(true); setMessage('');
+    try {
+      await api('/api/biometric/mappings', {
+        method: 'POST',
+        body: JSON.stringify({
+          operation: 'repair',
+          company_profile_id: activeCompanyId,
+          mapping_id: mapping.id,
+        }),
+      });
+      setMessage(`Mapping for ${mapping.employee_id} repaired. Failed events were not requeued.`);
+      await load();
+    } catch (error) { setMessage(error.message); }
+    finally { setBusy(false); }
+  };
+
   const mappedCount = data.mappings.filter(mapping => mapping.status === 'active').length;
+  const staleMappings = data.mappings.filter(mapping => mapping.status === 'active' && mapping.integrity?.stale);
   const selectedDevice = data.devices.find(device => device.id === deviceId);
 
   return (
@@ -209,8 +230,36 @@ export default function BiometricMapping() {
             <div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search employee name, number, or department" className="pl-9" /></div>
           </div>
           {!data.devices.length && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">No active biometric device is authorized for this company.</p>}
-          <Table><TableHeader><TableRow><TableHead>Employee</TableHead><TableHead>Department</TableHead><TableHead>Device</TableHead><TableHead className="w-48">Biometric User ID</TableHead><TableHead className="w-28">Status</TableHead><TableHead className="w-24"></TableHead></TableRow></TableHeader><TableBody>
-            {filteredEmployees.map(employee => { const mapping = mappingByEmployee.get(employee.id); return <TableRow key={employee.id}><TableCell><p className="font-medium">{employee.employee_name}</p><p className="font-mono text-xs text-muted-foreground">{employee.employee_id}</p></TableCell><TableCell>{employee.department || '—'}</TableCell><TableCell className="font-mono text-xs">{selectedDevice?.device_serial || '—'}</TableCell><TableCell><Input value={drafts[employee.id] ?? mapping?.device_user_id ?? ''} onChange={event => setDrafts(current => ({ ...current, [employee.id]: event.target.value }))} placeholder="e.g. 101" /></TableCell><TableCell>{mapping ? <Badge className="bg-emerald-600">Mapped</Badge> : <Badge variant="outline">Not mapped</Badge>}</TableCell><TableCell><Button size="sm" disabled={busy || !deviceId} onClick={() => saveEmployee(employee)}>{mapping ? 'Update' : 'Map'}</Button></TableCell></TableRow>; })}
+          {staleMappings.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-semibold">{staleMappings.length} mapping(s) have a stale employee record ID.</p>
+              <p className="mt-1">Repair updates only the mapping identity. Failed biometric events are not requeued automatically.</p>
+            </div>
+          )}
+          <Table><TableHeader><TableRow><TableHead>Employee</TableHead><TableHead>Department</TableHead><TableHead>Device</TableHead><TableHead className="w-48">Biometric User ID</TableHead><TableHead className="w-36">Status</TableHead><TableHead className="w-40"></TableHead></TableRow></TableHeader><TableBody>
+            {filteredEmployees.map(employee => {
+              const mapping = mappingByEmployee.get(employee.id);
+              const stale = Boolean(mapping?.integrity?.stale);
+              return (
+                <TableRow key={employee.id}>
+                  <TableCell>
+                    <p className="font-medium">{employee.employee_name}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{employee.employee_id}</p>
+                    {stale && <p className="mt-1 text-[11px] text-amber-800">{mapping.integrity.code}: {mapping.integrity.error}</p>}
+                  </TableCell>
+                  <TableCell>{employee.department || '—'}</TableCell>
+                  <TableCell className="font-mono text-xs">{selectedDevice?.device_serial || '—'}</TableCell>
+                  <TableCell><Input value={drafts[employee.id] ?? mapping?.device_user_id ?? ''} onChange={event => setDrafts(current => ({ ...current, [employee.id]: event.target.value }))} placeholder="e.g. 101" /></TableCell>
+                  <TableCell>
+                    {stale ? <Badge className="bg-amber-600">Stale ID</Badge> : mapping ? <Badge className="bg-emerald-600">Mapped</Badge> : <Badge variant="outline">Not mapped</Badge>}
+                  </TableCell>
+                  <TableCell className="space-x-1">
+                    <Button size="sm" disabled={busy || !deviceId} onClick={() => saveEmployee(employee)}>{mapping ? 'Update' : 'Map'}</Button>
+                    {stale && <Button size="sm" variant="outline" disabled={busy} onClick={() => repairMapping(mapping)}><Wrench className="mr-1 h-3 w-3" />Repair</Button>}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody></Table>
         </CardContent>
       </Card>

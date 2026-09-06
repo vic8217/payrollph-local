@@ -1,7 +1,7 @@
 // @ts-nocheck
-import { prisma } from "./prisma";
+import { prisma } from "./prisma.js";
 import { Prisma } from "@prisma/client";
-import { normalizePagination } from "@/lib/pagination";
+import { normalizePagination } from "../lib/pagination.js";
 
 const ENTITY_NAMES = new Set([
   "AttendanceLog",
@@ -329,6 +329,51 @@ export async function updateRecord(entity, id, data) {
   });
 
   return toPublicRecord(record);
+}
+
+function matchesUpdatePredicate(record, predicate = {}) {
+  return Object.entries(predicate).every(([key, expected]) => {
+    const actual = record?.[key];
+    if (expected == null) {
+      return actual == null || actual === "";
+    }
+    return String(actual) === String(expected);
+  });
+}
+
+/**
+ * Compare-and-set update. Concurrent callers that lose the row lock see the
+ * winner's record and updated=false. Predicate values of null mean empty/absent.
+ */
+export async function updateRecordIf(entity, id, data, predicate = {}) {
+  assertEntityName(entity);
+  await ensureSeedData();
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM "EntityRecord" WHERE id = ${id} AND entity = ${entity} FOR UPDATE
+    `);
+    const existing = await tx.entityRecord.findFirst({
+      where: { id, entity },
+    });
+    if (!existing) return { updated: false, record: null };
+
+    const current = toPublicRecord(existing);
+    if (!matchesUpdatePredicate(current, predicate)) {
+      return { updated: false, record: current };
+    }
+
+    const record = await tx.entityRecord.update({
+      where: { id },
+      data: {
+        data: {
+          ...existing.data,
+          ...(data || {}),
+        },
+      },
+    });
+    return { updated: true, record: toPublicRecord(record) };
+  });
 }
 
 export async function deleteRecord(entity, id) {

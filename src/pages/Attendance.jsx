@@ -23,6 +23,14 @@ import {
   formatManilaTime,
   manilaDateString,
 } from '@/lib/dateUtils';
+import { formatPayrollDateTime, formatUtcDebug } from '@/lib/payrollDateTime';
+import {
+  manilaWeekAnchor,
+  normalizeAttendanceCode,
+  normalizeAttendanceKey,
+  selectAttendanceLogsForEmployeeWeek,
+  sortEmployeesForAttendancePicker,
+} from '@/lib/attendanceVisibility';
 import { effectiveShiftSetting, resolveEmployeeWorkSchedule, shiftFromAttendanceSnapshot, sortedShiftAssignments } from '@/lib/shiftSettings';
 import { isAgencyEmployee } from '@/lib/agencyPayroll';
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, ArrowLeft, User, Pencil, Camera, KeyRound, Download, Eye, MapPin, Clock, TriangleAlert, QrCode, ScanFace, Search } from 'lucide-react';
@@ -49,11 +57,7 @@ const overtimeStatusColors = {
 
 const employeeFullName = (employee) =>
   [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ');
-const normalizeAttendanceKey = (value) => String(value || '').trim().toLowerCase();
-const normalizeAttendanceCode = (value) =>
-  normalizeAttendanceKey(value)
-    .replace(/-payrollph$/i, '')
-    .replace(/[^a-z0-9]/g, '');
+const employeeStatusLabel = (employee) => String(employee?.status || 'active').toLowerCase();
 const normalizeDailyPasscode = (value) => String(value ?? '').trim();
 const enabledBooleanSetting = (value) => value === true || value === 1 || String(value).toLowerCase() === 'true';
 const matchesDailyPasscode = (record, input) => {
@@ -108,6 +112,12 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   'shift_grace_period_minutes',
   'shift_time_in_allowance_minutes',
   'shift_paid_break_time',
+  'shift_has_break',
+  'shift_attendance_punch_mode',
+  'shift_is_overnight',
+  'scheduled_time_out',
+  'time_in_2_missing',
+  'review_reason',
   'status',
   'day_type',
   'hours_worked',
@@ -144,6 +154,22 @@ const ATTENDANCE_LOG_LIST_FIELDS = [
   'break_time_in_verification_method',
   'time_out_verification_method',
   'record_source',
+  'time_in_source',
+  'time_in_biometric_event_id',
+  'time_in_device_serial',
+  'time_in_device_log_id',
+  'break_time_out_source',
+  'break_time_out_biometric_event_id',
+  'break_time_out_device_serial',
+  'break_time_out_device_log_id',
+  'break_time_in_source',
+  'break_time_in_biometric_event_id',
+  'break_time_in_device_serial',
+  'break_time_in_device_log_id',
+  'time_out_source',
+  'time_out_biometric_event_id',
+  'time_out_device_serial',
+  'time_out_device_log_id',
   'synchronized_at',
   'offline_client_request_id',
 ].join(',');
@@ -1729,6 +1755,9 @@ export default function Attendance() {
   const { activeCompanyId, activeCompany } = useCompany();
   const qc = useQueryClient();
   const canCorrectAttendance = ['admin', 'super_admin'].includes(currentUser?.role);
+  const [finalizingAutomaticShifts, setFinalizingAutomaticShifts] = useState(false);
+  const [automaticFinalizationMessage, setAutomaticFinalizationMessage] = useState('');
+  const automaticFinalizationAttemptedRef = useRef(new Set());
   const confirmAbsenceMutation = useMutation({
     mutationFn: employee => appApi.entities.AttendanceLog.create({
       company_profile_id: activeCompanyId,
@@ -1749,7 +1778,7 @@ export default function Attendance() {
     return () => clearInterval(timer);
   }, []);
 
-  const baseWeek = new Date();
+  const baseWeek = manilaWeekAnchor();
   const activePeriodConfig = getPayrollPeriodForDate(baseWeek, activeCompany, weekOffset);
   const weekStart = activePeriodConfig.start;
   const weekEnd = activePeriodConfig.end;
@@ -1780,26 +1809,13 @@ export default function Attendance() {
         fetchAttendanceLogs({ ...baseFilter, employee_id: selectedEmployee.employee_id }),
       ]);
       const all = [...new Map([...byRecord, ...byEmployee].map(log => [log.id, log])).values()];
-      const selectedRecordId = String(selectedEmployee.id || '');
-      const selectedEmployeeId = normalizeAttendanceKey(selectedEmployee.employee_id);
-      const selectedEmployeeCode = normalizeAttendanceCode(selectedEmployee.employee_id);
-      const periodLogs = all.filter(l => {
-        const logCompanyId = String(l.company_profile_id || '');
-        const sameCompany = !logCompanyId || logCompanyId === String(activeCompanyId);
-        return sameCompany && l.date >= startStr && l.date <= endStr;
+      const periodLogs = selectAttendanceLogsForEmployeeWeek(all, {
+        companyProfileId: activeCompanyId,
+        employee: selectedEmployee,
+        startDate: startStr,
+        endDate: endStr,
       });
-      const matchedLogs = periodLogs.filter(l => {
-        const logCompanyId = String(l.company_profile_id || '');
-        const sameCompany = !logCompanyId || logCompanyId === String(activeCompanyId);
-        const sameRecord = selectedRecordId && String(l.employee_record_id || '') === selectedRecordId;
-        const sameEmployeeId =
-          normalizeAttendanceKey(l.employee_id) === selectedEmployeeId ||
-          normalizeAttendanceCode(l.employee_id) === selectedEmployeeCode;
-
-        return sameCompany && (sameRecord || sameEmployeeId);
-      });
-
-      return { logs: matchedLogs, periodLogs };
+      return { logs: periodLogs, periodLogs };
     },
     enabled: !!selectedEmployee && !!activeCompanyId,
   });
@@ -2343,6 +2359,31 @@ export default function Attendance() {
   }, [selectedEmployee?.id, selectedEmployee?.break_time, selectedEmployee?.break_duration_minutes, selectedEmployee?.work_schedule, selectedEmployee?.shift_assignments, logs, shiftSettings, overtimeRequests, qc]);
 
   useEffect(() => {
+    if (!canCorrectAttendance || !activeCompanyId || logs.length === 0) return;
+    const now = new Date();
+    const readyIds = logs.filter((log) => {
+      if (automaticFinalizationAttemptedRef.current.has(log.id)) return false;
+      if (String(log.shift_attendance_punch_mode || '').toLowerCase() !== 'automatic_shift') return false;
+      if (['rejected', 'voided', 'void', 'cancelled'].includes(String(log.status || '').toLowerCase())) return false;
+      if (log.day_type === 'half_day' || log.time_out || !log.scheduled_time_out) return false;
+      const shiftEnd = new Date(log.scheduled_time_out);
+      if (!Number.isFinite(shiftEnd.getTime()) || now.getTime() < shiftEnd.getTime()) return false;
+      if (log.shift_has_break && !log.break_time_in) return false;
+      return Boolean(log.time_in);
+    }).map((log) => log.id);
+    if (readyIds.length === 0) return;
+    readyIds.forEach((id) => automaticFinalizationAttemptedRef.current.add(id));
+    let cancelled = false;
+    invokeFunction('finalizeAutomaticShifts', {
+      company_profile_id: activeCompanyId,
+      log_ids: readyIds,
+    }).then(() => {
+      if (!cancelled) qc.invalidateQueries({ queryKey: ['attendance'] });
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, [canCorrectAttendance, activeCompanyId, logs, qc]);
+
+  useEffect(() => {
     if (!selectedEmployee || logs.length === 0) return;
 
     const misclassifiedFinalPunches = logs.filter(log => {
@@ -2475,14 +2516,14 @@ export default function Attendance() {
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
   const filteredEmployees = filterDept === 'all' ? employees : employees.filter(e => e.department === filterDept);
   const normalizedEmployeeSearch = normalizeAttendanceKey(employeeSearch);
-  const visibleEmployees = normalizedEmployeeSearch
+  const visibleEmployees = sortEmployeesForAttendancePicker(normalizedEmployeeSearch
     ? filteredEmployees.filter(employee => [
         employeeFullName(employee),
         employee.employee_id,
         employee.position,
         employee.department,
       ].some(value => normalizeAttendanceKey(value).includes(normalizedEmployeeSearch)))
-    : filteredEmployees;
+    : filteredEmployees);
   const savedPeriodsByRange = new Map(payrollPeriods.map(period => [`${period.start_date}:${period.end_date}`, period]));
   const attendanceDates = allAttendanceLogs.map(log => log.date).filter(Boolean).sort();
   const earliestAttendanceDate = attendanceDates[0];
@@ -2584,7 +2625,11 @@ export default function Attendance() {
       });
       const primaryLog = employeeLogs[0] || null;
       const primaryShift = primaryLog ? getEmployeeLogShift(primaryLog, employee) : null;
-      const expectsBreakPunches = Boolean(primaryShift?.break_start_time || employee.break_time) && primaryLog?.day_type !== 'half_day';
+      const expectsBreakPunches = primaryLog?.day_type !== 'half_day' && (
+        primaryLog?.shift_has_break === true ||
+        (primaryLog?.shift_has_break !== false && Boolean(primaryShift?.break_start_time || employee.break_time))
+      );
+      const isAutomaticShift = String(primaryLog?.shift_attendance_punch_mode || '').toLowerCase() === 'automatic_shift';
       const punchIssues = [];
       if (employeeLogs.length === 0) {
         punchIssues.push('No attendance log');
@@ -2592,8 +2637,16 @@ export default function Attendance() {
         if (employeeLogs.length > 1) punchIssues.push(`${employeeLogs.length} attendance logs`);
         if (!primaryLog?.time_in) punchIssues.push('Missing Time In(1)');
         if (expectsBreakPunches && !primaryLog?.break_time_out) punchIssues.push('Missing Time Out(1)');
-        if (expectsBreakPunches && !primaryLog?.break_time_in) punchIssues.push('Missing Time In(2)');
-        if (!primaryLog?.time_out) punchIssues.push('Missing Time Out(2)');
+        if (expectsBreakPunches && (!primaryLog?.break_time_in || primaryLog?.time_in_2_missing || primaryLog?.review_reason === 'MISSING_TIME_IN_2')) {
+          punchIssues.push('Missing Time In(2)');
+        }
+        if (primaryLog?.time_in_2_missing || primaryLog?.review_reason === 'MISSING_TIME_IN_2') {
+          punchIssues.push('Needs review: return from break was not recorded');
+        } else if (!primaryLog?.time_out && isAutomaticShift) {
+          punchIssues.push('Scheduled Time Out(2) pending');
+        } else if (!primaryLog?.time_out) {
+          punchIssues.push('Missing Time Out(2)');
+        }
 
         const orderedPunches = [
           ['Time In(1)', primaryLog?.time_in],
@@ -2773,6 +2826,27 @@ export default function Attendance() {
     lateCount: 0,
     conductedCount: 0,
   });
+
+  const runAutomaticShiftFinalization = async () => {
+    if (!canCorrectAttendance || !activeCompanyId || finalizingAutomaticShifts) return;
+    setFinalizingAutomaticShifts(true);
+    setAutomaticFinalizationMessage('');
+    try {
+      const result = await invokeFunction('finalizeAutomaticShifts', {
+        company_profile_id: activeCompanyId,
+      });
+      const summary = result?.summary || {};
+      setAutomaticFinalizationMessage(
+        `Finalized ${summary.finalized || 0}. Missing Time In (2): ${summary.missing_time_in_2 || 0}. Pending: ${summary.pending || 0}. Unchanged: ${summary.unchanged || 0}.`
+      );
+      qc.invalidateQueries({ queryKey: ['attendance'] });
+      qc.invalidateQueries({ queryKey: ['attendance-summary'] });
+    } catch (error) {
+      setAutomaticFinalizationMessage(error.message || 'Automatic shift finalization failed.');
+    } finally {
+      setFinalizingAutomaticShifts(false);
+    }
+  };
 
   const handleDownloadCSV = async () => {
     setDownloading(true);
@@ -3034,6 +3108,9 @@ export default function Attendance() {
                   <p className="text-xs text-muted-foreground">
                     Review all four daily punches for {filterDept === 'all' ? 'all departments' : filterDept} · {summaryDate}
                   </p>
+                  {automaticFinalizationMessage && (
+                    <p className="mt-1 text-xs text-muted-foreground">{automaticFinalizationMessage}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Input
@@ -3051,6 +3128,18 @@ export default function Attendance() {
                   >
                     Today
                   </Button>
+                  {canCorrectAttendance && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      disabled={finalizingAutomaticShifts || !activeCompanyId}
+                      onClick={runAutomaticShiftFinalization}
+                    >
+                      {finalizingAutomaticShifts ? 'Finalizing…' : 'Run automatic shift finalization'}
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -3104,7 +3193,11 @@ export default function Attendance() {
                             {row.log?.break_time_in ? formatManilaTime(row.log.break_time_in) : row.expectsBreakPunches ? 'Missing' : '—'}
                           </td>
                           <td className={`px-4 py-2 ${row.log?.time_out ? 'text-blue-700' : 'text-amber-700 font-medium'}`}>
-                            {row.log?.time_out ? formatManilaTime(row.log.time_out) : 'Missing'}
+                            {row.log?.time_out
+                              ? formatManilaTime(row.log.time_out)
+                              : row.log?.scheduled_time_out && String(row.log.shift_attendance_punch_mode || '').toLowerCase() === 'automatic_shift'
+                                ? `Scheduled ${formatManilaTime(row.log.scheduled_time_out)}`
+                                : 'Missing'}
                           </td>
                           <td className="px-4 py-2 text-right">{formatHours(row.hours)}</td>
                           <td className="px-4 py-2 text-right text-blue-700">{formatHours(row.overtimeHours)}</td>
@@ -3453,8 +3546,9 @@ export default function Attendance() {
                       : <User className="w-5 h-5 text-primary" />}
                   </div>
                   <div className="min-w-0">
-                    <p className="font-semibold text-foreground text-sm truncate">{employeeFullName(emp)}</p>
-                    <p className="text-xs text-muted-foreground truncate">{emp.position || emp.department || emp.employee_id}</p>
+                    <p className="font-semibold text-foreground text-sm truncate">{employeeFullName(emp) || emp.employee_id}</p>
+                    <p className="text-xs text-muted-foreground truncate">{emp.employee_id}{emp.position ? ` · ${emp.position}` : emp.department ? ` · ${emp.department}` : ''}</p>
+                    {employeeStatusLabel(emp) !== 'active' && <p className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700">{employeeStatusLabel(emp)}</p>}
                   </div>
                 </button>
               ))}
@@ -3634,7 +3728,7 @@ export default function Attendance() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">{employeeFullName(selectedEmployee)}</h1>
             <p className="text-muted-foreground text-sm mt-0.5">
-              Week Covered — {format(weekStart, 'MMM d')} – {format(weekEnd, 'MMM d, yyyy')}
+              {selectedEmployee.employee_id}{employeeStatusLabel(selectedEmployee) !== 'active' ? ` · ${employeeStatusLabel(selectedEmployee)}` : ''} · Week Covered — {format(weekStart, 'MMM d')} – {format(weekEnd, 'MMM d, yyyy')}
             </p>
           </div>
         </div>
@@ -3757,7 +3851,7 @@ export default function Attendance() {
                       <p>No attendance records for this week.</p>
                       <div className="mx-auto max-w-4xl rounded-lg border border-blue-200 bg-blue-50 p-3 text-left">
                         <p className="text-xs font-semibold text-blue-800">
-                          No attendance rows were returned for {employeeFullName(selectedEmployee)} from {startStr} to {endStr}.
+                          No attendance rows were returned for {employeeFullName(selectedEmployee) || 'this employee'} ({selectedEmployee.employee_id}) from {startStr} to {endStr}.
                         </p>
                       </div>
                     </div>
@@ -3830,6 +3924,12 @@ export default function Attendance() {
                             <InlineLocationButton locationItem={timeInLocation} log={log} onView={setLocationLog} />
                           </div>
                           {log.record_source === 'OFFLINE_SYSTEM_DOWN_SYNC' && <p className="mt-1 text-[10px] font-medium text-blue-700" title={log.synchronized_at ? `Synchronized ${formatManilaDateTime(log.synchronized_at)}` : ''}>Offline sync</p>}
+                          {log.time_in_source === 'biometric' && (
+                            <p className="mt-1 text-[10px] font-medium text-violet-700" title={formatUtcDebug(log.time_in)}>
+                              Biometric · {log.time_in_device_serial} · Log {log.time_in_device_log_id}
+                              {formatPayrollDateTime(log.time_in, { includeSeconds: false }) ? <span className="block font-normal">{formatPayrollDateTime(log.time_in, { includeSeconds: false })}</span> : null}
+                            </p>
+                          )}
                         </td>
                         <td className="px-2.5 py-3 text-xs text-muted-foreground">
                           {actualTimeIn ? formatManilaTime(actualTimeIn) : '—'}
@@ -3843,6 +3943,12 @@ export default function Attendance() {
                             <InlineVerificationMethodIcon photoItem={breakOutPhoto} />
                             <InlineLocationButton locationItem={breakOutLocation} log={log} onView={setLocationLog} />
                           </div>
+                          {log.break_time_out_source === 'biometric' && (
+                            <p className="mt-1 text-[10px] font-medium text-violet-700" title={formatUtcDebug(log.break_time_out)}>
+                              Biometric · {log.break_time_out_device_serial} · Log {log.break_time_out_device_log_id}
+                              {formatPayrollDateTime(log.break_time_out, { includeSeconds: false }) ? <span className="block font-normal">{formatPayrollDateTime(log.break_time_out, { includeSeconds: false })}</span> : null}
+                            </p>
+                          )}
                         </td>
                         <td className="px-2.5 py-3 hidden lg:table-cell">
                           <div className="inline-flex items-center gap-1.5">
@@ -3855,6 +3961,12 @@ export default function Attendance() {
                             <InlineVerificationMethodIcon photoItem={breakInPhoto} />
                             <InlineLocationButton locationItem={breakInLocation} log={log} onView={setLocationLog} />
                           </div>
+                          {log.break_time_in_source === 'biometric' && (
+                            <p className="mt-1 text-[10px] font-medium text-violet-700" title={formatUtcDebug(log.break_time_in)}>
+                              Biometric · {log.break_time_in_device_serial} · Log {log.break_time_in_device_log_id}
+                              {formatPayrollDateTime(log.break_time_in, { includeSeconds: false }) ? <span className="block font-normal">{formatPayrollDateTime(log.break_time_in, { includeSeconds: false })}</span> : null}
+                            </p>
+                          )}
                         </td>
 	                        <td className="px-2.5 py-3">
 	                          <div className="inline-flex items-center gap-1.5">
@@ -3867,6 +3979,12 @@ export default function Attendance() {
                               <InlineVerificationMethodIcon photoItem={timeOutPhoto} />
                               <InlineLocationButton locationItem={timeOutLocation} log={log} onView={setLocationLog} />
 	                          </div>
+                          {log.time_out_source === 'biometric' && (
+                            <p className="mt-1 text-[10px] font-medium text-violet-700" title={formatUtcDebug(log.time_out)}>
+                              Biometric · {log.time_out_device_serial} · Log {log.time_out_device_log_id}
+                              {formatPayrollDateTime(log.time_out, { includeSeconds: false }) ? <span className="block font-normal">{formatPayrollDateTime(log.time_out, { includeSeconds: false })}</span> : null}
+                            </p>
+                          )}
 	                        </td>
                         <td className="px-2.5 py-3 text-xs text-muted-foreground">
                           {actualTimeOut ? formatManilaTime(actualTimeOut) : '—'}

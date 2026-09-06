@@ -19,7 +19,8 @@
     "db:studio": "prisma studio",
     "biometric:gateway-proxy": "node scripts/biometric-gateway-proxy.mjs",
     "biometric:uat-replay": "node scripts/biometric-uat-replay.mjs",
-    "biometric:uat-verify": "node scripts/biometric-uat-verify.mjs"
+    "biometric:uat-verify": "node scripts/biometric-uat-verify.mjs",
+    "attendance:finalize-automatic-shifts": "node scripts/finalize-automatic-shifts.mjs"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^17.0.0",

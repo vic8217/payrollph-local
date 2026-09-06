@@ -63,6 +63,8 @@ function ShiftForm({ shift, onSave, onClose }) {
     paid_breaktime_approval_document_url: shift?.paid_breaktime_approval_document_url || null,
     paid_breaktime_approval_document_name: shift?.paid_breaktime_approval_document_name || null,
     paid_breaktime_approval_uploaded_at: shift?.paid_breaktime_approval_uploaded_at || null,
+    has_break: shift ? shift.has_break !== false && Boolean(shift.break_start_time && shift.break_end_time) : true,
+    attendance_punch_mode: shift?.attendance_punch_mode === 'automatic_shift' ? 'automatic_shift' : 'full_punch',
     is_default: shift?.is_default || false,
   });
   const [approvalFile, setApprovalFile] = useState(null);
@@ -91,15 +93,30 @@ function ShiftForm({ shift, onSave, onClose }) {
       setValidationError(shiftTimeError);
       return;
     }
-    const breakStart = timeToMinutes(form.break_start_time);
-    const breakEnd = timeToMinutes(form.break_end_time);
-    const breakDuration = Number(form.break_duration_minutes);
-    if (breakStart == null || breakEnd == null || breakStart === breakEnd || !(breakDuration > 0)) {
-      setValidationError('Enter a valid break start, break end, and break duration.');
-      return;
+    if (form.has_break) {
+      const breakStart = timeToMinutes(form.break_start_time);
+      const breakEnd = timeToMinutes(form.break_end_time);
+      const breakDuration = Number(form.break_duration_minutes);
+      if (breakStart == null || breakEnd == null || breakStart === breakEnd || !(breakDuration > 0)) {
+        setValidationError('Enter a valid break start, break end, and break duration. Midnight 00:00 is allowed when both ends are set.');
+        return;
+      }
     }
 
-    let payload = { ...form };
+    let payload = {
+      ...form,
+      has_break: Boolean(form.has_break),
+      attendance_punch_mode: form.attendance_punch_mode === 'automatic_shift' ? 'automatic_shift' : 'full_punch',
+      ...(form.has_break ? {} : {
+        break_start_time: null,
+        break_end_time: null,
+        break_duration_minutes: null,
+        paid_break_time: false,
+        paid_breaktime_approval_document_url: null,
+        paid_breaktime_approval_document_name: null,
+        paid_breaktime_approval_uploaded_at: null,
+      }),
+    };
     if (payload.paid_break_time) {
       if (!payload.paid_breaktime_approval_document_url && !approvalFile) {
         setUploadError('Director approval document is required for paid breaktime.');
@@ -191,16 +208,60 @@ function ShiftForm({ shift, onSave, onClose }) {
             />
             <p className="text-xs text-muted-foreground mt-1">Time after which completed work is counted as overtime</p>
           </div>
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <label className="text-sm font-medium">Attendance Punch Mode</label>
+            <select
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={form.attendance_punch_mode}
+              onChange={e => setForm(f => ({ ...f, attendance_punch_mode: e.target.value }))}
+            >
+              <option value="full_punch">Full Punch — employees provide all required punches</option>
+              <option value="automatic_shift">Automatic Shift — employees punch in and return from break</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              {form.attendance_punch_mode === 'automatic_shift'
+                ? 'PayrollPH writes Time Out (1) at the configured break start and Time Out (2) at shift end only after that end time is reached. Time In (2) is still required when this shift has a break. Missing Time In (2) is sent to review and does not award the rest of the day.'
+                : 'Employees supply every required slot. Use this when the company needs actual break-out and shift-end punches.'}
+            </p>
+          </div>
           <div>
-            <label className="text-sm font-medium">Break Time</label>
-            <div className="mt-1 grid grid-cols-2 gap-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="has_break"
+                checked={form.has_break}
+                onChange={e => {
+                  const checked = e.target.checked;
+                  setForm(f => ({
+                    ...f,
+                    has_break: checked,
+                    ...(!checked ? {
+                      break_start_time: '',
+                      break_end_time: '',
+                      break_duration_minutes: '',
+                      paid_break_time: false,
+                    } : {
+                      break_start_time: f.break_start_time || '12:00',
+                      break_end_time: f.break_end_time || '13:00',
+                      break_duration_minutes: f.break_duration_minutes || 60,
+                    }),
+                  }));
+                }}
+                className="rounded"
+              />
+              <label htmlFor="has_break" className="text-sm font-medium cursor-pointer">Has Break</label>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Turn off for a continuous shift with no Time In (2). Midnight 00:00 is a valid break start when an end time is also set.
+            </p>
+            <div className={`mt-2 grid grid-cols-2 gap-3 ${form.has_break ? '' : 'opacity-50'}`}>
               <div>
                 <span className="text-xs text-muted-foreground">Start</span>
-                <Input type="time" value={form.break_start_time} onChange={e => setForm(f => ({ ...f, break_start_time: e.target.value }))} required />
+                <Input type="time" value={form.break_start_time || ''} onChange={e => setForm(f => ({ ...f, break_start_time: e.target.value }))} disabled={!form.has_break} required={form.has_break} />
               </div>
               <div>
                 <span className="text-xs text-muted-foreground">End</span>
-                <Input type="time" value={form.break_end_time} onChange={e => setForm(f => ({ ...f, break_end_time: e.target.value }))} required />
+                <Input type="time" value={form.break_end_time || ''} onChange={e => setForm(f => ({ ...f, break_end_time: e.target.value }))} disabled={!form.has_break} required={form.has_break} />
               </div>
             </div>
             <label className="mt-2 block text-xs text-muted-foreground">Break duration (minutes)</label>
@@ -208,9 +269,10 @@ function ShiftForm({ shift, onSave, onClose }) {
               type="number"
               min="1"
               max="480"
-              value={form.break_duration_minutes}
+              value={form.break_duration_minutes || ''}
               onChange={e => setForm(f => ({ ...f, break_duration_minutes: parseInt(e.target.value) || 0 }))}
-              required
+              disabled={!form.has_break}
+              required={form.has_break}
             />
           </div>
           {validationError && <p className="text-xs text-destructive">{validationError}</p>}
@@ -238,10 +300,11 @@ function ShiftForm({ shift, onSave, onClose }) {
             />
             <p className="text-xs text-muted-foreground mt-1">Credited toward worked hours when first time-in is within this many minutes after shift start</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-2 ${form.has_break ? '' : 'opacity-50'}`}>
             <input
               type="checkbox"
               id="paid_break_time"
+              disabled={!form.has_break}
               checked={form.paid_break_time}
               onChange={e => {
                 const checked = e.target.checked;
@@ -490,8 +553,11 @@ export default function Settings() {
                     </div>
                     <p className="text-sm text-muted-foreground mt-0.5">
                       {formatTime(shift.shift_start_time)} — {formatTime(shift.shift_end_time)}
-                      <span className="text-xs ml-2">• OT starts: {formatTime(shift.overtime_start_time || '17:30')}</span>
-                      <span className="text-xs ml-2">• Break: {formatTime(shift.break_start_time || '12:00')}–{formatTime(shift.break_end_time || '13:00')} ({Number(shift.break_duration_minutes) || 60}min)</span>
+                      <span className="text-xs ml-2">• OT starts: {formatTime(shift.overtime_start_time)}</span>
+                      <span className="text-xs ml-2">• {shift.attendance_punch_mode === 'automatic_shift' ? 'Automatic Shift' : 'Full Punch'}</span>
+                      <span className="text-xs ml-2">• Break: {shift.has_break === false || !shift.break_start_time
+                        ? 'None'
+                        : `${formatTime(shift.break_start_time)}–${formatTime(shift.break_end_time)} (${Number(shift.break_duration_minutes) || 60}min)`}</span>
                       {shift.grace_period_minutes > 0 && (
                         <span className="text-xs ml-2">• Grace: {shift.grace_period_minutes}min</span>
                       )}

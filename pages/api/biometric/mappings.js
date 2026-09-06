@@ -4,6 +4,12 @@ import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
 import { listRecords } from "@/server/entityStore";
 import { recordBiometricAudit } from "@/server/biometric/audit";
+import { assignedCompanyId } from "@/server/biometric/classifyTimeLog";
+import {
+  inspectMappingIntegrity,
+  planMappingRepair,
+  validateMappingIdentity,
+} from "@/server/biometric/mappingIntegrity";
 import { reprocessHeldTimeLogs } from "@/server/biometric/reprocess";
 
 const MAPPING_ROLES = new Set(["super_admin", "admin", "hr_staff", "user"]);
@@ -55,22 +61,23 @@ async function ensureDeviceCompany(deviceId, companyProfileId) {
   });
 }
 
-async function resolveEmployee(companyProfileId, employeeId) {
-  const employees = await listRecords("Employee", {
+async function loadEmployeesForValidation(companyProfileId, { employeeRecordId, employeeId } = {}) {
+  const companyEmployees = await listRecords("Employee", {
     filter: { company_profile_id: companyProfileId },
     limit: 10000,
   });
-  const normalized = String(employeeId || "").trim().toLowerCase();
-  return employees.find(employee => {
-    const primary = String(employee.employee_id || "").trim().toLowerCase();
-    const aliases = Array.isArray(employee.employee_id_aliases)
-      ? employee.employee_id_aliases.map(value => String(value || "").trim().toLowerCase())
-      : [];
-    return primary === normalized || aliases.includes(normalized);
-  }) || null;
+  const extras = [];
+  if (employeeRecordId && !companyEmployees.some((item) => String(item.id) === String(employeeRecordId))) {
+    extras.push(...await listRecords("Employee", { filter: { id: employeeRecordId }, limit: 5 }));
+  }
+  if (employeeId && extras.length === 0) {
+    extras.push(...await listRecords("Employee", { filter: { employee_id: employeeId }, limit: 20 }));
+  }
+  const seen = new Set(companyEmployees.map((item) => item.id));
+  return [...companyEmployees, ...extras.filter((item) => item && !seen.has(item.id))];
 }
 
-async function validateRow({ deviceId, companyProfileId, employeeId, deviceUserId }, rowNumber = null) {
+async function validateRow({ deviceId, companyProfileId, employeeId, deviceUserId, employeeRecordId }, rowNumber = null) {
   const prefix = rowNumber ? `Row ${rowNumber}: ` : "";
   if (!deviceId || !companyProfileId || !employeeId || !String(deviceUserId || "").trim()) {
     return { error: `${prefix}device, company, employee_id, and device_user_id are required.` };
@@ -80,16 +87,24 @@ async function validateRow({ deviceId, companyProfileId, employeeId, deviceUserI
   if (!deviceCompany) {
     return { error: `${prefix}selected biometric device is not authorized for this company.` };
   }
-
-  const employee = await resolveEmployee(companyProfileId, employeeId);
-  if (!employee) {
-    return { error: `${prefix}employee_id "${employeeId}" was not found in this company.` };
-  }
-  if (String(employee.status || "active").toLowerCase() !== "active") {
-    return { error: `${prefix}employee_id "${employeeId}" is not active.` };
+  const deviceAssignedCompany = assignedCompanyId(deviceCompany.device);
+  if (deviceAssignedCompany !== String(companyProfileId)) {
+    return { error: `${prefix}DEVICE_COMPANY_MISMATCH`, code: "DEVICE_COMPANY_MISMATCH" };
   }
 
-  return { employee, deviceCompany };
+  const employees = await loadEmployeesForValidation(companyProfileId, { employeeRecordId, employeeId });
+  const identity = validateMappingIdentity({
+    employees,
+    declaredEmployeeId: employeeId,
+    declaredEmployeeRecordId: employeeRecordId,
+    companyProfileId,
+    deviceCompanyId: deviceAssignedCompany,
+  });
+  if (!identity.ok) {
+    return { error: `${prefix}${identity.code}: ${identity.error}`, code: identity.code };
+  }
+
+  return { employee: identity.employee, deviceCompany, code: null };
 }
 
 export default async function handler(req, res) {
@@ -140,16 +155,25 @@ export default async function handler(req, res) {
         site_name: link.device.siteName,
         status: link.device.status,
       })),
-      mappings: mappings.map(mapping => ({
-        id: mapping.id,
-        company_profile_id: mapping.companyProfileId,
-        device_id: mapping.deviceId,
-        device_serial: mapping.device?.deviceSerial,
-        employee_record_id: mapping.employeeRecordId,
-        employee_id: mapping.employeeId,
-        device_user_id: mapping.deviceUserId,
-        status: mapping.status,
-      })),
+      mappings: mappings.map(mapping => {
+        const deviceCompany = assignedCompanyId(mapping.device);
+        const integrity = inspectMappingIntegrity(mapping, employees, deviceCompany);
+        return {
+          id: mapping.id,
+          company_profile_id: mapping.companyProfileId,
+          device_id: mapping.deviceId,
+          device_serial: mapping.device?.deviceSerial,
+          employee_record_id: mapping.employeeRecordId,
+          employee_id: mapping.employeeId,
+          device_user_id: mapping.deviceUserId,
+          status: mapping.status,
+          integrity: {
+            stale: integrity.stale,
+            code: integrity.code,
+            error: integrity.error,
+          },
+        };
+      }),
     });
   }
 
@@ -190,10 +214,54 @@ export default async function handler(req, res) {
     return res.status(200).json({ mapping: updated });
   }
 
+  if (operation === "repair") {
+    const mappingId = String(body.mapping_id || "").trim();
+    if (!mappingId) return res.status(400).json({ error: "Mapping is required." });
+    const existing = await prisma.biometricUserMapping.findFirst({
+      where: { id: mappingId, companyProfileId },
+      include: { device: { include: { allowedCompanies: { where: { status: "active" } } } } },
+    });
+    if (!existing) return res.status(404).json({ error: "Mapping not found." });
+    const deviceCompany = assignedCompanyId(existing.device);
+    const employees = await loadEmployeesForValidation(companyProfileId, {
+      employeeRecordId: existing.employeeRecordId,
+      employeeId: existing.employeeId,
+    });
+    const planned = planMappingRepair(existing, employees, deviceCompany);
+    if (!planned.ok) {
+      return res.status(422).json({ error: `${planned.code}: ${planned.error}`, code: planned.code });
+    }
+    const updated = await prisma.biometricUserMapping.update({
+      where: { id: existing.id },
+      data: {
+        ...planned.update,
+        companyProfileId,
+      },
+    });
+    await recordBiometricAudit({
+      actorType: "user",
+      actorId: session.user.email || session.user.id,
+      companyProfileId,
+      deviceId: existing.deviceId,
+      deviceSerial: existing.device?.deviceSerial,
+      eventType: planned.audit.eventType,
+      result: "success",
+      reasonCode: planned.audit.reasonCode,
+      mappingId: existing.id,
+      details: planned.audit.details,
+    });
+    return res.status(200).json({
+      mapping: updated,
+      events_requeued: planned.events_requeued,
+      previous_employee_record_id: planned.audit.details.previousEmployeeRecordId,
+    });
+  }
+
   const inputRows = operation === "bulk_upsert"
     ? (Array.isArray(body.rows) ? body.rows : [])
     : [{
         employee_id: body.employee_id,
+        employee_record_id: body.employee_record_id,
         device_user_id: body.device_user_id,
         device_id: body.device_id,
       }];
@@ -209,6 +277,7 @@ export default async function handler(req, res) {
     const row = inputRows[index] || {};
     const deviceId = String(row.device_id || body.device_id || "").trim();
     const employeeId = String(row.employee_id || "").trim();
+    const employeeRecordId = String(row.employee_record_id || body.employee_record_id || "").trim();
     const deviceUserId = String(row.device_user_id || "").trim();
     const rowNumber = Number(row.row_number || index + 2);
 
@@ -225,9 +294,13 @@ export default async function handler(req, res) {
     seenDeviceUsers.set(deviceUserKey, rowNumber);
     seenEmployees.set(employeeKey, rowNumber);
 
-    const checked = await validateRow({ deviceId, companyProfileId, employeeId, deviceUserId }, rowNumber);
+    const checked = await validateRow({ deviceId, companyProfileId, employeeId, employeeRecordId, deviceUserId }, rowNumber);
     if (checked.error) {
-      validation.push({ row_number: rowNumber, error: checked.error.replace(/^Row \d+: /, "") });
+      validation.push({
+        row_number: rowNumber,
+        error: checked.error.replace(/^Row \d+: /, ""),
+        code: checked.code || null,
+      });
       continue;
     }
     validation.push({

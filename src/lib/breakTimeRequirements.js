@@ -1,4 +1,8 @@
-import { effectiveShiftSetting, resolveEmployeeWorkSchedule } from './shiftSettings.js';
+import {
+  effectiveShiftSetting,
+  resolveConfiguredBreak,
+  resolveEmployeeWorkSchedule,
+} from './shiftSettings.js';
 
 export const BREAK_ALERT_ROLES = ['super_admin', 'admin'];
 
@@ -16,10 +20,11 @@ export function employeesMissingBreakTime(employees = [], shiftSettings = [], da
     employee?.status === 'active' && (() => {
       const shiftValue = resolveEmployeeWorkSchedule(employee, date, defaultShift?.id || null);
       const assignedShift = effectiveShifts.find(shift => String(shift.id) === String(shiftValue)) || defaultShift;
-      const breakStart = assignedShift?.break_start_time || employee?.break_time;
-      const breakEnd = assignedShift?.break_end_time;
-      const duration = Number(assignedShift?.break_duration_minutes || employee?.break_duration_minutes) || 0;
-      return !String(breakStart || '').trim() || (!String(breakEnd || '').trim() && duration <= 0);
+      const breakConfig = resolveConfiguredBreak(assignedShift, employee);
+      // A shift explicitly configured without a break is complete, not an
+      // employee issue. Only surface assignments whose break policy is
+      // incomplete.
+      return !breakConfig.valid && breakConfig.reason === 'incomplete';
     })()
   );
 }

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  resolveConfiguredBreak,
   resolveEffectiveEmployeeShift,
+  resolveShiftOccurrence,
   scheduleDateTimes,
   timeInWindowStatus,
 } from '../src/lib/shiftSettings.js';
@@ -91,4 +93,82 @@ test('OT threshold eligibility credits from shift end once the threshold is reac
   assert.equal(computeOvertimeHours({ ...baseLog, time_out: '2026-08-18T09:29:00.000Z' }, 0, options), 0);
   assert.equal(computeOvertimeHours({ ...baseLog, time_out: '2026-08-18T09:30:00.000Z' }, 0, options), 0.5);
   assert.equal(computeOvertimeHours({ ...baseLog, time_out: '2026-08-18T09:45:00.000Z' }, 0, options), 0.75);
+});
+
+test('placeholder midnight break_time is not a valid break without an end window', () => {
+  assert.equal(resolveConfiguredBreak({}, { break_time: '00:00' }).valid, false);
+  assert.equal(resolveConfiguredBreak({
+    break_start_time: '00:00',
+    break_end_time: '01:00',
+  }).valid, true);
+  assert.equal(resolveConfiguredBreak({
+    break_start_time: '12:00',
+    break_end_time: '13:00',
+    break_duration_minutes: 60,
+  }).valid, true);
+});
+
+test('HR shift break window wins over employee legacy 00:00 placeholder', () => {
+  const juanLegacy = { break_time: '00:00', break_duration_minutes: 30 };
+  const configured = resolveConfiguredBreak({
+    has_break: true,
+    break_start_time: '12:00',
+    break_end_time: '13:00',
+    break_duration_minutes: 60,
+  }, juanLegacy);
+  assert.equal(configured.valid, true);
+  assert.equal(configured.source, 'shift_window');
+  assert.equal(configured.start, '12:00');
+  assert.equal(configured.end, '13:00');
+  assert.equal(configured.durationMinutes, 60);
+});
+
+test('explicit has_break=false ignores employee legacy break_time', () => {
+  const configured = resolveConfiguredBreak({
+    has_break: false,
+    break_start_time: '12:00',
+    break_end_time: '13:00',
+  }, { break_time: '00:00', break_duration_minutes: 30 });
+  assert.equal(configured.valid, false);
+  assert.equal(configured.reason, 'disabled');
+});
+
+test('employee legacy break is only a fallback when the shift has no modern break policy', () => {
+  const fallback = resolveConfiguredBreak(
+    { shift_start_time: '08:00', shift_end_time: '17:00' },
+    { break_time: '00:00', break_duration_minutes: 30 },
+  );
+  assert.equal(fallback.valid, true);
+  assert.equal(fallback.source, 'employee_duration');
+  assert.equal(fallback.start, '00:00');
+  assert.equal(fallback.end, '00:30');
+
+  const incompleteExplicit = resolveConfiguredBreak(
+    { has_break: true },
+    { break_time: '00:00', break_duration_minutes: 30 },
+  );
+  assert.equal(incompleteExplicit.valid, false);
+  assert.equal(incompleteExplicit.reason, 'incomplete');
+});
+
+test('employee break_enabled cannot disable an HR-configured shift break', () => {
+  const configured = resolveConfiguredBreak({
+    has_break: true,
+    break_start_time: '12:00',
+    break_end_time: '13:00',
+    break_duration_minutes: 60,
+  }, { break_time: '00:00', break_duration_minutes: 30, break_enabled: false });
+  assert.equal(configured.valid, true);
+  assert.equal(configured.source, 'shift_window');
+  assert.equal(configured.start, '12:00');
+});
+
+test('after-midnight punch belongs to the assigned overnight occurrence', () => {
+  const occurrence = resolveShiftOccurrence({
+    employee: { work_schedule: 'graveyard' },
+    shiftSettings: shifts,
+    punchAt: new Date('2026-08-18T18:10:00.000Z'),
+  });
+  assert.equal(occurrence.workDate, '2026-08-18');
+  assert.equal(occurrence.isOvernight, true);
 });

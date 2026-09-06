@@ -384,9 +384,13 @@ model BiometricTimeLog {
   processingStatus       String          @default("received")
   employeeRecordId       String?
   employeeId             String?
-  // Reserved for a later interpreter. Phase 1 must leave these null.
   attendanceLogId        String?
   mappedSlot             String?
+  interpretedAt          DateTime?
+  interpretationCode     String?
+  interpretationMessage  String?
+  reviewReason           String?
+  interpretationSnapshot Json?
   createdAt              DateTime        @default(now())
   device                 BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Restrict)
 
