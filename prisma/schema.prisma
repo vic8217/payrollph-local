@@ -295,7 +295,9 @@ model FaceVerificationSetting {
 
 model BiometricDevice {
   id                     String   @id @default(cuid())
-  companyProfileId       String
+  // Transitional/default company only. Multi-company authorization is stored
+  // in BiometricDeviceCompany and must be used for new biometric logic.
+  companyProfileId       String?
   deviceSerial           String   @unique
   cloudId                String?
   terminalType           String?
@@ -309,13 +311,28 @@ model BiometricDevice {
   metadata               Json?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
+  allowedCompanies       BiometricDeviceCompany[]
   userMappings           BiometricUserMapping[]
   timeLogs               BiometricTimeLog[]
   adminLogs              BiometricAdminLog[]
 
   @@index([companyProfileId])
-  @@index([companyProfileId, status])
+  @@index([status])
   @@index([cloudId])
+}
+
+model BiometricDeviceCompany {
+  id               String          @id @default(cuid())
+  deviceId         String
+  companyProfileId String
+  status           String          @default("active")
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  device           BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, companyProfileId])
+  @@index([companyProfileId, status])
+  @@index([deviceId, status])
 }
 
 model BiometricUserMapping {
@@ -330,6 +347,8 @@ model BiometricUserMapping {
   updatedAt        DateTime        @updatedAt
   device           BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  // User IDs must be unique inside one physical terminal. The same PayrollPH
+  // employee may later be mapped on another terminal for roaming/site access.
   @@unique([deviceId, deviceUserId])
   @@unique([deviceId, employeeRecordId])
   @@index([companyProfileId, employeeId])
@@ -338,7 +357,8 @@ model BiometricUserMapping {
 
 model BiometricTimeLog {
   id                 String          @id @default(cuid())
-  companyProfileId   String
+  // Null until the device UserID is resolved to a company-scoped employee map.
+  companyProfileId   String?
   deviceId           String
   deviceSerial       String
   logId              String
@@ -370,7 +390,8 @@ model BiometricTimeLog {
 
 model BiometricAdminLog {
   id               String          @id @default(cuid())
-  companyProfileId String
+  // Device administration events are site/device scoped; company may be null.
+  companyProfileId String?
   deviceId         String
   deviceSerial     String
   logId            String
