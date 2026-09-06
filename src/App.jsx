@@ -11,6 +11,7 @@ import Dashboard from '@/pages/Dashboard';
 import Employees from '@/pages/Employees';
 import QRScanner from '@/pages/QRScanner';
 import Attendance from '@/pages/Attendance';
+import BiometricMapping from '@/pages/BiometricMapping';
 import Payroll from '@/pages/Payroll';
 import PayrollDashboard from '@/pages/PayrollDashboard';
 import StatutoryRates from '@/pages/StatutoryRates';
@@ -48,31 +49,16 @@ import { hasPermission, permissionForPath } from '@/lib/permissions';
 const AuthenticatedApp = () => {
   const { user, isLoadingAuth, isLoadingPublicSettings, authError } = useAuth();
 
-  // Public routes — render immediately without auth check, no loading needed
   const path = window.location.pathname;
-  if (path === '/maintenance') {
-    return <Maintenance />;
-  }
-  if (path.startsWith('/employee-portal')) {
-    return <EmployeePortal />;
-  }
-  if (path === '/scan/confirm') {
-    return <ScanConfirm />;
-  }
+  if (path === '/maintenance') return <Maintenance />;
+  if (path.startsWith('/employee-portal')) return <EmployeePortal />;
+  if (path === '/scan/confirm') return <ScanConfirm />;
 
   if (isLoadingPublicSettings || isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-primary rounded-full animate-spin"></div>
-      </div>
-    );
+    return <div className="fixed inset-0 flex items-center justify-center"><div className="w-8 h-8 border-4 border-slate-200 border-t-primary rounded-full animate-spin"></div></div>;
   }
 
-  if (authError) {
-    if (authError.type === 'user_not_registered') {
-      return <UserNotRegisteredError />;
-    }
-  }
+  if (authError?.type === 'user_not_registered') return <UserNotRegisteredError />;
 
   if (!user) {
     return (
@@ -88,13 +74,8 @@ const AuthenticatedApp = () => {
     );
   }
 
-  // Keep client-side navigation aligned with the server request gate. This is
-  // especially important for `/`, which remains public so the login page can
-  // be reached while maintenance mode is active.
   const requiredPermission = permissionForPath(path);
-  if (requiredPermission && !hasPermission(user.role, requiredPermission)) {
-    return <Navigate to="/attendance" replace />;
-  }
+  if (requiredPermission && !hasPermission(user.role, requiredPermission)) return <Navigate to="/attendance" replace />;
 
   return (
     <Routes>
@@ -106,6 +87,7 @@ const AuthenticatedApp = () => {
         <Route path="/scan" element={<QRScanner />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/attendance/time-in-reviews" element={<TimeInReviews />} />
+        <Route path="/biometric-mapping" element={<BiometricMapping />} />
         <Route path="/payroll" element={<Payroll />} />
         <Route path="/payroll/reconciliation" element={<PayrollReconciliation />} />
         <Route path="/management-reports" element={<ManagementReports />} />
@@ -144,9 +126,7 @@ function App() {
     <AuthProvider>
       <CompanyProvider>
         <QueryClientProvider client={queryClientInstance}>
-          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <AuthenticatedApp />
-          </Router>
+          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AuthenticatedApp /></Router>
           <Toaster />
         </QueryClientProvider>
       </CompanyProvider>
