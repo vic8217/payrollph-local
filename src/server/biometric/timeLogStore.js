@@ -1,82 +1,17 @@
 // @ts-nocheck
 import { prisma } from "../prisma.js";
+import { recordBiometricAudit } from "./audit.js";
+import { assignedCompanyId, classifyTimeLog } from "./classifyTimeLog.js";
+import { ADMINLOG_ALLOWED_FIELDS, sanitizeManufacturerPayload } from "./sanitizePayload.js";
+import { insertImmutableUnique, intField, parseDeviceOccurredAt, textField } from "./time.js";
+import { normalizeVerifyMethod } from "./verifyMethod.js";
 
-function text(value) {
-  return value === undefined || value === null ? null : String(value);
-}
-
-function intOrNull(value) {
-  const n = Number.parseInt(String(value ?? ""), 10);
-  return Number.isFinite(n) ? n : null;
-}
+export { parseDeviceOccurredAt } from "./time.js";
 
 export function sourceIpFromRequest(req) {
   const forwarded = req.headers?.["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded) return forwarded.split(",")[0].trim();
   return req.socket?.remoteAddress || null;
-}
-
-function validUtcDateParts(year, month, day, hour, minute, second) {
-  if (month < 1 || month > 12) return false;
-  if (day < 1 || day > 31) return false;
-  if (hour < 0 || hour > 23) return false;
-  if (minute < 0 || minute > 59) return false;
-  if (second < 0 || second > 59) return false;
-
-  const probe = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  return (
-    probe.getUTCFullYear() === year &&
-    probe.getUTCMonth() === month - 1 &&
-    probe.getUTCDate() === day &&
-    probe.getUTCHours() === hour &&
-    probe.getUTCMinutes() === minute &&
-    probe.getUTCSeconds() === second
-  );
-}
-
-export function parseDeviceOccurredAt(payload) {
-  const raw = text(payload.Time);
-  if (!raw) return { occurredAt: null, occurredAtLocal: null };
-
-  const timezoneMinutes = intOrNull(payload.UtcTimezoneMinutes);
-
-  // F500 observed payload example:
-  //   Time="2026-9-6-T8:55:20Z", UtcTimezoneMinutes="480"
-  // Despite the trailing Z, this value represents the device-local wall clock.
-  // Parse the components explicitly and apply UtcTimezoneMinutes to obtain UTC.
-  const f500Clock = raw.trim().match(
-    /^(\d{4})-(\d{1,2})-(\d{1,2})-?T(\d{1,2}):(\d{1,2}):(\d{1,2})(?:Z)?$/i
-  );
-
-  if (f500Clock && timezoneMinutes !== null) {
-    const [, y, mo, d, h, mi, s] = f500Clock;
-    const year = Number(y);
-    const month = Number(mo);
-    const day = Number(d);
-    const hour = Number(h);
-    const minute = Number(mi);
-    const second = Number(s);
-
-    if (validUtcDateParts(year, month, day, hour, minute, second)) {
-      const localWallClockAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
-      return {
-        occurredAt: new Date(localWallClockAsUtc - timezoneMinutes * 60_000),
-        occurredAtLocal: raw,
-      };
-    }
-  }
-
-  // Fallback for firmware that sends a standards-compliant ISO timestamp.
-  const normalized = raw.replace(/-T/, "T");
-  const parsed = Date.parse(normalized);
-  return {
-    occurredAt: Number.isFinite(parsed) ? new Date(parsed) : null,
-    occurredAtLocal: raw,
-  };
-}
-
-function isUniqueConflict(error) {
-  return error?.code === "P2002";
 }
 
 async function resolveMapping(deviceId, deviceUserId) {
@@ -86,94 +21,159 @@ async function resolveMapping(deviceId, deviceUserId) {
   });
 }
 
-async function companyAllowed(deviceId, companyProfileId) {
-  if (!companyProfileId) return false;
-  const allowed = await prisma.biometricDeviceCompany.findFirst({
-    where: { deviceId, companyProfileId, status: "active" },
-    select: { id: true },
-  });
-  return Boolean(allowed);
+function attachedIdentity(decision, mapping) {
+  if (!decision.attachEmployee || !mapping) {
+    return { companyProfileId: null, employeeRecordId: null, employeeId: null };
+  }
+  return {
+    companyProfileId: mapping.companyProfileId,
+    employeeRecordId: mapping.employeeRecordId,
+    employeeId: mapping.employeeId,
+  };
 }
 
-export async function storeTimeLog({ device, payload, sourceIp }) {
-  const logId = text(payload.LogID);
+export async function storeTimeLog({ device, payload, sourceIp, ingestSource = "push" }) {
+  const { sanitized, discardedFieldNames } = sanitizeManufacturerPayload(payload);
+  const logId = textField(sanitized.LogID || payload?.LogID);
   if (!logId) throw new Error("TIME_LOG_ID_REQUIRED");
-  const deviceUserId = text(payload.UserID);
-  const { occurredAt, occurredAtLocal } = parseDeviceOccurredAt(payload);
+
+  const deviceUserId = textField(sanitized.UserID);
+  const { occurredAt, occurredAtLocal, utcTimezoneMinutes } = parseDeviceOccurredAt(sanitized);
   const mapping = await resolveMapping(device.id, deviceUserId);
-  const mappingAllowed = mapping
-    ? await companyAllowed(device.id, mapping.companyProfileId)
-    : false;
+  const companyId = assignedCompanyId(device);
+  const decision = classifyTimeLog({ mapping, assignedCompanyId: companyId });
+  const identity = attachedIdentity(decision, mapping);
+  const verifyMethod = textField(sanitized.Action);
 
-  // Raw storage always succeeds for a registered device. Company/employee fields
-  // are populated only from an active mapping whose company is authorized on the
-  // physical device. Unmapped punches remain auditable and can be resolved later.
-  const processingStatus = mapping
-    ? (mappingAllowed ? "mapped_pending_attendance" : "company_not_authorized")
-    : "unmapped_user";
-
-  try {
-    const record = await prisma.biometricTimeLog.create({
+  const result = await insertImmutableUnique(
+    () => prisma.biometricTimeLog.create({
       data: {
-        companyProfileId: mappingAllowed ? mapping.companyProfileId : null,
+        ...identity,
         deviceId: device.id,
         deviceSerial: device.deviceSerial,
         logId,
         deviceUserId,
         occurredAt,
         occurredAtLocal,
-        utcTimezoneMinutes: intOrNull(payload.UtcTimezoneMinutes),
-        attendStatus: text(payload.AttendStat),
-        verifyMethod: text(payload.Action),
-        jobCode: text(payload.JobCode),
-        transId: text(payload.TransID),
-        rawPayload: payload,
+        utcTimezoneMinutes: utcTimezoneMinutes ?? intField(sanitized.UtcTimezoneMinutes),
+        attendStatus: textField(sanitized.AttendStat),
+        verifyMethod,
+        verifyMethodNormalized: normalizeVerifyMethod(verifyMethod),
+        jobCode: textField(sanitized.JobCode),
+        transId: textField(sanitized.TransID),
+        rawPayload: sanitized,
+        payloadSanitized: true,
+        discardedFieldNames,
+        ingestSource,
         sourceIp,
-        processingStatus,
-        employeeRecordId: mappingAllowed ? mapping.employeeRecordId : null,
-        employeeId: mappingAllowed ? mapping.employeeId : null,
+        processingStatus: decision.processingStatus,
+      },
+    }),
+    () => prisma.biometricTimeLog.findUnique({
+      where: { deviceSerial_logId: { deviceSerial: device.deviceSerial, logId } },
+    }),
+  );
+
+  const auditBase = {
+    actorType: "device",
+    actorId: device.deviceSerial,
+    deviceId: device.id,
+    deviceSerial: device.deviceSerial,
+    biometricTimeLogId: result.record?.id || null,
+    details: {
+      logId,
+      deviceUserId,
+      transId: textField(sanitized.TransID),
+      processingStatus: result.duplicate ? result.record?.processingStatus : decision.processingStatus,
+      discardedFieldNames,
+    },
+  };
+
+  if (result.duplicate) {
+    await recordBiometricAudit({
+      ...auditBase,
+      companyProfileId: result.record?.companyProfileId || null,
+      eventType: "ingest_duplicate",
+      result: "duplicate",
+      reasonCode: "DEVICE_SERIAL_LOG_ID",
+    });
+    return result;
+  }
+
+  if (decision.securityEvent) {
+    await recordBiometricAudit({
+      ...auditBase,
+      companyProfileId: companyId,
+      eventType: "ingest_held_unauthorized",
+      result: "held",
+      reasonCode: "MAPPING_COMPANY_MISMATCH",
+      details: {
+        ...auditBase.details,
+        mappingCompanyProfileId: mapping?.companyProfileId || null,
+        deviceCompanyProfileId: companyId,
       },
     });
-    return { record, duplicate: false };
-  } catch (error) {
-    if (!isUniqueConflict(error)) throw error;
-    const record = await prisma.biometricTimeLog.findUnique({
-      where: { deviceSerial_logId: { deviceSerial: device.deviceSerial, logId } },
+  } else if (decision.processingStatus === "unmapped_user") {
+    await recordBiometricAudit({
+      ...auditBase,
+      companyProfileId: companyId,
+      eventType: "ingest_held_unmapped",
+      result: "held",
+      reasonCode: "UNMAPPED_USER",
     });
-    return { record, duplicate: true };
+  } else {
+    await recordBiometricAudit({
+      ...auditBase,
+      companyProfileId: identity.companyProfileId,
+      eventType: "ingest_accepted",
+      result: "success",
+      reasonCode: "MAPPED_PENDING_ATTENDANCE",
+    });
   }
+
+  return result;
 }
 
 export async function storeAdminLog({ device, payload, sourceIp }) {
-  const logId = text(payload.LogID);
+  const { sanitized, discardedFieldNames } = sanitizeManufacturerPayload(payload, ADMINLOG_ALLOWED_FIELDS);
+  const logId = textField(sanitized.LogID || payload?.LogID);
   if (!logId) throw new Error("ADMIN_LOG_ID_REQUIRED");
-  const { occurredAt, occurredAtLocal } = parseDeviceOccurredAt(payload);
+  const { occurredAt, occurredAtLocal } = parseDeviceOccurredAt(sanitized);
 
-  try {
-    const record = await prisma.biometricAdminLog.create({
+  const result = await insertImmutableUnique(
+    () => prisma.biometricAdminLog.create({
       data: {
         companyProfileId: null,
         deviceId: device.id,
         deviceSerial: device.deviceSerial,
         logId,
-        adminId: text(payload.AdminID),
-        deviceUserId: text(payload.UserID),
+        adminId: textField(sanitized.AdminID),
+        deviceUserId: textField(sanitized.UserID),
         occurredAt,
         occurredAtLocal,
-        action: text(payload.Action),
-        stat: text(payload.Stat),
-        transId: text(payload.TransID),
-        rawPayload: payload,
+        action: textField(sanitized.Action),
+        stat: textField(sanitized.Stat),
+        transId: textField(sanitized.TransID),
+        rawPayload: sanitized,
         sourceIp,
         processingStatus: "received",
       },
-    });
-    return { record, duplicate: false };
-  } catch (error) {
-    if (!isUniqueConflict(error)) throw error;
-    const record = await prisma.biometricAdminLog.findUnique({
+    }),
+    () => prisma.biometricAdminLog.findUnique({
       where: { deviceSerial_logId: { deviceSerial: device.deviceSerial, logId } },
-    });
-    return { record, duplicate: true };
-  }
+    }),
+  );
+
+  await recordBiometricAudit({
+    actorType: "device",
+    actorId: device.deviceSerial,
+    deviceId: device.id,
+    deviceSerial: device.deviceSerial,
+    eventType: result.duplicate ? "ingest_duplicate" : "admin_log_received",
+    result: result.duplicate ? "duplicate" : "success",
+    reasonCode: result.duplicate ? "DEVICE_SERIAL_LOG_ID" : "ADMIN_LOG",
+    details: { logId, discardedFieldNames },
+  });
+
+  return result;
 }

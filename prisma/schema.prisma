@@ -295,8 +295,9 @@ model FaceVerificationSetting {
 
 model BiometricDevice {
   id                     String   @id @default(cuid())
-  // Transitional/default company only. Multi-company authorization is stored
-  // in BiometricDeviceCompany and must be used for new biometric logic.
+  // Phase 1: exactly one assigned company. companyProfileId is the active
+  // tenant. BiometricDeviceCompany remains so a later release can authorize
+  // more than one company on the same terminal without redesigning raw events.
   companyProfileId       String?
   deviceSerial           String   @unique
   cloudId                String?
@@ -305,9 +306,10 @@ model BiometricDevice {
   siteCode               String?
   siteName               String?
   registrationSecretHash String?
-  status                 String   @default("active")
+  status                 String   @default("pending")
   lastSeenAt             DateTime?
   lastLoginAt            DateTime?
+  lastOnlineAt           DateTime?
   metadata               Json?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
@@ -315,6 +317,7 @@ model BiometricDevice {
   userMappings           BiometricUserMapping[]
   timeLogs               BiometricTimeLog[]
   adminLogs              BiometricAdminLog[]
+  auditEvents            BiometricAuditEvent[]
 
   @@index([companyProfileId])
   @@index([status])
@@ -356,36 +359,66 @@ model BiometricUserMapping {
 }
 
 model BiometricTimeLog {
-  id                 String          @id @default(cuid())
+  id                     String          @id @default(cuid())
   // Null until the device UserID is resolved to a company-scoped employee map.
-  companyProfileId   String?
-  deviceId           String
-  deviceSerial       String
-  logId              String
-  deviceUserId       String?
-  occurredAt         DateTime?
-  occurredAtLocal    String?
-  utcTimezoneMinutes Int?
-  attendStatus       String?
-  verifyMethod       String?
-  jobCode            String?
-  transId            String?
-  rawPayload         Json
-  receivedAt         DateTime        @default(now())
-  sourceIp           String?
-  processingStatus   String          @default("received")
-  employeeRecordId   String?
-  employeeId         String?
-  attendanceLogId    String?
-  mappedSlot         String?
-  createdAt          DateTime        @default(now())
-  device             BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  // Quarantined / unmapped punches keep this null and never enter attendance.
+  companyProfileId       String?
+  deviceId               String
+  deviceSerial           String
+  logId                  String
+  deviceUserId           String?
+  occurredAt             DateTime?
+  occurredAtLocal        String?
+  utcTimezoneMinutes     Int?
+  attendStatus           String?
+  verifyMethod           String?
+  verifyMethodNormalized String?
+  jobCode                String?
+  transId                String?
+  rawPayload             Json
+  payloadSanitized       Boolean         @default(true)
+  discardedFieldNames    Json?
+  ingestSource           String          @default("push")
+  receivedAt             DateTime        @default(now())
+  sourceIp               String?
+  processingStatus       String          @default("received")
+  employeeRecordId       String?
+  employeeId             String?
+  // Reserved for a later interpreter. Phase 1 must leave these null.
+  attendanceLogId        String?
+  mappedSlot             String?
+  createdAt              DateTime        @default(now())
+  device                 BiometricDevice @relation(fields: [deviceId], references: [id], onDelete: Restrict)
 
   @@unique([deviceSerial, logId])
   @@index([companyProfileId, occurredAt])
   @@index([deviceId, occurredAt])
   @@index([companyProfileId, deviceUserId, occurredAt])
   @@index([processingStatus])
+  @@index([ingestSource])
+}
+
+model BiometricAuditEvent {
+  id                 String          @id @default(cuid())
+  occurredAt         DateTime        @default(now())
+  actorType          String
+  actorId            String?
+  companyProfileId   String?
+  deviceId           String?
+  deviceSerial       String?
+  eventType          String
+  result             String
+  reasonCode         String?
+  biometricTimeLogId String?
+  mappingId          String?
+  details            Json?
+  createdAt          DateTime        @default(now())
+  device             BiometricDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([deviceId, occurredAt])
+  @@index([companyProfileId, occurredAt])
+  @@index([eventType, occurredAt])
+  @@index([result])
 }
 
 model BiometricAdminLog {

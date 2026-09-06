@@ -16,7 +16,10 @@
     "preview": "next start",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "biometric:gateway-proxy": "node scripts/biometric-gateway-proxy.mjs",
+    "biometric:uat-replay": "node scripts/biometric-uat-replay.mjs",
+    "biometric:uat-verify": "node scripts/biometric-uat-verify.mjs"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^17.0.0",

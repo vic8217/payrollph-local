@@ -107,7 +107,7 @@ export default function BiometricMapping() {
           employee_id: employee.employee_id, device_user_id: deviceUserId,
         }),
       });
-      setMessage(`${employee.employee_name} mapped successfully.`);
+      setMessage(`${employee.employee_name} mapped successfully. Held unmapped punches for this User ID were reprocessed.`);
       await load();
     } catch (error) { setMessage(error.message); }
     finally { setBusy(false); }

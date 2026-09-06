@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
 import { listRecords } from "@/server/entityStore";
+import { recordBiometricAudit } from "@/server/biometric/audit";
+import { reprocessHeldTimeLogs } from "@/server/biometric/reprocess";
 
 const MAPPING_ROLES = new Set(["super_admin", "admin", "hr_staff", "user"]);
 
@@ -175,6 +177,16 @@ export default async function handler(req, res) {
       where: { id: existing.id },
       data: { status: "inactive" },
     });
+    await recordBiometricAudit({
+      actorType: "user",
+      actorId: session.user.email || session.user.id,
+      companyProfileId,
+      deviceId: existing.deviceId,
+      eventType: "mapping_deactivated",
+      result: "success",
+      mappingId: existing.id,
+      details: { device_user_id: existing.deviceUserId, employee_id: existing.employeeId },
+    });
     return res.status(200).json({ mapping: updated });
   }
 
@@ -264,12 +276,35 @@ export default async function handler(req, res) {
       ? await prisma.biometricUserMapping.update({ where: { id: target.id }, data })
       : await prisma.biometricUserMapping.create({ data });
     saved.push(mapping);
+    await recordBiometricAudit({
+      actorType: "user",
+      actorId: session.user.email || session.user.id,
+      companyProfileId,
+      deviceId: mapping.deviceId,
+      eventType: "mapping_upserted",
+      result: "success",
+      mappingId: mapping.id,
+      details: { device_user_id: mapping.deviceUserId, employee_id: mapping.employeeId },
+    });
+  }
+
+  const reprocessed = [];
+  for (const mapping of saved) {
+    reprocessed.push(await reprocessHeldTimeLogs({
+      deviceId: mapping.deviceId,
+      deviceUserId: mapping.deviceUserId,
+      mapping,
+      explicitQuarantine: false,
+      actorType: "user",
+      actorId: session.user.email || session.user.id,
+    }));
   }
 
   return res.status(200).json({
     saved_count: saved.length,
     mappings: saved,
     validation,
+    reprocessed,
     updated_by: session.user.email || session.user.name || session.user.id,
   });
 }

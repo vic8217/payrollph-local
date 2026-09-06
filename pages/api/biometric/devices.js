@@ -3,6 +3,9 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import { prisma } from "@/server/prisma";
 import { listRecords } from "@/server/entityStore";
+import { recordBiometricAudit } from "@/server/biometric/audit";
+import { assignedCompanyId } from "@/server/biometric/classifyTimeLog";
+import { deriveConnectionStatus, presenceStaleMs } from "@/server/biometric/presence";
 
 function companyIds(session) {
   return [
@@ -22,6 +25,31 @@ async function requireAdmin(req, res) {
     return null;
   }
   return session;
+}
+
+function actorId(session) {
+  return session.user.email || session.user.id;
+}
+
+async function assignSingleCompany(device, companyProfileId) {
+  const existing = await prisma.biometricDeviceCompany.findMany({ where: { deviceId: device.id } });
+  await prisma.$transaction(async tx => {
+    for (const link of existing) {
+      await tx.biometricDeviceCompany.update({
+        where: { id: link.id },
+        data: { status: link.companyProfileId === companyProfileId ? "active" : "inactive" },
+      });
+    }
+    await tx.biometricDeviceCompany.upsert({
+      where: { deviceId_companyProfileId: { deviceId: device.id, companyProfileId } },
+      update: { status: "active" },
+      create: { deviceId: device.id, companyProfileId, status: "active" },
+    });
+    await tx.biometricDevice.update({
+      where: { id: device.id },
+      data: { companyProfileId },
+    });
+  });
 }
 
 export default async function handler(req, res) {
@@ -45,24 +73,34 @@ export default async function handler(req, res) {
     const visibleCompanyIdSet = new Set(visibleCompanies.map(c => String(c.id)));
     const visibleDevices = session.user.role === "super_admin"
       ? devices
-      : devices.filter(d => d.allowedCompanies.some(link => visibleCompanyIdSet.has(String(link.companyProfileId))));
+      : devices.filter(d => {
+          const assigned = assignedCompanyId(d);
+          return assigned && visibleCompanyIdSet.has(String(assigned));
+        });
 
+    const staleMs = presenceStaleMs();
     return res.status(200).json({
       companies: visibleCompanies,
-      devices: visibleDevices.map(d => ({
-        id: d.id,
-        device_serial: d.deviceSerial,
-        cloud_id: d.cloudId,
-        terminal_type: d.terminalType,
-        product_name: d.productName,
-        site_code: d.siteCode,
-        site_name: d.siteName,
-        status: d.status,
-        last_seen_at: d.lastSeenAt,
-        last_login_at: d.lastLoginAt,
-        mapping_count: d.userMappings.length,
-        company_ids: d.allowedCompanies.filter(link => link.status === "active").map(link => link.companyProfileId),
-      })),
+      presence_stale_ms: staleMs,
+      devices: visibleDevices.map(d => {
+        const companyId = assignedCompanyId(d);
+        return {
+          id: d.id,
+          device_serial: d.deviceSerial,
+          cloud_id: d.cloudId,
+          terminal_type: d.terminalType,
+          product_name: d.productName,
+          site_code: d.siteCode,
+          site_name: d.siteName,
+          status: d.status,
+          connection_status: deriveConnectionStatus(d, new Date(), staleMs),
+          last_seen_at: d.lastSeenAt,
+          last_login_at: d.lastLoginAt,
+          mapping_count: d.userMappings.length,
+          company_id: companyId,
+          company_ids: companyId ? [companyId] : [],
+        };
+      }),
     });
   }
 
@@ -73,43 +111,70 @@ export default async function handler(req, res) {
 
   const { operation, device_id: deviceId } = req.body || {};
   if (!deviceId) return res.status(400).json({ error: "Device is required." });
-  const device = await prisma.biometricDevice.findUnique({ where: { id: String(deviceId) } });
+  const device = await prisma.biometricDevice.findUnique({
+    where: { id: String(deviceId) },
+    include: { allowedCompanies: true },
+  });
   if (!device) return res.status(404).json({ error: "Biometric device not found." });
 
   if (operation === "approve") {
     if (session.user.role !== "super_admin") return res.status(403).json({ error: "Only a super administrator can approve newly detected devices." });
     const updated = await prisma.biometricDevice.update({ where: { id: device.id }, data: { status: "active" } });
+    await recordBiometricAudit({
+      actorType: "user",
+      actorId: actorId(session),
+      deviceId: device.id,
+      deviceSerial: device.deviceSerial,
+      eventType: "device_approved",
+      result: "success",
+    });
     return res.status(200).json({ device: updated });
   }
 
-  if (operation === "set_companies") {
-    const requestedIds = [...new Set((Array.isArray(req.body.company_profile_ids) ? req.body.company_profile_ids : []).map(v => String(v).trim()).filter(Boolean))];
-    if (!requestedIds.length) return res.status(400).json({ error: "Select at least one company." });
+  if (operation === "disable") {
+    if (session.user.role !== "super_admin") return res.status(403).json({ error: "Only a super administrator can disable a biometric device." });
+    const updated = await prisma.biometricDevice.update({ where: { id: device.id }, data: { status: "disabled" } });
+    await recordBiometricAudit({
+      actorType: "user",
+      actorId: actorId(session),
+      companyProfileId: assignedCompanyId(device),
+      deviceId: device.id,
+      deviceSerial: device.deviceSerial,
+      eventType: "device_disabled",
+      result: "success",
+    });
+    return res.status(200).json({ device: updated });
+  }
 
-    const allowedIds = session.user.role === "super_admin" ? null : new Set(companyIds(session));
-    if (allowedIds && requestedIds.some(id => !allowedIds.has(id))) {
-      return res.status(403).json({ error: "You can only assign companies you are authorized to manage." });
+  if (operation === "set_company" || operation === "set_companies") {
+    const requestedIds = [...new Set([
+      req.body.company_profile_id,
+      ...(Array.isArray(req.body.company_profile_ids) ? req.body.company_profile_ids : []),
+    ].map(v => String(v || "").trim()).filter(Boolean))];
+
+    if (!requestedIds.length) return res.status(400).json({ error: "Select one company." });
+    if (requestedIds.length > 1) {
+      return res.status(400).json({ error: "Phase 1 allows exactly one company per biometric device." });
     }
 
-    await prisma.$transaction(async tx => {
-      const existing = await tx.biometricDeviceCompany.findMany({ where: { deviceId: device.id } });
-      const requested = new Set(requestedIds);
-      for (const link of existing) {
-        await tx.biometricDeviceCompany.update({
-          where: { id: link.id },
-          data: { status: requested.has(link.companyProfileId) ? "active" : "inactive" },
-        });
-      }
-      for (const companyProfileId of requestedIds) {
-        await tx.biometricDeviceCompany.upsert({
-          where: { deviceId_companyProfileId: { deviceId: device.id, companyProfileId } },
-          update: { status: "active" },
-          create: { deviceId: device.id, companyProfileId, status: "active" },
-        });
-      }
-    });
+    const companyProfileId = requestedIds[0];
+    const allowedIds = session.user.role === "super_admin" ? null : new Set(companyIds(session));
+    if (allowedIds && !allowedIds.has(companyProfileId)) {
+      return res.status(403).json({ error: "You can only assign a company you are authorized to manage." });
+    }
 
-    return res.status(200).json({ ok: true });
+    await assignSingleCompany(device, companyProfileId);
+    await recordBiometricAudit({
+      actorType: "user",
+      actorId: actorId(session),
+      companyProfileId,
+      deviceId: device.id,
+      deviceSerial: device.deviceSerial,
+      eventType: "device_companies_set",
+      result: "success",
+      details: { company_profile_id: companyProfileId, phase1_single_company: true },
+    });
+    return res.status(200).json({ ok: true, company_profile_id: companyProfileId });
   }
 
   if (operation === "update_details") {

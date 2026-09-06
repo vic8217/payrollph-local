@@ -33,6 +33,12 @@ UPLOAD_DIR="/var/lib/payrollph/uploads"
 PAYROLLPH_FACE_VERIFICATION_ENABLED=false
 PAYROLLPH_ACCURA_FACE_VERIFICATION_ENABLED=false
 PAYROLLPH_FACE_DUPLICATE_THRESHOLD=0.98
+
+# Required for F500 / devicebroker ingest. Manufacturer broker does not send this
+# header; put a reverse proxy or `npm run biometric:gateway-proxy` in front.
+BIOMETRIC_GATEWAY_SECRET="replace-with-long-random-secret"
+# Optional. Authenticated activity older than this many milliseconds is STALE.
+BIOMETRIC_PRESENCE_STALE_MS=300000
 ```
 
 Generate a secret:

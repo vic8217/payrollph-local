@@ -13,6 +13,7 @@ import QRScanner from '@/pages/QRScanner';
 import Attendance from '@/pages/Attendance';
 import BiometricMapping from '@/pages/BiometricMapping';
 import BiometricDevices from '@/pages/BiometricDevices';
+import BiometricEvents from '@/pages/BiometricEvents';
 import Payroll from '@/pages/Payroll';
 import PayrollDashboard from '@/pages/PayrollDashboard';
 import StatutoryRates from '@/pages/StatutoryRates';
@@ -61,7 +62,7 @@ const AuthenticatedApp = () => {
     <Route path="/landing" element={<Landing />} />
     <Route element={<Layout />}>
       <Route path="/" element={<Dashboard />} /><Route path="/employees" element={<Employees />} /><Route path="/agency" element={<Agency />} /><Route path="/scan" element={<QRScanner />} /><Route path="/attendance" element={<Attendance />} /><Route path="/attendance/time-in-reviews" element={<TimeInReviews />} />
-      <Route path="/biometric-devices" element={<BiometricDevices />} /><Route path="/biometric-mapping" element={<BiometricMapping />} />
+      <Route path="/biometric-devices" element={<BiometricDevices />} /><Route path="/biometric-mapping" element={<BiometricMapping />} /><Route path="/biometric-events" element={<BiometricEvents />} />
       <Route path="/payroll" element={<Payroll />} /><Route path="/payroll/reconciliation" element={<PayrollReconciliation />} /><Route path="/management-reports" element={<ManagementReports />} /><Route path="/special-rates" element={<SpecialRates />} /><Route path="/special-rate-payroll" element={<SpecialRatePayroll />} /><Route path="/payroll-dashboard" element={<PayrollDashboard />} /><Route path="/thirteenth-month-pay" element={<ThirteenthMonthPay />} /><Route path="/separation-pay" element={<SeparationPay />} /><Route path="/statutory-rates" element={<StatutoryRates />} /><Route path="/mandatory-deductions" element={<MandatoryDeductions />} /><Route path="/cash-advance" element={<CashAdvance />} /><Route path="/personal-leave" element={<PersonalLeave />} /><Route path="/holidays" element={<Holidays />} /><Route path="/no-work-days" element={<NoWorkDays />} /><Route path="/payroll-summary" element={<PayrollSummary />} /><Route path="/passcode-manager" element={<PasscodeManager />} /><Route path="/company-profile" element={<CompanyProfile />} /><Route path="/archived-companies" element={<ArchivedCompanies />} /><Route path="/settings" element={<Settings />} /><Route path="/work-schedule" element={<WorkSchedule />} /><Route path="/user-management" element={<UserManagement />} /><Route path="/users-log" element={<UsersLog />} /><Route path="/passcode-audit" element={<PasscodeAudit />} /><Route path="/payslip-acknowledgements" element={<PayslipAcknowledgements />} />
     </Route>
     <Route path="/scan/confirm" element={<ScanConfirm />} /><Route path="/employee-portal-qr" element={<EmployeePortalQR />} /><Route path="/employee-portal" element={<EmployeePortal />} /><Route path="*" element={<PageNotFound />} />
