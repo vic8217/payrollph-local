@@ -12,6 +12,7 @@ const LOGIN_API_PATHS = new Set([
   "/api/auth/signout",
   "/api/auth/maintenance-status",
 ]);
+const DEVICE_API_PREFIX = "/api/device/";
 
 function unavailableApiResponse() {
   return NextResponse.json({ error: MAINTENANCE_UNAVAILABLE_MESSAGE }, { status: 503 });
@@ -20,12 +21,24 @@ function unavailableApiResponse() {
 /**
  * This proxy runs on Node.js in Next 16, so the bypass is checked against the
  * persisted AppUser row rather than the role claim in a browser cookie/JWT.
+ *
+ * Biometric device ingress is intentionally allowed through maintenance mode.
+ * These endpoints use device registration/login credentials rather than a
+ * browser NextAuth session, and attendance hardware must be able to reconnect
+ * and replay locally buffered logs while the interactive application is under
+ * maintenance.
  */
 export async function proxy(request) {
   const { pathname } = request.nextUrl;
   const isApi = pathname.startsWith("/api/");
 
-  if (LOGIN_API_PATHS.has(pathname) || (!isApi && PUBLIC_PAGE_PATHS.has(pathname))) return NextResponse.next();
+  if (
+    pathname.startsWith(DEVICE_API_PREFIX) ||
+    LOGIN_API_PATHS.has(pathname) ||
+    (!isApi && PUBLIC_PAGE_PATHS.has(pathname))
+  ) {
+    return NextResponse.next();
+  }
 
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (token?.sub && token.active_session_id) {
