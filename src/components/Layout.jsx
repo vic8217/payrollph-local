@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
 		  LayoutDashboard, Users, Clock, CreditCard,
 		  CalendarDays, QrCode, FileText, ChevronLeft, ChevronRight,
-		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, ShieldCheck, ReceiptText, BadgeDollarSign, ListChecks, Calculator, BarChart3
+		  LogOut, Menu, Building2, MonitorSmartphone, CalendarOff, KeyRound, Settings, CalendarClock, ChevronDown, Landmark, Activity, Palmtree, Gift, DoorOpen, Archive, ShieldCheck, ReceiptText, BadgeDollarSign, ListChecks, Calculator, BarChart3, Fingerprint
 		} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -44,6 +44,7 @@ const navItems = [
   { label: 'Company Profile', icon: Building2,         path: '/company-profile',    roles: ['super_admin', 'admin', 'user'] },
   { label: 'Archived Companies', icon: Archive,         path: '/archived-companies', roles: ['super_admin'] },
   { label: 'Shift Settings',  icon: Settings,          path: '/settings',           roles: ['super_admin', 'admin'] },
+  { label: 'Biometric Mapping', icon: Fingerprint,     path: '/biometric-mapping',  roles: ['super_admin', 'admin', 'user'] },
   { label: 'Portal QR Code',  icon: QrCode,            path: '/employee-portal-qr', roles: ['super_admin', 'admin', 'user'] },
   { label: 'Employee Portal', icon: MonitorSmartphone, path: '/employee-portal',    roles: ['super_admin', 'admin', 'user'], external: true },
 ];
@@ -53,7 +54,7 @@ const NAV_GROUPS = [
   { label: 'Payroll', paths: ['/payroll', '/special-rates', '/special-rate-payroll', '/thirteenth-month-pay', '/separation-pay', '/cash-advance'] },
   { label: 'Compliance', paths: ['/statutory-rates', '/mandatory-deductions'] },
   { label: 'Security & Access', paths: ['/user-management', '/users-log', '/passcode-audit', '/payslip-acknowledgements', '/passcode-manager'] },
-  { label: 'Settings', paths: ['/company-profile', '/archived-companies', '/settings', '/employee-portal-qr'] },
+  { label: 'Settings', paths: ['/company-profile', '/archived-companies', '/settings', '/biometric-mapping', '/employee-portal-qr'] },
 ];
 
 export default function Layout() {
@@ -107,7 +108,6 @@ export default function Layout() {
         {!effectiveCollapsed && activeCompany && (
           <div className="mt-3 relative">
             {isCompanyRestricted && companies.length <= 1 ? (
-              // Restricted users: just show the company name, no dropdown
               <div className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg bg-primary/10">
                 <Building2 className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                 <span className="text-xs font-semibold text-primary truncate">{activeCompany.company_name}</span>
@@ -240,8 +240,7 @@ export default function Layout() {
 
   return (
 	    <div className="flex h-screen bg-background overflow-hidden">
-	      {/* Desktop Sidebar */}
-      <aside className={cn(
+	      <aside className={cn(
         "hidden md:flex flex-col border-r border-border bg-card transition-all duration-300 flex-shrink-0",
         collapsed ? "w-14" : "w-56"
       )}>
@@ -255,7 +254,6 @@ export default function Layout() {
         </button>
       </aside>
 
-      {/* Mobile Sidebar */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
@@ -265,9 +263,7 @@ export default function Layout() {
         </div>
       )}
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile topbar */}
         <header className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card">
           <button
             type="button"
