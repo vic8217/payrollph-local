@@ -16,24 +16,63 @@ export function sourceIpFromRequest(req) {
   return req.socket?.remoteAddress || null;
 }
 
+function validUtcDateParts(year, month, day, hour, minute, second) {
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+  if (hour < 0 || hour > 23) return false;
+  if (minute < 0 || minute > 59) return false;
+  if (second < 0 || second > 59) return false;
+
+  const probe = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return (
+    probe.getUTCFullYear() === year &&
+    probe.getUTCMonth() === month - 1 &&
+    probe.getUTCDate() === day &&
+    probe.getUTCHours() === hour &&
+    probe.getUTCMinutes() === minute &&
+    probe.getUTCSeconds() === second
+  );
+}
+
 export function parseDeviceOccurredAt(payload) {
   const raw = text(payload.Time);
   if (!raw) return { occurredAt: null, occurredAtLocal: null };
-  const timezoneMinutes = intOrNull(payload.UtcTimezoneMinutes);
-  const normalized = raw.replace(/-T/, "T");
-  let instant = null;
 
-  const clock = normalized.replace(/Z$/i, "");
-  const simpleClock = clock.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})$/);
-  if (simpleClock && timezoneMinutes !== null) {
-    const localAsUtc = Date.parse(`${simpleClock[1]}Z`);
-    if (Number.isFinite(localAsUtc)) instant = new Date(localAsUtc - timezoneMinutes * 60_000);
-  } else {
-    const parsed = Date.parse(normalized);
-    if (Number.isFinite(parsed)) instant = new Date(parsed);
+  const timezoneMinutes = intOrNull(payload.UtcTimezoneMinutes);
+
+  // F500 observed payload example:
+  //   Time="2026-9-6-T8:55:20Z", UtcTimezoneMinutes="480"
+  // Despite the trailing Z, this value represents the device-local wall clock.
+  // Parse the components explicitly and apply UtcTimezoneMinutes to obtain UTC.
+  const f500Clock = raw.trim().match(
+    /^(\d{4})-(\d{1,2})-(\d{1,2})-?T(\d{1,2}):(\d{1,2}):(\d{1,2})(?:Z)?$/i
+  );
+
+  if (f500Clock && timezoneMinutes !== null) {
+    const [, y, mo, d, h, mi, s] = f500Clock;
+    const year = Number(y);
+    const month = Number(mo);
+    const day = Number(d);
+    const hour = Number(h);
+    const minute = Number(mi);
+    const second = Number(s);
+
+    if (validUtcDateParts(year, month, day, hour, minute, second)) {
+      const localWallClockAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+      return {
+        occurredAt: new Date(localWallClockAsUtc - timezoneMinutes * 60_000),
+        occurredAtLocal: raw,
+      };
+    }
   }
 
-  return { occurredAt: instant, occurredAtLocal: raw };
+  // Fallback for firmware that sends a standards-compliant ISO timestamp.
+  const normalized = raw.replace(/-T/, "T");
+  const parsed = Date.parse(normalized);
+  return {
+    occurredAt: Number.isFinite(parsed) ? new Date(parsed) : null,
+    occurredAtLocal: raw,
+  };
 }
 
 function isUniqueConflict(error) {
